@@ -86,6 +86,22 @@
   .feat h3{font-family:"DotGothic16",monospace;font-weight:400;font-size:17px;margin:0 0 8px;color:var(--gold)}
   .feat p{margin:0;color:#cfd2f0;font-size:19px}
 
+  /* how it works + faq */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;counter-reset:st}
+  @media(max-width:760px){.steps{grid-template-columns:1fr}}
+  .step{border:2px solid var(--ink);background:rgba(0,0,0,.7);padding:16px 16px 16px 62px;position:relative;counter-increment:st}
+  .step::before{content:counter(st);position:absolute;left:14px;top:12px;font-family:"DotGothic16",monospace;font-size:32px;color:var(--gold)}
+  .step h3{font-family:"DotGothic16",monospace;font-weight:400;font-size:17px;margin:0 0 6px}
+  .step p{margin:0;color:#cfd2f0;font-size:19px}
+  .faq{margin-top:28px}
+  .faq details{border:2px solid var(--line);background:rgba(11,11,20,.82);margin:10px 0}
+  .faq summary{cursor:pointer;padding:12px 16px;font-family:"DotGothic16",monospace;font-size:16px;list-style:none}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::before{content:"♥ ";color:var(--muted)}
+  .faq details[open] summary::before{color:var(--soul)}
+  .faq summary:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+  .faq details p{margin:0;padding:0 16px 14px 34px;color:#cfd2f0;font-size:19px}
+
   /* the fight */
   .arena{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:start}
   @media(max-width:900px){.arena{grid-template-columns:1fr}}
@@ -162,6 +178,33 @@
       <div class="feat"><h3>Verified merges</h3><p>After merging, it checks that every mod's changes made it in and that the game can load the result, before you ever launch it.</p></div>
       <div class="feat"><h3>Saves protected</h3><p>Your saves get backed up before every apply, and one button puts the original game back.</p></div>
       <div class="feat"><h3>Browse &amp; install</h3><p>Search mods from inside the app, read what they do, and install with one click.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section id="how">
+  <div class="wrap">
+    <h2><span class="heart">♥</span> HOW IT WORKS</h2>
+    <p class="narr">Three steps. Your game stays safe the whole time.</p>
+    <div class="steps">
+      <div class="step"><h3>Pick your mods</h3><p>Install from the built-in browser, paste a link, or drop in files. Tick the ones you want.</p></div>
+      <div class="step"><h3>Check them</h3><p>See what clashes before anything changes. When two mods edit the same thing, the lower one in the list wins.</p></div>
+      <div class="step"><h3>Apply &amp; Play</h3><p>Your saves get backed up, each chapter is built with your mods merged in, and the game starts.</p></div>
+    </div>
+
+    <div class="faq">
+      <details><summary>Is there a free trial?</summary>
+        <p>Yes. Every copy starts with a 1-hour free trial. After that, applying, installing and updating mods need a license key. Restoring the original game, browsing mods and your save backups keep working without one.</p></details>
+      <details><summary>What does a lifetime key get me?</summary>
+        <p>Full use for good, and DeltaStack keeps itself up to date: new versions download in the background and you click "Restart to update." Every update is signature-checked before it installs.</p></details>
+      <details><summary>Does it mess with my game files?</summary>
+        <p>Before it touches any game file, it keeps an untouched copy of it. It also won't change anything while the game is running, and it checks you have enough disk space first.</p></details>
+      <details><summary>How do I go back to the normal game?</summary>
+        <p>Press "Restore vanilla." Every file goes back exactly as it was. If the game updates, DeltaStack notices and takes a fresh clean copy instead of restoring an old one.</p></details>
+      <details><summary>What does it run on?</summary>
+        <p>Windows 10/11, Linux, and Apple Silicon Macs. It finds Steam installs on its own, or you point it at your game folder.</p></details>
     </div>
   </div>
 </section>
