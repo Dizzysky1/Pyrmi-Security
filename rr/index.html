@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pyrmi</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  iframe { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; }
+  #unmute { position: fixed; inset: 0; cursor: pointer; display: flex; align-items: flex-end; justify-content: center; }
+  #unmute span { margin-bottom: 40px; padding: 10px 18px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: 600 16px system-ui, sans-serif; }
+</style>
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<iframe id="v" src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1&loop=1&playlist=dQw4w9WgXcQ&controls=0&rel=0" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+<div id="unmute"><span>Click for sound</span></div>
+<script>
+  document.getElementById('unmute').addEventListener('click', function () {
+    document.getElementById('v').src = 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&loop=1&playlist=dQw4w9WgXcQ&controls=0&rel=0';
+    this.remove();
+  });
+</script>
+</body>
+</html>
