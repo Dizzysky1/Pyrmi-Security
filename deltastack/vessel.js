@@ -40,11 +40,12 @@
       else {
         if (keys.ArrowLeft || keys.a) dx--; if (keys.ArrowRight || keys.d) dx++;
         if (keys.ArrowUp || keys.w) dy--; if (keys.ArrowDown || keys.s) dy++;
-        if (pointer) { const mx = pointer.x - soul.x, my = pointer.y - soul.y, d = Math.hypot(mx, my) || 1; if (d > 2) { dx = mx / d; dy = my / d; } }
-        else if (dx || dy) { const d = Math.hypot(dx, dy); dx /= d; dy /= d; }
+        if (dx || dy) { const d = Math.hypot(dx, dy); dx /= d; dy /= d; }
       }
-      soul.x = Math.max(soul.r, Math.min(W - soul.r, soul.x + dx * soul.speed));
-      soul.y = Math.max(soul.r, Math.min(H - soul.r, soul.y + dy * soul.speed));
+      let mvx = dx * soul.speed, mvy = dy * soul.speed;
+      if (!auto && pointer) { const pl = Math.hypot(pointer.px, pointer.py); if (pl > 0) { const k = Math.min(1, soul.speed * 1.6 / pl); mvx = pointer.px * k; mvy = pointer.py * k; pointer.px -= mvx; pointer.py -= mvy; } }
+      soul.x = Math.max(soul.r, Math.min(W - soul.r, soul.x + mvx));
+      soul.y = Math.max(soul.r, Math.min(H - soul.r, soul.y + mvy));
       boss.x = W / 2 + Math.sin(t * 0.8) * W * 0.28;
       boss.timer += dt;
       const every = Math.max(0.55 - stage * 0.03, auto ? 0.4 : 0.22);
@@ -96,9 +97,11 @@
     if (!auto) {
       const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (H / r.height) }; };
       const begin = () => { if (!started || dead) { reset(); started = true; dead = false; opts.onStart && opts.onStart(); } };
-      cv.addEventListener('pointerdown', e => { pointer = pt(e); begin(); });
-      cv.addEventListener('pointermove', e => { if (pointer) pointer = pt(e); });
-      addEventListener('pointerup', () => { pointer = null; });
+      // relative drag: slide anywhere and the soul follows the motion (capped to keyboard-ish speed)
+      cv.addEventListener('pointerdown', e => { const p = pt(e); pointer = { x: p.x, y: p.y, px: 0, py: 0 }; try { cv.setPointerCapture(e.pointerId); } catch (_) {} begin(); });
+      cv.addEventListener('pointermove', e => { if (!pointer) return; const p = pt(e); pointer.px += p.x - pointer.x; pointer.py += p.y - pointer.y; pointer.x = p.x; pointer.y = p.y;
+        const l = Math.hypot(pointer.px, pointer.py); if (l > 60) { pointer.px *= 60 / l; pointer.py *= 60 / l; } });
+      addEventListener('pointerup', () => { pointer = null; }); addEventListener('pointercancel', () => { pointer = null; });
       cv.addEventListener('keydown', e => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'w', 'a', 's', 'd'].includes(e.key)) { keys[e.key] = true; e.preventDefault(); }
         begin();
