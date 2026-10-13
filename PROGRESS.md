@@ -12,3 +12,4 @@ One line per change, newest at the bottom.
 - 2026-10-13: Homepage honesty/copy pass — board no longer claims scores are verified server-side or shows the dev note "hook up a score backend"; hero/meta say the weekly contest is coming soon; board shows your local best live; nav links to /deltastack/.
 - 2026-10-13: Vessel touch controls switched to relative drag on both pages (slide anywhere; soul follows the motion, capped at 1.6x keyboard speed, pointer captured so drags can leave the canvas) — finger no longer covers the soul.
 - 2026-10-13: Vessel (both pages): fading gold "STAGE N" banner on stage-up so progress is visible with sound muted. Noted the held-back custom-404 idea in DRAFTS.md.
+- 2026-10-13: Vessel start/retry prompts (both pages) now match how input works: "click or tap" until the arena has focus, "press any key or click" once it does.
