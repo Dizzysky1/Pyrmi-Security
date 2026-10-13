@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeltaStack — coming soon · PYRMI</title>
+<meta name="description" content="DeltaStack: a multi-mod manager that runs several DELTARUNE mods at once. Coming soon to PYRMI. Beat The Vessel this week to win a free lifetime key.">
+<meta property="og:title" content="DeltaStack — coming soon">
+<meta property="og:description" content="Stack every mod at once. Survive The Vessel to win a lifetime key.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#05050a; --panel:#0b0b14; --ink:#f2f3ff; --muted:#a3a8cc; --line:rgba(255,255,255,.14);
+    --soul:#ff2a3d; --gold:#ffe14d; --cyan:#3fd8ff; --violet:#9b6bff; --mint:#38e8b0;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"VT323",ui-monospace,monospace;font-size:21px;line-height:1.3;overflow-x:hidden}
+  a{color:var(--cyan)}
+  .dot{font-family:"DotGothic16",ui-monospace,monospace}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 18px}
+
+  /* blurred live fight behind everything */
+  #bgfight{position:fixed;inset:-40px;width:calc(100% + 80px);height:calc(100% + 80px);z-index:-3;
+    filter:blur(7px) saturate(1.3);opacity:.55}
+  .veil{position:fixed;inset:0;z-index:-2;pointer-events:none;
+    background:radial-gradient(900px 520px at 50% 0%,rgba(155,107,255,.20),transparent 65%),
+               linear-gradient(180deg,rgba(5,5,10,.35),rgba(5,5,10,.85) 70%)}
+  .scan{position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:repeating-linear-gradient(180deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)}
+
+  header{display:flex;justify-content:space-between;align-items:center;padding:22px 0}
+  header a{color:var(--muted);text-decoration:none;margin-left:18px}
+  header a:hover{color:var(--ink)}
+  @media(max-width:480px){header nav a{margin-left:12px;font-size:18px} header nav a.wide{display:none}}
+  .back{font-family:"DotGothic16",monospace;color:var(--ink)!important;margin:0!important;letter-spacing:2px}
+  .back b{color:var(--soul)}
+
+  .word{font-family:"DotGothic16",monospace;font-size:clamp(46px,10vw,104px);letter-spacing:4px;line-height:1;margin:0;
+    text-shadow:4px 4px 0 #2b1a5c}
+  .word .s{color:var(--gold)}
+  .sub{font-family:"DotGothic16",monospace;letter-spacing:6px;color:var(--muted);font-size:clamp(13px,2vw,17px);margin:10px 0 0}
+  .hero{text-align:center;padding:56px 0 30px}
+  .hero p.lede{max-width:640px;margin:26px auto 30px;font-size:24px;color:#d9dbf7}
+  .badge{display:inline-block;border:2px solid var(--soul);color:var(--soul);padding:6px 14px;font-family:"DotGothic16",monospace;
+    font-size:14px;letter-spacing:3px;margin-bottom:26px;animation:blink 1.6s steps(2) infinite}
+  @keyframes blink{50%{border-color:transparent;color:#ff8a95}}
+
+  .btn{display:inline-block;font-family:"DotGothic16",monospace;font-size:16px;letter-spacing:1px;padding:12px 20px;
+    border:2px solid var(--ink);background:rgba(0,0,0,.6);color:var(--ink);text-decoration:none;cursor:pointer;margin:6px}
+  .btn:hover,.btn:focus-visible{border-color:var(--gold);color:var(--gold);outline:none}
+  .btn.play{border-color:var(--gold);color:var(--gold)}
+  .btn.play:hover{background:var(--gold);color:#000}
+
+  section{padding:46px 0}
+  h2{font-family:"DotGothic16",monospace;font-weight:400;font-size:26px;margin:0 0 6px;letter-spacing:2px}
+  h2 .heart{color:var(--soul)}
+  .narr{color:var(--muted);margin:0 0 24px}
+  .narr::before{content:"* "}
+
+  /* screenshot slots: show real screenshots if present in img/, otherwise an original mock */
+  .shots{display:grid;grid-template-columns:3fr 2fr;gap:16px}
+  @media(max-width:760px){.shots{grid-template-columns:1fr}}
+  .frame{border:3px solid var(--ink);background:#000;position:relative;overflow:hidden}
+  .frame img{display:block;width:100%;height:auto}
+  .frame .cap{position:absolute;left:0;right:0;bottom:0;padding:6px 10px;background:rgba(0,0,0,.75);font-size:18px;color:var(--muted)}
+  .frame.empty img{display:none}
+  .frame:not(.empty) .mock{display:none}
+  .mock{padding:14px 16px 70px}
+  .mock .row{display:flex;align-items:center;gap:10px;border:2px solid #2a2a3a;padding:7px 10px;margin:8px 0}
+  .mock .row.on{border-color:var(--ink)}
+  .mock .box{width:14px;height:14px;border:2px solid var(--gold)}
+  .mock .row.on .box{background:var(--gold)}
+  .mock .ch{margin-left:auto;font-size:15px;border:1px solid var(--cyan);color:var(--cyan);padding:0 6px}
+  .mock .plan{font-family:"DotGothic16",monospace;font-size:14px;color:var(--mint);margin-bottom:6px}
+  .mock .ttl{font-family:"DotGothic16",monospace;font-size:20px;margin-bottom:8px}
+  .mock .ok{color:var(--mint)} .mock .warn{color:var(--gold)}
+
+  .feats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  @media(max-width:860px){.feats{grid-template-columns:1fr 1fr}}
+  @media(max-width:560px){.feats{grid-template-columns:1fr}}
+  .feat{border:2px solid var(--line);background:rgba(11,11,20,.82);padding:16px}
+  .feat h3{font-family:"DotGothic16",monospace;font-weight:400;font-size:17px;margin:0 0 8px;color:var(--gold)}
+  .feat p{margin:0;color:#cfd2f0;font-size:19px}
+
+  /* the fight */
+  .arena{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:start}
+  @media(max-width:900px){.arena{grid-template-columns:1fr}}
+  #fight{display:block;width:100%;max-width:640px;aspect-ratio:640/420;background:#000;border:3px solid var(--ink);touch-action:none;cursor:crosshair}
+  #fight:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+  .hud{display:flex;gap:22px;margin-top:10px;font-size:22px;color:var(--muted);flex-wrap:wrap}
+  .hud b{color:var(--ink)}
+  .prize{border:3px solid var(--gold);background:rgba(20,16,0,.7);padding:18px}
+  .prize h3{font-family:"DotGothic16",monospace;font-weight:400;color:var(--gold);margin:0 0 10px;font-size:22px}
+  .prize ol{margin:8px 0 12px;padding-left:22px}
+  .prize .status{border-top:1px dashed rgba(255,225,77,.4);padding-top:10px;color:var(--muted)}
+  .prize .status b{color:var(--soul)}
+
+  .divider{height:8px;background:repeating-linear-gradient(90deg,var(--violet) 0 8px,transparent 8px 16px);opacity:.6;margin:0 auto;max-width:1040px}
+  footer{padding:30px 0 40px;color:var(--muted);font-size:17px;text-align:center}
+  @media (prefers-reduced-motion: reduce){ #bgfight{display:none} .badge{animation:none} }
+</style>
+</head>
+<body>
+<canvas id="bgfight" width="960" height="600" aria-hidden="true"></canvas>
+<div class="veil"></div><div class="scan"></div>
+
+<div class="wrap">
+  <header>
+    <a class="back" href="/">PY<b>R</b>MI</a>
+    <nav><a class="wide" href="#preview">preview</a><a href="#fight-sec">play</a><a href="#contest">win a key</a></nav>
+  </header>
+
+  <div class="hero">
+    <div class="badge">COMING SOON</div>
+    <h1 class="word">DELTA<span class="s">STACK</span></h1>
+    <p class="sub">MULTI-MOD MANAGER</p>
+    <p class="lede">Most mods only work one at a time. DeltaStack patches every mod you pick, merges them together, and launches one game with all of them in it.</p>
+    <a class="btn play" href="#fight-sec">♥ play while you wait</a>
+    <a class="btn" href="#preview">see the preview</a>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<section id="preview">
+  <div class="wrap">
+    <h2><span class="heart">♥</span> PREVIEW</h2>
+    <p class="narr">A first look at the app. It's dressed for the Dark World.</p>
+    <div class="shots">
+      <div class="frame" id="shot-main">
+        <img src="img/my-mods.png" alt="DeltaStack's My Mods page: a load order of several mods with an apply plan" loading="lazy" onerror="this.parentElement.classList.add('empty')">
+        <div class="mock" aria-hidden="true">
+          <div class="ttl">MY MODS</div>
+          <div class="plan">* 4 mods → 2 chapters, 1 merged</div>
+          <div class="row on"><span class="box"></span>Better Battle UI<span class="ch">Ch 2</span></div>
+          <div class="row on"><span class="box"></span>Night Palette<span class="ch">Ch 2</span></div>
+          <div class="row on"><span class="box"></span>Speedrun QoL<span class="ch">Ch 1</span></div>
+          <div class="row"><span class="box"></span>Remastered Music<span class="ch">files</span></div>
+        </div>
+        <div class="cap">My Mods: drag to set the load order, press Apply &amp; Play</div>
+      </div>
+      <div class="frame" id="shot-side">
+        <img src="img/compatibility.png" alt="DeltaStack's compatibility check comparing pairs of mods" loading="lazy" onerror="this.parentElement.classList.add('empty')">
+        <div class="mock" aria-hidden="true">
+          <div class="ttl">COMPATIBILITY</div>
+          <div class="row on">Battle UI + Palette<span class="ch ok">OK</span></div>
+          <div class="row on">Palette + QoL<span class="ch ok">OK</span></div>
+          <div class="row on">QoL + Music<span class="ch warn">overlap</span></div>
+        </div>
+        <div class="cap">Know what clashes before you apply</div>
+      </div>
+    </div>
+
+    <div class="feats">
+      <div class="feat"><h3>Stack mods</h3><p>Turn on as many mods as you want per chapter. They get merged piece by piece: code, sprites, rooms, sounds and text.</p></div>
+      <div class="feat"><h3>Check first</h3><p>One click shows which mods touch the same things, which one wins, and whether the code edits will merge cleanly.</p></div>
+      <div class="feat"><h3>Fixes itself</h3><p>If two mods can't be combined, it tries a different order. If that fails, it leaves out as few as it can and tells you which ones.</p></div>
+      <div class="feat"><h3>Verified merges</h3><p>After merging, it checks that every mod's changes made it in and that the game can load the result, before you ever launch it.</p></div>
+      <div class="feat"><h3>Saves protected</h3><p>Your saves get backed up before every apply, and one button puts the original game back.</p></div>
+      <div class="feat"><h3>Browse &amp; install</h3><p>Search mods from inside the app, read what they do, and install with one click.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<section id="fight-sec">
+  <div class="wrap">
+    <h2><span class="heart">♥</span> WHILE YOU WAIT</h2>
+    <p class="narr">The Vessel stirs. Dodge everything it throws and see how long you last.</p>
+    <div class="arena">
+      <div>
+        <canvas id="fight" width="640" height="420" tabindex="0" aria-label="The Vessel: a bullet dodging game. Use arrow keys or WASD, or drag on touch."></canvas>
+        <div class="hud"><span>TIME <b id="t">0.0</b></span><span>BEST <b id="best">0.0</b></span><span>STAGE <b id="stage">1</b></span></div>
+        <div style="color:var(--muted);font-size:18px;margin-top:4px">Arrows / WASD to move · drag on touch</div>
+      </div>
+      <div class="prize" id="contest">
+        <h3>WIN A LIFETIME KEY</h3>
+        <ol>
+          <li>Every week the board resets.</li>
+          <li>Whoever survives The Vessel the longest that week wins.</li>
+          <li>Prize: a free lifetime DeltaStack key when it launches.</li>
+        </ol>
+        <div class="status"><b>NOT LIVE YET.</b> The board opens once scores are checked on the server, so nobody can fake a time. For now, your best time only lives in this browser. Practice up.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    DeltaStack is an unofficial fan-made tool. It isn't affiliated with or endorsed by Toby Fox.<br>
+    DELTARUNE and UNDERTALE are © Toby Fox. Everything on this page is original art.<br>
+    <a href="/">← back to PYRMI</a>
+  </div>
+</footer>
+
+<script src="vessel.js"></script>
+<script>
+(function(){
+  // blurred attract-mode fight behind the page
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) createVessel(document.getElementById('bgfight'), {auto:true});
+
+  // playable fight; best time kept locally per browser (shares the main page's key)
+  const tEl=document.getElementById('t'), bEl=document.getElementById('best'), sEl=document.getElementById('stage');
+  let best=0; try{best=parseFloat(localStorage.getItem('pyrmi_best')||'0')||0;}catch(e){}
+  bEl.textContent=best.toFixed(1);
+  const fight=document.getElementById('fight');
+  createVessel(fight, {
+    onStart(){ fight.focus({preventScroll:true}); },
+    onTime(t,s){ tEl.textContent=t.toFixed(1); sEl.textContent=s; },
+    onDeath(t){ if(t>best){ best=t; try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){} bEl.textContent=best.toFixed(1); } }
+  });
+})();
+</script>
+</body>
+</html>
