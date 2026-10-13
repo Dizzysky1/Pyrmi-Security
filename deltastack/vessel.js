@@ -94,8 +94,9 @@
       g.restore();
       if (banner > 0 && !dead) { g.save(); g.globalAlpha = Math.min(1, banner / 0.4); g.textAlign = 'center'; g.fillStyle = '#ffe14d';
         g.font = '34px "VT323",monospace'; g.fillText('STAGE ' + stage, W / 2, H * 0.42); g.restore(); }
-      if (!auto) { if (!started) overlay('THE VESSEL', 'click or press a key to begin');
-        else if (dead) overlay('SHATTERED', 'survived ' + t.toFixed(1) + 's  ·  click to retry'); }
+      if (!auto) { const focused = document.activeElement === cv;
+        if (!started) overlay('THE VESSEL', (focused ? 'press any key or click' : 'click or tap') + ' to begin');
+        else if (dead) overlay('SHATTERED', 'survived ' + t.toFixed(1) + 's  ·  ' + (focused ? 'any key' : 'tap') + ' to retry'); }
     }
 
     if (!auto) {

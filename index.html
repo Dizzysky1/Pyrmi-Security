@@ -297,8 +297,9 @@
 
     if(banner>0&&!dead){g.save();g.globalAlpha=Math.min(1,banner/0.4);g.textAlign='center';g.fillStyle='#ffe14d';
       g.font='22px "Press Start 2P",monospace';g.fillText('STAGE '+stage,W/2,H*0.42);g.restore();}
-    if(!started){overlay('THE VESSEL','click or press a key to begin');}
-    else if(dead){overlay('SHATTERED','survived '+t.toFixed(1)+'s  ·  click to retry');}
+    const how=document.activeElement===cv?'press any key or click':'click or tap';
+    if(!started){overlay('THE VESSEL',how+' to begin');}
+    else if(dead){overlay('SHATTERED','survived '+t.toFixed(1)+'s  ·  '+(document.activeElement===cv?'any key':'tap')+' to retry');}
   }
   function heart(cx,cy,r){g.beginPath();
     g.moveTo(cx,cy+r*0.9);
