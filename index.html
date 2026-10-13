@@ -130,7 +130,7 @@
         <button class="mute" type="button" data-sfx-mute>♪ on</button>
         <button class="mute" type="button" data-share="/">share best</button>
       </div>
-      <div class="hint">Click the arena, then arrow keys / WASD to move · drag on touch · don't let the soul get hit</div>
+      <div class="hint">Click the arena, then arrow keys / WASD to move · drag anywhere on touch · don't let the soul get hit</div>
     </div>
   </section>
 
@@ -205,9 +205,11 @@
   cv.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
   function pt(e){const r=cv.getBoundingClientRect();const p=e.touches?e.touches[0]:e;
     return {x:(p.clientX-r.left)*(W/r.width),y:(p.clientY-r.top)*(H/r.height)};}
-  cv.addEventListener('pointerdown',e=>{pointer=pt(e);});
-  cv.addEventListener('pointermove',e=>{if(pointer)pointer=pt(e);});
-  addEventListener('pointerup',()=>{pointer=null;});
+  // relative drag: slide anywhere and the soul follows the motion, so your finger never covers it
+  cv.addEventListener('pointerdown',e=>{const p=pt(e);pointer={x:p.x,y:p.y,px:0,py:0};try{cv.setPointerCapture(e.pointerId);}catch(_){}});
+  cv.addEventListener('pointermove',e=>{if(!pointer)return;const p=pt(e);pointer.px+=p.x-pointer.x;pointer.py+=p.y-pointer.y;pointer.x=p.x;pointer.y=p.y;
+    const l=Math.hypot(pointer.px,pointer.py);if(l>60){pointer.px*=60/l;pointer.py*=60/l;}});
+  addEventListener('pointerup',()=>{pointer=null;});addEventListener('pointercancel',()=>{pointer=null;});
 
   let bullets=[],t=0,stage=1,dead=false,started=false,shake=0;
   const boss={x:W/2,y:70,phase:0,timer:0};
@@ -231,11 +233,11 @@
     let dx=0,dy=0;
     if(keys.ArrowLeft||keys.a)dx--; if(keys.ArrowRight||keys.d)dx++;
     if(keys.ArrowUp||keys.w)dy--; if(keys.ArrowDown||keys.s)dy++;
-    if(pointer){const mx=pointer.x-soul.x,my=pointer.y-soul.y,d=Math.hypot(mx,my)||1;
-      if(d>2){dx=mx/d;dy=my/d;}}
-    else if(dx||dy){const d=Math.hypot(dx,dy);dx/=d;dy/=d;}
-    soul.x=Math.max(soul.r,Math.min(W-soul.r,soul.x+dx*soul.speed));
-    soul.y=Math.max(soul.r,Math.min(H-soul.r,soul.y+dy*soul.speed));
+    let mvx=0,mvy=0;
+    if(dx||dy){const d=Math.hypot(dx,dy);mvx=dx/d*soul.speed;mvy=dy/d*soul.speed;}
+    if(pointer){const pl=Math.hypot(pointer.px,pointer.py);if(pl>0){const k=Math.min(1,soul.speed*1.6/pl);mvx=pointer.px*k;mvy=pointer.py*k;pointer.px-=mvx;pointer.py-=mvy;}}
+    soul.x=Math.max(soul.r,Math.min(W-soul.r,soul.x+mvx));
+    soul.y=Math.max(soul.r,Math.min(H-soul.r,soul.y+mvy));
 
     // boss drifts
     boss.x=W/2+Math.sin(t*0.8)*W*0.28;
