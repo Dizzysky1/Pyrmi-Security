@@ -86,6 +86,12 @@
   .feat h3{font-family:"DotGothic16",monospace;font-weight:400;font-size:17px;margin:0 0 8px;color:var(--gold)}
   .feat p{margin:0;color:#cfd2f0;font-size:19px}
 
+  /* pulse minigame */
+  .pulse-wrap{margin-top:34px}
+  .pulse-wrap h3{font-family:"DotGothic16",monospace;font-weight:400;font-size:20px;margin:0 0 4px;color:var(--cyan)}
+  #pulse{display:block;width:100%;max-width:640px;aspect-ratio:640/300;background:#000;border:3px solid var(--ink);touch-action:manipulation;cursor:pointer}
+  #pulse:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+
   /* how it works + faq */
   .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;counter-reset:st}
   @media(max-width:760px){.steps{grid-template-columns:1fr}}
@@ -233,6 +239,12 @@
         <div class="status"><b>NOT LIVE YET.</b> The board opens once scores are checked on the server, so nobody can fake a time. For now, your best time only lives in this browser. Practice up.</div>
       </div>
     </div>
+
+    <div class="pulse-wrap">
+      <h3>♦ PULSE</h3>
+      <p class="narr">Need a breather? Hit the beat when the rings line up. Perfect hits count double.</p>
+      <canvas id="pulse" width="640" height="300" tabindex="0" aria-label="Pulse: a timing game. Tap, click, or press Space when the closing ring lines up with the gold ring."></canvas>
+    </div>
   </div>
 </section>
 
@@ -246,6 +258,7 @@
 
 <script src="/sfx.js"></script>
 <script src="vessel.js"></script>
+<script src="pulse.js"></script>
 <script>
 (function(){
   // blurred attract-mode fight behind the page
@@ -255,6 +268,7 @@
   const tEl=document.getElementById('t'), bEl=document.getElementById('best'), sEl=document.getElementById('stage');
   let best=0; try{best=parseFloat(localStorage.getItem('pyrmi_best')||'0')||0;}catch(e){}
   bEl.textContent=best.toFixed(1);
+  createPulse(document.getElementById('pulse'));
   const fight=document.getElementById('fight');
   createVessel(fight, {
     onStart(){ fight.focus({preventScroll:true}); window.PyrmiSFX&&PyrmiSFX.start(); },
