@@ -1,5 +1,5 @@
 /* PYRMI synth SFX (original, generated live with WebAudio; no audio files).
-   PyrmiSFX.start() / .stage() / .death(). Any button with [data-sfx-mute] becomes a mute toggle.
+   PyrmiSFX.start() / .stage() / .note(freq, dur) / .death(). Any button with [data-sfx-mute] becomes a mute toggle.
    Mute choice is remembered in this browser only. */
 (function () {
   let ctx = null, master = null, muted = false;
@@ -39,6 +39,7 @@
   const SFX = {
     start() { tone(330, 0, 0.08, 'square'); tone(495, 0.07, 0.12, 'square'); },
     stage() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.06, 0.1, 'triangle', null, 0.8)); },
+    note(freq, dur) { tone(freq, 0, dur || 0.15, 'triangle', null, 0.9); tone(freq * 2, 0, (dur || 0.15) * 0.6, 'square', null, 0.15); },
     death() { tone(440, 0, 0.55, 'sawtooth', 55, 0.9); noise(0, 0.35, 0.6); tone(110, 0.05, 0.4, 'square', 40, 0.5); },
     get muted() { return muted; },
     setMuted(m) {
