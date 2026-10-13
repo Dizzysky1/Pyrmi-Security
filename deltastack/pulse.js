@@ -94,8 +94,10 @@
     cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.focus({ preventScroll: true }); press(); });
     cv.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat) press(); } });
 
+    let onScreen = true;
+    if ('IntersectionObserver' in window) new IntersectionObserver(es => { onScreen = es[0].isIntersecting; }).observe(cv);
     let last = performance.now();
-    (function loop(now) { const dt = Math.min((now - last) / 1000, 0.05); last = now; step(dt); draw(); requestAnimationFrame(loop); })(last);
+    (function loop(now) { const dt = Math.min((now - last) / 1000, 0.05); last = now; if (onScreen) { step(dt); draw(); } requestAnimationFrame(loop); })(last);
     report();
   }
   window.createPulse = createPulse;

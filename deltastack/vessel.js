@@ -107,8 +107,11 @@
       cv.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
     }
 
+    // pause while scrolled out of view (the fixed background canvas is always in view)
+    let onScreen = true;
+    if ('IntersectionObserver' in window) new IntersectionObserver(es => { onScreen = es[0].isIntersecting; }).observe(cv);
     let last = performance.now();
-    (function loop(now) { if (!running) return; const dt = Math.min((now - last) / 1000, 0.05); last = now; step(dt); draw(); requestAnimationFrame(loop); })(last);
+    (function loop(now) { if (!running) return; const dt = Math.min((now - last) / 1000, 0.05); last = now; if (onScreen) { step(dt); draw(); } requestAnimationFrame(loop); })(last);
     return { stop() { running = false; } };
   }
   window.createVessel = createVessel;
