@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PYRMI — survive the Vessel</title>
-<meta name="description" content="PYRMI: dodge the Vessel's bullet-hell patterns, climb the weekly board, and get early access to DeltaStack.">
+<meta name="description" content="PYRMI: dodge the Vessel's bullet-hell patterns, and get ready for the weekly contest: top survivor wins a lifetime DeltaStack key.">
 <meta property="og:title" content="PYRMI — survive the Vessel">
 <meta property="og:description" content="A browser bullet-hell boss fight. Survive the longest this week.">
 <meta property="og:type" content="website">
@@ -106,12 +106,13 @@
       <a href="#play">play</a>
       <a href="#store">store</a>
       <a href="#board">board</a>
+      <a href="/deltastack/">deltastack</a>
     </nav>
   </header>
 
   <div class="hero">
     <h1>SURVIVE THE <span class="g">VESSEL</span></h1>
-    <p>A browser bullet-hell boss fight. Move your soul, dodge the storm, last as long as you can. New challenge every week.</p>
+    <p>A browser bullet-hell boss fight. Move your soul, dodge the storm, last as long as you can. Weekly contest coming soon.</p>
     <div class="cta">
       <button class="btn primary" onclick="document.getElementById('play').scrollIntoView({behavior:'smooth'})">▶ play now</button>
       <a class="btn" href="/deltastack/">deltastack →</a>
@@ -156,8 +157,9 @@
     <div class="board">
       <div class="pix">LEADERBOARD · LAUNCHING SOON</div>
       <p style="color:var(--muted);margin:14px auto 0;max-width:560px">
-        Each week the single longest Vessel survivor wins a lifetime DeltaStack key.
-        Scores are verified server-side (no cheesing). Hook up a score backend and this goes live.
+        Once it opens, the longest Vessel survivor each week wins a lifetime DeltaStack key.
+        It opens once scores are checked on the server, so nobody can fake a time. Until then, your best only lives in this browser:
+        <b id="board-best" style="color:var(--ink)">no runs yet</b>.
       </p>
     </div>
   </section>
@@ -192,6 +194,8 @@
   const tEl=document.getElementById('t'),bestEl=document.getElementById('best'),stEl=document.getElementById('stage');
   let best=0; try{best=parseFloat(localStorage.getItem('pyrmi_best')||'0')||0;}catch(e){}
   bestEl.textContent=best.toFixed(1);
+  const boardBest=document.getElementById('board-best');
+  const showBoard=()=>{if(boardBest&&best>0)boardBest.textContent=best.toFixed(1)+'s';};showBoard();
 
   const soul={x:W/2,y:H*0.72,r:6,speed:3.4};
   const keys={};
@@ -258,7 +262,7 @@
   }
 
   function die(){dead=true;shake=14;if(window.PyrmiSFX)PyrmiSFX.death();
-    if(t>best){best=t;try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){}bestEl.textContent=best.toFixed(1);}}
+    if(t>best){best=t;try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){}bestEl.textContent=best.toFixed(1);showBoard();}}
 
   function draw(){
     g.save();
