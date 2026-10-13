@@ -214,7 +214,8 @@
   let bullets=[],t=0,stage=1,dead=false,started=false,shake=0;
   const boss={x:W/2,y:70,phase:0,timer:0};
 
-  function reset(){bullets=[];t=0;stage=1;dead=false;soul.x=W/2;soul.y=H*0.72;boss.timer=0;boss.phase=0;}
+  let banner=0; // seconds left on the "STAGE N" flash
+  function reset(){banner=0;bullets=[];t=0;stage=1;dead=false;soul.x=W/2;soul.y=H*0.72;boss.timer=0;boss.phase=0;}
 
   function spawnRing(n,sp,off){for(let i=0;i<n;i++){const a=off+i/n*Math.PI*2;
     bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:5,c:'#8a5cff'});}}
@@ -226,7 +227,8 @@
 
   function step(dt){
     if(dead||!started)return;
-    t+=dt; const ns=1+Math.floor(t/12); if(ns>stage&&window.PyrmiSFX)PyrmiSFX.stage(); stage=ns; stEl.textContent=stage;
+    t+=dt; const ns=1+Math.floor(t/12); if(ns>stage){banner=1.3;if(window.PyrmiSFX)PyrmiSFX.stage();} stage=ns; stEl.textContent=stage;
+    if(banner>0)banner-=dt;
     const sp=1.6+stage*0.25;
 
     // movement
@@ -293,6 +295,8 @@
 
     g.restore();
 
+    if(banner>0&&!dead){g.save();g.globalAlpha=Math.min(1,banner/0.4);g.textAlign='center';g.fillStyle='#ffe14d';
+      g.font='22px "Press Start 2P",monospace';g.fillText('STAGE '+stage,W/2,H*0.42);g.restore();}
     if(!started){overlay('THE VESSEL','click or press a key to begin');}
     else if(dead){overlay('SHATTERED','survived '+t.toFixed(1)+'s  ·  click to retry');}
   }

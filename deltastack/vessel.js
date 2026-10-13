@@ -11,7 +11,8 @@
     const keys = {};
     let pointer = null, bullets = [], t = 0, stage = 1, dead = false, started = auto, shake = 0, running = true;
 
-    function reset() { bullets = []; t = 0; stage = 1; dead = false; soul.x = W / 2; soul.y = H * 0.72; boss.timer = 0; boss.phase = 0; }
+    let banner = 0; // seconds left on the "STAGE N" flash
+    function reset() { banner = 0; bullets = []; t = 0; stage = 1; dead = false; soul.x = W / 2; soul.y = H * 0.72; boss.timer = 0; boss.phase = 0; }
 
     function ring(n, sp, off) { for (let i = 0; i < n; i++) { const a = off + i / n * Math.PI * 2;
       bullets.push({ x: boss.x, y: boss.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 5, c: '#8a5cff' }); } }
@@ -33,7 +34,8 @@
 
     function step(dt) {
       if (dead || !started) return;
-      t += dt; const ns = 1 + Math.floor(t / 12); if (ns > stage && !auto) opts.onStage && opts.onStage(ns); stage = ns;
+      t += dt; const ns = 1 + Math.floor(t / 12); if (ns > stage && !auto) { banner = 1.3; opts.onStage && opts.onStage(ns); } stage = ns;
+      if (banner > 0) banner -= dt;
       const sp = 1.6 + Math.min(stage, auto ? 3 : 99) * 0.25;
       let dx = 0, dy = 0;
       if (auto) { [dx, dy] = autoSteer(); }
@@ -90,6 +92,8 @@
         g.globalAlpha = .3; g.beginPath(); g.arc(b.x, b.y, b.r + 2, 0, 6.28); g.fill(); g.globalAlpha = 1; }
       g.fillStyle = dead ? '#555' : '#ff3b4e'; heart(soul.x, soul.y, soul.r);
       g.restore();
+      if (banner > 0 && !dead) { g.save(); g.globalAlpha = Math.min(1, banner / 0.4); g.textAlign = 'center'; g.fillStyle = '#ffe14d';
+        g.font = '34px "VT323",monospace'; g.fillText('STAGE ' + stage, W / 2, H * 0.42); g.restore(); }
       if (!auto) { if (!started) overlay('THE VESSEL', 'click or press a key to begin');
         else if (dead) overlay('SHATTERED', 'survived ' + t.toFixed(1) + 's  ·  click to retry'); }
     }
