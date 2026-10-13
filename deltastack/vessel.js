@@ -33,7 +33,7 @@
 
     function step(dt) {
       if (dead || !started) return;
-      t += dt; stage = 1 + Math.floor(t / 12);
+      t += dt; const ns = 1 + Math.floor(t / 12); if (ns > stage && !auto) opts.onStage && opts.onStage(ns); stage = ns;
       const sp = 1.6 + Math.min(stage, auto ? 3 : 99) * 0.25;
       let dx = 0, dy = 0;
       if (auto) { [dx, dy] = autoSteer(); }

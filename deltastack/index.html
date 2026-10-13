@@ -109,6 +109,8 @@
   #fight:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   .hud{display:flex;gap:22px;margin-top:10px;font-size:22px;color:var(--muted);flex-wrap:wrap}
   .hud b{color:var(--ink)}
+  .mute{font:inherit;background:none;border:1px solid currentColor;color:inherit;border-radius:6px;padding:2px 8px;cursor:pointer}
+  .mute:focus-visible{outline:2px solid #ffe14d;outline-offset:2px}
   .prize{border:3px solid var(--gold);background:rgba(20,16,0,.7);padding:18px}
   .prize h3{font-family:"DotGothic16",monospace;font-weight:400;color:var(--gold);margin:0 0 10px;font-size:22px}
   .prize ol{margin:8px 0 12px;padding-left:22px}
@@ -218,7 +220,7 @@
     <div class="arena">
       <div>
         <canvas id="fight" width="640" height="420" tabindex="0" aria-label="The Vessel: a bullet dodging game. Use arrow keys or WASD, or drag on touch."></canvas>
-        <div class="hud"><span>TIME <b id="t">0.0</b></span><span>BEST <b id="best">0.0</b></span><span>STAGE <b id="stage">1</b></span></div>
+        <div class="hud"><span>TIME <b id="t">0.0</b></span><span>BEST <b id="best">0.0</b></span><span>STAGE <b id="stage">1</b></span><button class="mute" type="button" data-sfx-mute>♪ on</button></div>
         <div style="color:var(--muted);font-size:18px;margin-top:4px">Arrows / WASD to move · drag on touch</div>
       </div>
       <div class="prize" id="contest">
@@ -242,6 +244,7 @@
   </div>
 </footer>
 
+<script src="/sfx.js"></script>
 <script src="vessel.js"></script>
 <script>
 (function(){
@@ -254,9 +257,10 @@
   bEl.textContent=best.toFixed(1);
   const fight=document.getElementById('fight');
   createVessel(fight, {
-    onStart(){ fight.focus({preventScroll:true}); },
+    onStart(){ fight.focus({preventScroll:true}); window.PyrmiSFX&&PyrmiSFX.start(); },
+    onStage(){ window.PyrmiSFX&&PyrmiSFX.stage(); },
     onTime(t,s){ tEl.textContent=t.toFixed(1); sEl.textContent=s; },
-    onDeath(t){ if(t>best){ best=t; try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){} bEl.textContent=best.toFixed(1); } }
+    onDeath(t){ window.PyrmiSFX&&PyrmiSFX.death(); if(t>best){ best=t; try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){} bEl.textContent=best.toFixed(1); } }
   });
 })();
 </script>

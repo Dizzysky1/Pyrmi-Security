@@ -56,6 +56,8 @@
   #game{background:#000;border:2px solid var(--line);border-radius:14px;max-width:100%;touch-action:none;box-shadow:0 0 60px rgba(138,92,255,.15)}
   .hud{display:flex;gap:22px;font-family:"Press Start 2P",monospace;font-size:11px;color:var(--muted);flex-wrap:wrap;justify-content:center}
   .hud b{color:var(--ink)}
+  .mute{font:inherit;background:none;border:1px solid currentColor;color:inherit;border-radius:6px;padding:2px 8px;cursor:pointer}
+  .mute:focus-visible{outline:2px solid #ffe14d;outline-offset:2px}
   .hint{color:var(--muted);font-size:13px;text-align:center}
 
   /* cards */
@@ -107,6 +109,7 @@
         <span>TIME <b id="t">0.0</b></span>
         <span>BEST <b id="best">0.0</b></span>
         <span>STAGE <b id="stage">1</b></span>
+        <button class="mute" type="button" data-sfx-mute>♪ on</button>
       </div>
       <div class="hint">Arrow keys / WASD to move · drag on touch · don't let the soul get hit</div>
     </div>
@@ -147,6 +150,7 @@
   </footer>
 </div>
 
+<script src="/sfx.js"></script>
 <script>
 /* ---------- starfield backdrop (original) ---------- */
 (function(){
@@ -195,7 +199,7 @@
 
   function step(dt){
     if(dead||!started)return;
-    t+=dt; stage=1+Math.floor(t/12); stEl.textContent=stage;
+    t+=dt; const ns=1+Math.floor(t/12); if(ns>stage&&window.PyrmiSFX)PyrmiSFX.stage(); stage=ns; stEl.textContent=stage;
     const sp=1.6+stage*0.25;
 
     // movement
@@ -232,7 +236,7 @@
     tEl.textContent=t.toFixed(1);
   }
 
-  function die(){dead=true;shake=14;
+  function die(){dead=true;shake=14;if(window.PyrmiSFX)PyrmiSFX.death();
     if(t>best){best=t;try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){}bestEl.textContent=best.toFixed(1);}}
 
   function draw(){
@@ -274,7 +278,7 @@
     g.textAlign='center';g.fillStyle='#fff';g.font='20px "Press Start 2P",monospace';g.fillText(a,W/2,H/2-6);
     g.fillStyle='#9aa0c4';g.font='12px "Press Start 2P",monospace';g.fillText(b,W/2,H/2+26);}
 
-  function begin(){if(!started||dead){reset();started=true;dead=false;}}
+  function begin(){if(!started||dead){reset();started=true;dead=false;if(window.PyrmiSFX)PyrmiSFX.start();}}
   cv.addEventListener('pointerdown',begin);
   addEventListener('keydown',e=>{if(!started||dead)begin();});
 
