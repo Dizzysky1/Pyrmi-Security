@@ -12,6 +12,10 @@ Nothing here is posted anywhere. Luke reviews and posts himself.
   the page's "coming soon" can turn into a button pointing at that shop. Say where the shop lives.
 - **Contest prize:** the page says "a free lifetime key." Confirm that's the prize, and how winners get it.
 
+- **Custom 404 page (held back):** a styled 404 would be nice, but Vercel would then serve it for unknown `/api/...`
+  paths too, so your `api/198fa…py` endpoint's fake "NOT_FOUND" reply would stop matching the rest of the site's
+  404s and stand out. Say if you want it anyway.
+
 ## Launch post ideas (not posted)
 
 - "Most DELTARUNE mods only work one at a time. I made a tool that stacks them. Preview + a boss fight you can play
