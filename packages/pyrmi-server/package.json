@@ -1,0 +1,12 @@
+{
+  "name": "pyrmi-server",
+  "version": "0.1.0",
+  "description": "Server SDK for Pyrmi Security: verify a web game's score before you save it.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "keywords": ["anticheat", "anti-cheat", "leaderboard", "game", "security", "browser-games"],
+  "homepage": "https://pyrmi.com",
+  "license": "MIT"
+}
