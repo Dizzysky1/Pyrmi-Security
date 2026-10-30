@@ -17,10 +17,20 @@ function creds() {
 }
 
 function useMemory() { return process.env.PYRMI_KV === 'memory'; }
+
+// Preview deploys share the production Redis, so every key is namespaced by Vercel environment: test runs on a
+// preview never show up on pyrmi.com. Every command used in this project takes its key as the first argument.
+function prefix() {
+  if (process.env.PYRMI_KV_PREFIX !== undefined) return process.env.PYRMI_KV_PREFIX;
+  const env = process.env.VERCEL_ENV;
+  return env === 'production' ? 'live:' : env ? env + ':' : '';
+}
 function ready() { return useMemory() || !!creds(); }
 
 async function pipeline(cmds) {
   if (!cmds.length) return [];
+  const pre = prefix();
+  if (pre) cmds = cmds.map((c) => (c.length > 1 ? [c[0], pre + c[1], ...c.slice(2)] : c));
   if (useMemory()) return cmds.map((c) => mem.run(c.map(String)));
   const c = creds();
   if (!c) throw new Error('kv_not_configured');

@@ -29,7 +29,7 @@ const DEMO = {
 
 // Soft signals add risk; hard reasons reject outright.
 const WEIGHTS = {
-  automation: 45, no_client: 40, synthetic_input: 40, speed_hack: 35, time_warp: 35,
+  automation: 70, no_client: 40, synthetic_input: 40, speed_hack: 35, time_warp: 35,
   tampered_runtime: 30, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10,
 };
 const REASONS = {
