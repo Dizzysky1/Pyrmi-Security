@@ -59,6 +59,7 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | --- | --- | --- |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | yes | Upstash Redis. Vercel → Storage → Upstash for Redis fills both in. (`UPSTASH_REDIS_REST_*` also works.) |
 | `PYRMI_SECRET` | strongly recommended | 32+ random characters that sign session tokens. Without it, one is generated and kept in Redis, which works but means anyone with Redis access could forge tokens. |
+| `PYRMI_KV_PREFIX` | no | key prefix in Redis. Defaults to `live:` in production and `preview:` on previews, so they never mix |
 | `PYRMI_SIGNUPS` | no | set to `off` to stop new projects being created |
 | `PYRMI_MAX_PROJECTS` | no | total project cap (default 500) |
 | `PYRMI_PROJECTS_PER_IP` | no | new projects per network per day (default 3) |
