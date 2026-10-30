@@ -1,6 +1,6 @@
 'use strict';
 // GET /api/v1/dashboard   Bearer sk_...   -> stats, recent verdicts, flagged players
-// GET /api/v1/dashboard?demo=1            -> the same for the public Vessel demo (read only)
+// GET /api/v1/dashboard?demo=1            -> the same for the public sandbox demo (read only)
 const core = require('../_lib/core');
 const { send, fail, bearer, handle } = require('../_lib/http');
 
