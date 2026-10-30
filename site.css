@@ -4,6 +4,7 @@
   --ok:#3ddc84; --warn:#ffb020; --bad:#ff4d5e;
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Space Grotesk",system-ui,sans-serif}
 a{color:var(--v2);text-decoration:none}
 a:hover{text-decoration:underline}
@@ -54,7 +55,7 @@ h2.sec{font-family:"Press Start 2P",monospace;font-size:14px;margin:0 0 18px;col
 .steps,.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:820px){.steps,.grid3,.grid2{grid-template-columns:1fr}}
-.num{font-size:12px;color:var(--soul);margin-bottom:12px}
+.step-num{font-size:12px;color:var(--soul);margin-bottom:12px}
 .mini{border:1px solid var(--line);border-radius:14px;padding:16px;background:rgba(13,13,23,.7)}
 .mini b{display:block;margin-bottom:6px}
 .mini span{color:var(--muted);font-size:14px;line-height:1.5}
