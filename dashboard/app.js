@@ -71,7 +71,7 @@
   function render(d) {
     data = d; var p = d.project;
     $('d-name').textContent = p.name; $('d-pk').textContent = p.publicKey; $('d-demo').hidden = !p.demo;
-    $('owner-only').hidden = !!p.demo;
+    $('owner-only').hidden = !!p.demo; $('signout').textContent = p.demo ? 'exit demo' : 'sign out';
     var tot = { sessions: 0, accept: 0, review: 0, reject: 0 }, reasons = {};
     d.days.forEach(function (x) { tot.sessions += x.sessions; tot.accept += x.accept; tot.review += x.review; tot.reject += x.reject;
       for (var k in x.reasons) reasons[k] = (reasons[k] || 0) + x.reasons[k]; });
