@@ -22,14 +22,17 @@ export interface VerifyResult {
 export interface VerifyInput {
   /** The token from Pyrmi.start() in the browser. */
   token: string;
-  score: number;
-  /** How long the run lasted, if your game knows. Used for impossible-time and score-rate checks. */
+  /** Optional number the action carries (a score, points, a quantity). Checked against your caps. */
+  score?: number;
+  /** How long the action took, if you know. Used for impossible-time and rate checks. */
   durationMs?: number;
-  /** Your player id or name. Shown on the dashboard. */
+  /** Your user id or name. Shown on the dashboard. */
   player?: string;
-  /** Whatever your game records (inputs, moves). Only passed to simulate. */
+  /** Same as player. */
+  user?: string;
+  /** Whatever a deterministic app records (inputs, moves). Only passed to simulate. */
   replay?: unknown;
-  /** Re-run the game from the replay on your server. A different score means the run was faked. */
+  /** Re-run the app from the replay on your server. A different score means the result was faked. */
   simulate?: (replay: unknown) => { score: number; durationMs?: number } | Promise<{ score: number; durationMs?: number }>;
 }
 
@@ -38,7 +41,7 @@ export interface PyrmiOptions {
   /** Defaults to https://pyrmi.com/api/v1. Point it at your own deployment if you self-host. */
   endpoint?: string;
   timeoutMs?: number;
-  /** When Pyrmi can't be reached: false (default) rejects the score, true accepts it unverified. */
+  /** When Pyrmi can't be reached: false (default) rejects the action, true accepts it unverified. */
   failOpen?: boolean;
 }
 

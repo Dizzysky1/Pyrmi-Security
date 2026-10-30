@@ -1,5 +1,5 @@
 /* Pyrmi Security dashboard. The secret key lives in sessionStorage (or localStorage if "remember" is ticked) and is
-   only ever sent to this site's own API. Everything shown is escaped: player names come from players. */
+   only ever sent to this site's own API. Everything shown is escaped: user names come from your users. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
@@ -77,25 +77,25 @@
       for (var k in x.reasons) reasons[k] = (reasons[k] || 0) + x.reasons[k]; });
     $('s-sessions').textContent = tot.sessions; $('s-accept').textContent = tot.accept; $('s-review').textContent = tot.review; $('s-reject').textContent = tot.reject;
     var all = tot.accept + tot.review + tot.reject;
-    $('s-rate').textContent = all ? Math.round(tot.reject / all * 100) + '% of all scores' : 'of all scores';
+    $('s-rate').textContent = all ? Math.round(tot.reject / all * 100) + '% of all checks' : 'of all checks';
     $('chart').innerHTML = chart(d.days);
 
     var rs = Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; }).slice(0, 8);
     var rmax = rs.length ? reasons[rs[0]] : 1;
     $('why').innerHTML = rs.length ? rs.map(function (k) {
       return '<li><div class="row"><b>' + esc(d.reasonText[k] || k) + '</b><span class="num">' + reasons[k] + '</span></div><div class="bar"><i style="width:' + (reasons[k] / rmax * 100) + '%"></i></div></li>';
-    }).join('') : '<li class="empty">Nothing flagged yet. Reasons show up here as scores come in.</li>';
+    }).join('') : '<li class="empty">Nothing flagged yet. Reasons show up here as checks come in.</li>';
 
     var label = { accept: 'verified', review: 'flagged', reject: 'rejected' };
     $('events').tBodies[0].innerHTML = d.events.length ? d.events.map(function (e, i) {
       var top = e.reasons[0];
-      return '<tr class="ev" data-i="' + i + '"><td class="num">' + ago(e.t) + '</td><td>' + esc(e.player) + '</td><td class="num">' + esc(e.score) + '</td><td><span class="chip ' + e.verdict + '">' + label[e.verdict] + '</span></td><td class="num">' + e.risk + '</td><td>' + esc(top ? (d.reasonText[top.code] || top.code) : 'clean') + '</td></tr>';
-    }).join('') : '<tr><td colspan="6" class="empty">No scores yet. Once your server calls verify, every verdict lands here.</td></tr>';
+      return '<tr class="ev" data-i="' + i + '"><td class="num">' + ago(e.t) + '</td><td>' + esc(e.player) + '</td><td class="num">' + (e.score == null ? '·' : esc(e.score)) + '</td><td><span class="chip ' + e.verdict + '">' + label[e.verdict] + '</span></td><td class="num">' + e.risk + '</td><td>' + esc(top ? (d.reasonText[top.code] || top.code) : 'clean') + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="empty">Nothing checked yet. Once your server calls verify, every verdict lands here.</td></tr>';
 
     $('p-count').textContent = d.playerCount ? d.playerCount + ' seen in 30 days' : '';
     $('players').tBodies[0].innerHTML = d.players.length ? d.players.map(function (x) {
       return '<tr><td>' + esc(x.player) + '</td><td class="num">' + x.accept + '</td><td class="num">' + x.review + '</td><td class="num">' + x.reject + '</td><td class="num">' + x.lastRisk + '</td><td>' + esc(x.topReason ? (d.reasonText[x.topReason] || x.topReason) : '') + '</td><td class="num">' + (x.lastSeen ? ago(x.lastSeen) : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="empty">No players yet.</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="empty">No users yet.</td></tr>';
 
     if (!p.demo) {
       var f = $('settings'), s = p.settings;

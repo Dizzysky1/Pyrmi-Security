@@ -2,13 +2,13 @@
  *
  *   <script src="https://pyrmi.com/sdk/pyrmi.js" data-site="pk_..."></script>
  *
- *   const run = await Pyrmi.start();   // when a run begins: { token, seed, ... }
- *   Pyrmi.mark(gameSeconds);           // optional, a few times a second: lets the server spot speed hacks
- *   await Pyrmi.flush();               // when the run ends, before you send token + score to YOUR server
+ *   const s = await Pyrmi.start();     // when the page or a session begins: { token, seed, ... }
+ *   Pyrmi.mark(appSeconds);            // optional, for apps with their own clock (games, timers): spots speed hacks
+ *   await Pyrmi.flush();               // before you send s.token with the action to YOUR server
  *
  * This script can't stop someone who controls their own browser, and it doesn't try to: anything it "blocks" can be
- * switched off from devtools. It watches for signs of cheating and reports them, and your server asks Pyrmi for a
- * verdict before it saves a score. That's where the real protection is.
+ * switched off from devtools. It watches for bots, tampering and devtools and reports them, and your server asks
+ * Pyrmi for a verdict before it trusts the action. That's where the real protection is.
  */
 (function (w, d) {
   'use strict';
@@ -114,7 +114,7 @@
   var api = {
     version: '1.0.0',
     config: cfg,
-    // Starts a new session (call it when a run begins). Resolves to { token, seed, session, expiresAt }.
+    // Starts a new session (on page load, or when a protected flow begins). Resolves to { token, seed, session, expiresAt }.
     start: function (opts) {
       opts = opts || {};
       var site = opts.site || cfg.site;
@@ -131,9 +131,9 @@
           return { token: j.token, seed: j.seed, session: j.session, expiresAt: j.expiresAt };
         });
     },
-    // Optional: report the game's own clock (seconds). The server compares it with real time.
+    // Optional: report your app's own clock (seconds), e.g. a game or a timed quiz. The server compares it with real time.
     mark: function (seconds) { if (typeof seconds === 'number' && isFinite(seconds) && seconds >= 0) gameTime = seconds; },
-    // Sends a last beacon and waits for it. Call before sending the score to your server.
+    // Sends a last beacon and waits for it. Call before sending the action to your server.
     flush: function () { return beacon(false, true); },
     // Ends the session's beacons (e.g. back to the menu).
     stop: function () { if (timer) clearInterval(timer); if (firstBeacon) clearTimeout(firstBeacon); timer = firstBeacon = null; },
