@@ -1,0 +1,7 @@
+# Pyrmi Security
+
+> Open-source (MIT) anti-cheat for web games and leaderboards: a browser script that starts a signed session per run and reports cheat signals, and a server check (`pyrmi-server` on npm, or POST /api/v1/verify) that returns accept/review/reject with reasons before a score is saved.
+
+- [Install guide for coding agents](https://pyrmi.com/install.md): step-by-step wiring for client and server
+- [Docs](https://pyrmi.com/docs/): how it works, verdicts, settings, self-hosting
+- [Dashboard](https://pyrmi.com/dashboard/): create a project and get keys
