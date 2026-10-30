@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pyrmi Security · anti-cheat for web games</title>
-<meta name="description" content="Pyrmi Security: open-source anti-cheat for browser games and leaderboards. One script tag, a few lines on your server, and a dashboard that shows every flagged score and why.">
-<meta property="og:title" content="Pyrmi Security · anti-cheat for web games">
-<meta property="og:description" content="One script tag, three lines on your server. Catch bots, speed hacks and faked scores. Open source, MIT.">
+<title>Pyrmi Security · bot and tamper detection for your site</title>
+<meta name="description" content="Pyrmi Security: open-source bot, tamper and devtools detection for websites. One script tag, a few lines on your server, and a dashboard that shows every flagged request and why.">
+<meta property="og:title" content="Pyrmi Security · bot and tamper detection for your site">
+<meta property="og:description" content="One script tag, three lines on your server. Catch bots, scrapers, replayed requests and tampered pages. Open source, MIT.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pyrmi.com/">
 <meta property="og:site_name" content="Pyrmi Security">
 <meta property="og:image" content="https://pyrmi.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Vessel, the bullet-hell game Pyrmi Security protects as its live demo">
+<meta property="og:image:alt" content="Pyrmi Security: bot and tamper detection for your site">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pyrmi Security · anti-cheat for web games">
-<meta name="twitter:description" content="One script tag, three lines on your server. Catch bots, speed hacks and faked scores.">
+<meta name="twitter:title" content="Pyrmi Security · bot and tamper detection for your site">
+<meta name="twitter:description" content="One script tag, three lines on your server. Catch bots, scrapers, replayed requests and tampered pages.">
 <meta name="twitter:image" content="https://pyrmi.com/og.png">
 <link rel="canonical" href="https://pyrmi.com/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -46,10 +46,10 @@
 
   <section class="hero">
     <div class="eyebrow pix">OPEN SOURCE · MIT</div>
-    <h1>Anti-cheat for <span class="g">web games</span>.<br>One script tag.</h1>
-    <p>Pyrmi spots bots, speed hacks and faked scores in the browser. Your server asks for a verdict before it saves a score, and the dashboard shows every flag and why.</p>
+    <h1>Bot and tamper detection<br>for <span class="g">your site</span>. One script tag.</h1>
+    <p>Pyrmi spots bots, scrapers, replayed requests and tampered pages in the browser. Your server asks for a verdict before it trusts a sign-up, a vote, a checkout or a score, and the dashboard shows every flag and why.</p>
     <div class="cta">
-      <a class="btn primary" href="#demo">▶ try to cheat the demo</a>
+      <a class="btn primary" href="#demo">▶ try to get flagged</a>
       <a class="btn" href="/dashboard/">get your keys →</a>
     </div>
   </section>
@@ -60,31 +60,30 @@
       <div class="card">
         <div class="step-num pix">1</div>
         <h3>Add the script</h3>
-        <p>Each run gets a signed session from a real page load. The script watches for automation, scripted input, replaced browser functions and clock tricks.</p>
+        <p>Each visit gets a signed session from a real page load. The script watches for automation, scripted input, replaced browser functions, devtools and clock tricks.</p>
       </div>
       <div class="card">
         <div class="step-num pix">2</div>
         <h3>Check on your server</h3>
-        <p>Before saving a score, call <code>pyrmi.verify()</code>. You get <b>accept</b>, <b>review</b> or <b>reject</b>, a risk score from 0 to 100, and the reasons.</p>
+        <p>Before you act on a request, call <code>pyrmi.verify()</code>. You get <b>accept</b>, <b>review</b> or <b>reject</b>, a risk score from 0 to 100, and the reasons.</p>
       </div>
       <div class="card">
         <div class="step-num pix">3</div>
         <h3>Watch it work</h3>
-        <p>The dashboard shows every verdict, which checks fired, and which players keep getting flagged. Tune the limits as you learn your game.</p>
+        <p>The dashboard shows every verdict, which checks fired, and which users keep getting flagged, so you see how well it's working instead of a yes or no.</p>
       </div>
     </div>
 
     <div class="code-pair">
       <div class="code">
-        <div class="code-h">in your game page <button class="copy" data-copy="c1">copy</button></div>
+        <div class="code-h">in your page <button class="copy" data-copy="c1">copy</button></div>
 <pre id="c1">&lt;script src="https://pyrmi.com/sdk/pyrmi.js" data-site="pk_..."&gt;&lt;/script&gt;
 &lt;script&gt;
-  // when a run starts
-  const run = await Pyrmi.start();
-  // when it ends: send run.token with the score
+  const s = await Pyrmi.start();   // on page load
+  // when the user signs up, votes, buys...
   await Pyrmi.flush();
-  await fetch('/scores', { method: 'POST',
-    body: JSON.stringify({ token: run.token, score }) });
+  await fetch('/signup', { method: 'POST',
+    body: JSON.stringify({ token: s.token, email }) });
 &lt;/script&gt;</pre>
       </div>
       <div class="code">
@@ -92,8 +91,8 @@
 <pre id="c2">const { Pyrmi } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
-const v = await pyrmi.verify({ token, score, player });
-if (v.verdict !== 'reject') saveScore(player, score);</pre>
+const v = await pyrmi.verify({ token, user: email });
+if (v.verdict === 'reject') return res.status(403).end();</pre>
       </div>
     </div>
   </section>
@@ -101,44 +100,40 @@ if (v.verdict !== 'reject') saveScore(player, score);</pre>
   <section id="catches">
     <h2 class="sec">// what it catches</h2>
     <div class="grid3">
-      <div class="mini"><b>Edited scores</b><span>Deterministic games replay the recorded inputs on the server. A memory hack or a typed-in score won't reproduce.</span></div>
-      <div class="mini"><b>Direct API calls</b><span>No signed session from a real page, or a session that never sent telemetry, and the score is flagged.</span></div>
-      <div class="mini"><b>Replayed submissions</b><span>Each session token works once and expires. Sending the same winning request twice fails.</span></div>
       <div class="mini"><b>Bots and headless browsers</b><span>Webdriver flags, headless Chrome, Playwright, Puppeteer, Selenium and Cypress markers.</span></div>
-      <div class="mini"><b>Speed and slow-mo hacks</b><span>The page clock and your game clock are checked against the server's real time.</span></div>
-      <div class="mini"><b>Impossible runs</b><span>Runs longer than the session existed, scores past your caps, or scores that grow too fast.</span></div>
-      <div class="mini"><b>Scripted input</b><span>Synthetic events and key timing that's too even or too fast for a human hand.</span></div>
-      <div class="mini"><b>Tampered runtime</b><span>Replaced <code>performance.now</code>, <code>requestAnimationFrame</code>, <code>fetch</code> and other built-ins.</span></div>
+      <div class="mini"><b>Scrapers and direct API calls</b><span>A request with no signed session from a real page, or a session that never reported from one, gets flagged.</span></div>
+      <div class="mini"><b>Replayed requests</b><span>Each session token works once and expires. Sending the same request twice fails.</span></div>
+      <div class="mini"><b>Forged or edited tokens</b><span>Sessions are signed on the server. Change one byte and the verdict is reject.</span></div>
+      <div class="mini"><b>Tampered pages</b><span>Replaced <code>fetch</code>, <code>performance.now</code>, <code>requestAnimationFrame</code> and other built-ins.</span></div>
+      <div class="mini"><b>Devtools</b><span>An open devtools panel is noted on the session, so you can weigh it with everything else.</span></div>
+      <div class="mini"><b>Scripted input</b><span>Synthetic events and typing or clicking that's too even or too fast for a human hand.</span></div>
+      <div class="mini"><b>Impossible values</b><span>Actions sent faster than a person could, numbers past your caps, or values that grow too fast.</span></div>
       <div class="mini honest"><b>What it won't do</b><span>Block devtools or "stop code running". Whoever owns the browser can switch any of that off. Pyrmi watches and reports, and your server has the final say.</span></div>
     </div>
   </section>
 
   <section id="demo">
-    <h2 class="sec">// live demo: the vessel</h2>
-    <p class="lead">Our own bullet-hell game, protected by Pyrmi. Every run is replayed on the server before it reaches the board. Try to cheat it, then check the <a href="/dashboard/?demo=1">public demo dashboard</a> to see what we caught.</p>
+    <h2 class="sec">// sandbox: try to get flagged</h2>
+    <p class="lead">This box stands in for a form on your site. Each button really does what it says, and the verdict is the one your server would get. Then check the <a href="/dashboard/?demo=1">public sandbox dashboard</a> to see it logged.</p>
     <div class="demo">
-      <div class="stage">
-        <canvas id="game" width="640" height="420" tabindex="0" aria-label="The Vessel: a bullet dodging game. Click or tap to start, then use arrow keys or WASD, or drag on touch."></canvas>
-        <div class="hud">
-          <span>TIME <b id="t">0.0</b></span>
-          <span>BEST <b id="best">0.0</b></span>
-          <span>STAGE <b id="stage">1</b></span>
-          <button class="mute" type="button" data-sfx-mute>♪ on</button>
-          <button class="mute" type="button" data-share="/#demo">share best</button>
+      <div class="panel sandbox">
+        <div class="panel-h">a protected action</div>
+        <label class="field">value it carries <span class="muted">(a score, points, a quantity · limit 1000)</span><input id="value" inputmode="decimal" value="42"></label>
+        <div class="acts">
+          <button class="btn primary" type="button" data-act="honest">send it normally</button>
+          <button class="btn" type="button" data-act="replay">replay the last request</button>
+          <button class="btn" type="button" data-act="edit">edit the token</button>
+          <button class="btn" type="button" data-act="big">send an impossible value</button>
+          <button class="btn" type="button" data-act="direct">skip the page (direct API call)</button>
         </div>
-        <label class="name">name on the board <input id="name" maxlength="16" placeholder="your name" autocomplete="nickname"></label>
-        <div class="hint">Click the arena, then arrow keys / WASD · drag anywhere on touch · leaving the tab ends a run</div>
+        <p class="muted small-t">Want more? Open devtools, or paste <code>performance.now = () =&gt; 0</code> into the console, then send it normally again.</p>
       </div>
       <aside class="side">
         <div class="panel" id="verdict" hidden>
-          <div class="panel-h">last run</div>
-          <div class="verdict-row"><span id="v-chip" class="chip"></span><span id="v-time" class="pix small"></span></div>
+          <div class="panel-h">verdict</div>
+          <div class="verdict-row"><span id="v-chip" class="chip"></span><span id="v-risk-n" class="pix small"></span></div>
           <div class="meter"><i id="v-risk"></i></div>
           <ul id="v-reasons" class="reasons"></ul>
-        </div>
-        <div class="panel">
-          <div class="panel-h">this week <span id="week" class="muted"></span></div>
-          <ol id="board" class="board"><li class="muted">loading…</li></ol>
         </div>
         <div class="panel">
           <div class="panel-h">what pyrmi sees right now</div>
@@ -150,10 +145,10 @@ if (v.verdict !== 'reject') saveScore(player, score);</pre>
 
   <section id="agents">
     <h2 class="sec">// set it up with your ai agent</h2>
-    <p class="lead">Building with Claude Code, Cursor or another coding agent? Paste this in and it will wire Pyrmi into your game, client and server.</p>
+    <p class="lead">Building with Claude Code, Cursor or another coding agent? Paste this in and it will wire Pyrmi into your pages and your server.</p>
     <div class="code">
       <div class="code-h">prompt <button class="copy" data-copy="c3">copy</button></div>
-<pre id="c3">Read https://pyrmi.com/install.md and add Pyrmi Security to this game. Find where a run starts and ends and where scores are saved on the server, wire in the script tag and pyrmi-server as described, keep my secret key in an environment variable, and tell me which env vars to set.</pre>
+<pre id="c3">Read https://pyrmi.com/install.md and add Pyrmi Security to this site. Find the requests worth protecting (sign-ups, logins, votes, checkouts, scores, any endpoint bots hit), wire in the script tag and pyrmi-server as described, keep my secret key in an environment variable, and tell me which env vars to set.</pre>
     </div>
   </section>
 
@@ -172,16 +167,12 @@ if (v.verdict !== 'reject') saveScore(player, score);</pre>
   </section>
 
   <footer>
-    Pyrmi Security · made by Dizzysky1 · <a href="/docs/">docs</a> · <a href="/dashboard/">dashboard</a> · <a href="/deltastack/">deltastack</a> · <a href="/rr/">the classic</a>
+    Pyrmi Security · made by Dizzysky1 · <a href="/docs/">docs</a> · <a href="/dashboard/">dashboard</a> · <a href="/install.md">install guide</a>
   </footer>
 </div>
 
-<script src="/sdk/pyrmi.js" data-site="pk_demo_vessel"></script>
-<script src="/sfx.js"></script>
-<script src="/share.js"></script>
-<script src="/vessel/engine.js"></script>
-<script src="/vessel/game.js"></script>
+<script src="/sdk/pyrmi.js" data-site="pk_demo_sandbox"></script>
 <script src="/site.js"></script>
-<script src="/vessel/demo.js"></script>
+<script src="/sandbox.js"></script>
 </body>
 </html>

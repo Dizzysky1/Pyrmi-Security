@@ -1,8 +1,8 @@
 'use strict';
 // POST /api/v1/verify   Authorization: Bearer sk_...
-//   { token, score, durationMs?, player?, replay?: { check: "match"|"mismatch"|"none", detail? } }
+//   { token, score?, durationMs?, player? (or user), replay?: { check: "match"|"mismatch"|"none", detail? } }
 //   -> { verdict: "accept"|"review"|"reject", risk: 0-100, reasons: [...] }
-// Called by the game's own server (see packages/pyrmi-server) before it saves a score.
+// Called by your own server (see packages/pyrmi-server) before it trusts an action from the browser.
 const core = require('../_lib/core');
 const { send, fail, readJson, bearer, fromBrowser, handle } = require('../_lib/http');
 

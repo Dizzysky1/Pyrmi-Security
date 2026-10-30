@@ -1,12 +1,11 @@
 'use strict';
-// End-to-end tests for the API with the in-memory store:  node --test tests/
+// End-to-end tests for the API with the in-memory store:  node --test tests/*.test.js
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const { serve } = require('../scripts/dev.js');
-const Engine = require('../vessel/engine.js');
 
 let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
@@ -96,41 +95,54 @@ test('settings update and secret rotation', async () => {
   assert.equal((await call('GET', '/api/v1/project', undefined, { Authorization: 'Bearer ' + sk })).status, 200);
 });
 
-// ---- The Vessel demo ----
-function playRun(seed) {
-  const s = Engine.create(seed), rec = Engine.recorder();
-  while (!s.dead) { const [qx, qy] = Engine.quantize(s.tick % 120 < 60 ? 3.4 : -3.4, 0); rec.push(qx, qy); Engine.step(s, qx, qy); }
-  return { ticks: s.tick, replay: rec.data() };
-}
-
-test('vessel: honest replay is accepted and lands on the board', async () => {
-  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_vessel' })).body;
+test('the value is optional and user works as an alias for player', async () => {
+  const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
   await beacon(s.token, {});
-  const run = playRun(s.seed);
-  const v = await call('POST', '/api/v1/vessel', { token: s.token, name: 'honest', ticks: run.ticks, replay: run.replay });
+  const v = await call('POST', '/api/v1/verify', { token: s.token, user: 'carol@example.com' }, { Authorization: 'Bearer ' + sk });
+  assert.equal(v.body.verdict, 'accept', JSON.stringify(v.body));
+  assert.equal(v.body.player, 'carol@example.com');
+  assert.equal(v.body.score, null);
+});
+
+// ---- the homepage sandbox ----
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('sandbox: a normal request is accepted, a replay of it is rejected', async () => {
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
+  await beacon(s.token, {});
+  await wait(1600);
+  const v = await call('POST', '/api/v1/demo', { token: s.token, value: 42, visitor: 'visitor-abc123' });
   assert.equal(v.body.verdict, 'accept', JSON.stringify(v.body.reasons));
-  assert.equal(v.body.rank, 1);
-  assert.equal(v.body.board[0].name, 'honest');
+  assert.equal(v.body.player, 'visitor-abc123');
+  const again = await call('POST', '/api/v1/demo', { token: s.token, value: 42, visitor: 'visitor-abc123' });
+  assert.equal(again.body.verdict, 'reject');
+  assert.ok(again.body.reasons.some((r) => r.code === 'token_reused'));
 });
 
-test('vessel: edited time and fake inputs are rejected', async () => {
-  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_vessel' })).body;
-  await beacon(s.token, {});
-  const run = playRun(s.seed);
-  const v = await call('POST', '/api/v1/vessel', { token: s.token, name: 'cheater', ticks: run.ticks + 600, replay: run.replay });
-  assert.equal(v.body.verdict, 'reject');
-  assert.ok(v.body.reasons.some((r) => r.code === 'replay_mismatch'));
-  const s2 = (await call('POST', '/api/v1/session', { site: 'pk_demo_vessel' })).body;
-  const tele = await call('POST', '/api/v1/vessel', { token: s2.token, name: 'cheater', ticks: 10, replay: [10, 500, 0] });
-  assert.equal(tele.body.verdict, 'reject');
-  assert.ok(!tele.body.board.some((r) => r.name === 'cheater'));
+test('sandbox: direct API calls, huge values and edited tokens are rejected', async () => {
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
+  const direct = await call('POST', '/api/v1/demo', { token: s.token, value: 42, visitor: '<b>me</b>' });
+  assert.equal(direct.body.verdict, 'reject');
+  assert.ok(direct.body.reasons.some((r) => r.code === 'too_short'));
+  assert.ok(direct.body.reasons.some((r) => r.code === 'no_client'));
+  assert.equal(direct.body.player, 'visitor');
+  const s2 = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
+  await beacon(s2.token, {});
+  await wait(1600);
+  const big = await call('POST', '/api/v1/demo', { token: s2.token, value: 999999 });
+  assert.ok(big.body.reasons.some((r) => r.code === 'score_over_max'));
+  const [body, mac] = s2.token.split('.');
+  const t = JSON.parse(Buffer.from(body, 'base64url').toString()); t.i -= 3600000;
+  const edited = await call('POST', '/api/v1/demo', { token: Buffer.from(JSON.stringify(t)).toString('base64url') + '.' + mac });
+  assert.ok(edited.body.reasons.some((r) => r.code === 'invalid_token'));
 });
 
-test('vessel: public demo dashboard is readable without a key', async () => {
+test('sandbox: public demo dashboard is readable without a key, and its settings are locked', async () => {
   const d = await call('GET', '/api/v1/dashboard?demo=1');
   assert.equal(d.status, 200);
   assert.equal(d.body.project.demo, true);
-  assert.ok(d.body.events.length >= 2);
+  assert.ok(d.body.events.length >= 3);
+  assert.equal((await fetch(base + '/api/v1/vessel')).status, 404);
 });
 
 test('pyrmi-server SDK verifies through the API, including a simulate hook', async () => {

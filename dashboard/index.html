@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dashboard · Pyrmi Security</title>
-<meta name="description" content="Your Pyrmi Security dashboard: every score verdict, the checks that fired, and the players who keep getting flagged.">
+<meta name="description" content="Your Pyrmi Security dashboard: every verdict, the checks that fired, and the users who keep getting flagged.">
 <meta name="robots" content="noindex">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -21,19 +21,19 @@
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
-    <nav><a href="/docs/">docs</a><a href="/#demo">demo</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
+    <nav><a href="/docs/">docs</a><a href="/#demo">sandbox</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
   </header>
 
   <!-- signed out -->
   <section id="gate" hidden>
     <h1 class="title">Your dashboard</h1>
-    <p class="lead">No account needed. A project gives you two keys: a public one for your game page and a secret one for your server. The secret key also opens this dashboard.</p>
+    <p class="lead">No account needed. A project gives you two keys: a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
     <div class="grid2">
       <form class="card" id="create">
         <h3>New project</h3>
-        <label>Game name<input name="name" maxlength="48" required placeholder="My cool game"></label>
+        <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
         <label>Allowed pages <span class="muted">(optional, one per line)</span>
-          <textarea name="origins" rows="2" placeholder="https://mygame.com"></textarea></label>
+          <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
         <button class="btn primary" type="submit">create project</button>
         <p class="err" id="create-err" role="alert"></p>
       </form>
@@ -43,7 +43,7 @@
         <label class="check"><input type="checkbox" name="remember"> remember on this device</label>
         <button class="btn" type="submit">open dashboard</button>
         <p class="err" id="login-err" role="alert"></p>
-        <p class="muted small-t">Or look around the <a href="?demo=1">live demo dashboard</a> for The Vessel.</p>
+        <p class="muted small-t">Or look around the <a href="?demo=1">public dashboard</a> for the pyrmi.com sandbox.</p>
       </form>
     </div>
   </section>
@@ -53,7 +53,7 @@
     <h1 class="title">Project created</h1>
     <div class="card warn">
       <h3>Save your secret key now</h3>
-      <p>It's shown this one time. It goes in your server's environment as <code>PYRMI_SECRET_KEY</code> and opens this dashboard. Never put it in your game's page.</p>
+      <p>It's shown this one time. It goes in your server's environment as <code>PYRMI_SECRET_KEY</code> and opens this dashboard. Never put it in a web page.</p>
     </div>
     <div class="keyrow"><span>public key</span><code id="k-pk"></code><button class="copy" data-copy="k-pk">copy</button></div>
     <div class="keyrow"><span>secret key</span><code id="k-sk"></code><button class="copy" data-copy="k-sk">copy</button></div>
@@ -73,9 +73,9 @@
 
     <div class="tiles">
       <div class="tile"><span>sessions</span><b id="s-sessions">0</b><i>last 14 days</i></div>
-      <div class="tile ok"><span>verified</span><b id="s-accept">0</b><i>accepted scores</i></div>
+      <div class="tile ok"><span>verified</span><b id="s-accept">0</b><i>accepted</i></div>
       <div class="tile warn"><span>flagged</span><b id="s-review">0</b><i>accepted, needs a look</i></div>
-      <div class="tile bad"><span>rejected</span><b id="s-reject">0</b><i id="s-rate">of all scores</i></div>
+      <div class="tile bad"><span>rejected</span><b id="s-reject">0</b><i id="s-rate">of all checks</i></div>
     </div>
 
     <div class="grid2 gap">
@@ -85,47 +85,47 @@
         <div class="legend"><span class="lg ok">verified</span><span class="lg warn">flagged</span><span class="lg bad">rejected</span></div>
       </div>
       <div class="panel">
-        <div class="panel-h">why scores were flagged</div>
+        <div class="panel-h">why requests were flagged</div>
         <ul id="why" class="why"></ul>
       </div>
     </div>
 
     <div class="panel gap">
       <div class="panel-h">recent verdicts <span class="muted">click a row for details</span></div>
-      <div class="tbl-wrap"><table class="tbl" id="events"><thead><tr><th>when</th><th>player</th><th>score</th><th>verdict</th><th>risk</th><th>top reason</th></tr></thead><tbody></tbody></table></div>
+      <div class="tbl-wrap"><table class="tbl" id="events"><thead><tr><th>when</th><th>user</th><th>value</th><th>verdict</th><th>risk</th><th>top reason</th></tr></thead><tbody></tbody></table></div>
     </div>
 
     <div class="panel gap">
-      <div class="panel-h">players <span class="muted" id="p-count"></span></div>
-      <div class="tbl-wrap"><table class="tbl" id="players"><thead><tr><th>player</th><th>verified</th><th>flagged</th><th>rejected</th><th>last risk</th><th>usual reason</th><th>last seen</th></tr></thead><tbody></tbody></table></div>
+      <div class="panel-h">users <span class="muted" id="p-count"></span></div>
+      <div class="tbl-wrap"><table class="tbl" id="players"><thead><tr><th>user</th><th>verified</th><th>flagged</th><th>rejected</th><th>last risk</th><th>usual reason</th><th>last seen</th></tr></thead><tbody></tbody></table></div>
     </div>
 
     <div class="grid2 gap" id="owner-only">
       <form class="panel" id="settings">
         <div class="panel-h">settings</div>
         <div class="form-grid">
-          <label>Game name<input name="name" maxlength="48"></label>
-          <label>Max score <span class="muted">(blank = none)</span><input name="maxScore" inputmode="decimal"></label>
-          <label>Max score per second<input name="maxScorePerSec" inputmode="decimal"></label>
+          <label>Name<input name="name" maxlength="48"></label>
+          <label>Max value <span class="muted">(blank = none)</span><input name="maxScore" inputmode="decimal"></label>
+          <label>Max value per second<input name="maxScorePerSec" inputmode="decimal"></label>
           <label>Shortest run (ms)<input name="minDurationMs" inputmode="numeric"></label>
           <label>Flag at risk<input name="reviewAt" inputmode="numeric"></label>
           <label>Reject at risk<input name="rejectAt" inputmode="numeric"></label>
         </div>
         <label>Allowed pages <span class="muted">(one per line, blank = any)</span><textarea name="origins" rows="2"></textarea></label>
-        <label class="check"><input type="checkbox" name="strictClock"> flag games running slower than real time (only if your game never pauses)</label>
+        <label class="check"><input type="checkbox" name="strictClock"> flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)</label>
         <button class="btn" type="submit">save settings</button>
         <p class="err" id="settings-msg" role="status"></p>
       </form>
       <div class="panel">
         <div class="panel-h">install</div>
-        <p class="muted small-t">In your game page:</p>
+        <p class="muted small-t">In your pages:</p>
         <div class="code"><pre id="i-snippet"></pre></div>
         <p class="muted small-t">Then follow the <a href="/docs/">docs</a>, or hand <a href="/install.md">install.md</a> to your coding agent.</p>
         <div class="panel-h" style="margin-top:18px">secret key</div>
         <p class="muted small-t">If your secret key leaks, make a new one. The old one stops working at once, so update your server right after.</p>
         <button class="btn" type="button" id="rotate">make a new secret key</button>
         <div id="rotate-confirm" hidden class="confirm">
-          <span>Your server will fail to verify scores until you update it.</span>
+          <span>Your server will fail to verify until you update it.</span>
           <button class="btn primary" type="button" id="rotate-yes">yes, rotate</button>
           <button class="btn" type="button" id="rotate-no">cancel</button>
         </div>
