@@ -95,7 +95,7 @@ saveScore(player, score, { flagged: v.verdict === 'review' });</pre></div>
       <tr><td><code>score_over_max</code> / <code>score_too_fast</code> / <code>too_short</code></td><td>reject</td><td>Breaks a limit you set.</td></tr>
       <tr><td><code>replay_mismatch</code></td><td>reject</td><td>Replaying the inputs gave a different result.</td></tr>
       <tr><td><code>rate_limited</code></td><td>reject</td><td>Too many scores from one player in a minute.</td></tr>
-      <tr><td><code>automation</code></td><td>+45</td><td>Webdriver, headless or a bot framework.</td></tr>
+      <tr><td><code>automation</code></td><td>+70</td><td>Webdriver, headless or a bot framework. Real players never have these, so this alone rejects at the default settings.</td></tr>
       <tr><td><code>no_client</code></td><td>+40</td><td>No telemetry ever came from a real page: a direct API call.</td></tr>
       <tr><td><code>synthetic_input</code></td><td>+40</td><td>Input events created by script.</td></tr>
       <tr><td><code>speed_hack</code> / <code>time_warp</code></td><td>+35</td><td>Page or game clock out of step with real time.</td></tr>
