@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PYRMI — survive the Vessel</title>
-<meta name="description" content="PYRMI: dodge the Vessel's bullet-hell patterns, and get ready for the weekly contest: top survivor wins a lifetime DeltaStack key.">
-<meta property="og:title" content="PYRMI — survive the Vessel">
-<meta property="og:description" content="A browser bullet-hell boss fight. Survive the longest this week.">
+<title>Pyrmi Security · bot and tamper detection for your site</title>
+<meta name="description" content="Pyrmi Security: open-source bot, tamper and devtools detection for websites. One script tag, a few lines on your server, and a dashboard that shows every flagged request and why.">
+<meta property="og:title" content="Pyrmi Security · bot and tamper detection for your site">
+<meta property="og:description" content="One script tag, three lines on your server. Catch bots, scrapers, replayed requests and tampered pages. Open source, MIT.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pyrmi.com/">
-<meta property="og:site_name" content="PYRMI">
+<meta property="og:site_name" content="Pyrmi Security">
 <meta property="og:image" content="https://pyrmi.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="PYRMI: The Vessel, a bullet-hell boss fight in your browser">
+<meta property="og:image:alt" content="Pyrmi Security: bot and tamper detection for your site">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="PYRMI — survive the Vessel">
-<meta name="twitter:description" content="A browser bullet-hell boss fight. Survive the longest this week.">
+<meta name="twitter:title" content="Pyrmi Security · bot and tamper detection for your site">
+<meta name="twitter:description" content="One script tag, three lines on your server. Catch bots, scrapers, replayed requests and tampered pages.">
 <meta name="twitter:image" content="https://pyrmi.com/og.png">
 <link rel="canonical" href="https://pyrmi.com/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -25,74 +25,8 @@
 <meta name="theme-color" content="#07070c">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#07070c; --bg2:#0d0d17; --ink:#eef0ff; --muted:#9aa0c4;
-    --soul:#ff3b4e; --v1:#8a5cff; --v2:#36e0d0; --line:rgba(255,255,255,.08);
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Space Grotesk",system-ui,sans-serif}
-  a{color:var(--v2);text-decoration:none}
-  a:hover{text-decoration:underline}
-  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
-  .pix{font-family:"Press Start 2P",monospace;line-height:1.5}
-
-  /* animated grid/particle backdrop (all original) */
-  #bg{position:fixed;inset:0;z-index:-2;background:
-      radial-gradient(1200px 600px at 50% -10%, rgba(138,92,255,.18), transparent 60%),
-      radial-gradient(900px 500px at 90% 110%, rgba(54,224,208,.12), transparent 60%),
-      var(--bg)}
-  #stars{position:fixed;inset:0;z-index:-1;opacity:.5}
-  .scan{position:fixed;inset:0;z-index:-1;pointer-events:none;
-    background:repeating-linear-gradient(to bottom,rgba(255,255,255,.03) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
-
-  header{padding:26px 0 8px;display:flex;align-items:center;justify-content:space-between;gap:16px}
-  .brand{font-family:"Press Start 2P",monospace;font-size:20px;letter-spacing:2px;color:var(--ink)}
-  .brand b{color:var(--soul)}
-  nav a{color:var(--muted);font-size:14px;margin-left:18px}
-
-  .hero{padding:48px 0 24px;text-align:center}
-  .hero h1{font-family:"Press Start 2P",monospace;font-size:clamp(22px,5vw,40px);line-height:1.4;margin:0 0 18px}
-  .hero h1 .g{color:var(--v1)}
-  .hero p{color:var(--muted);font-size:18px;max-width:620px;margin:0 auto 26px}
-  .cta{display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center}
-  .btn{font-family:"Press Start 2P",monospace;font-size:12px;padding:14px 18px;border-radius:12px;
-    border:1px solid var(--line);background:var(--bg2);color:var(--ink);cursor:pointer;transition:.15s}
-  .btn:hover{transform:translateY(-2px);border-color:var(--v1)}
-  .btn.primary{background:#d61e33;border-color:#d61e33;color:#fff}
-  .btn.primary:hover{box-shadow:0 8px 30px rgba(255,59,78,.35)}
-
-  section{padding:34px 0}
-  h2.sec{font-family:"Press Start 2P",monospace;font-size:16px;margin:0 0 18px;color:var(--v2)}
-
-  /* game */
-  .stage{display:flex;flex-direction:column;align-items:center;gap:12px}
-  #game:focus-visible{outline:3px solid var(--v2);outline-offset:3px}
-  #game{background:#000;border:2px solid var(--line);border-radius:14px;max-width:100%;touch-action:none;box-shadow:0 0 60px rgba(138,92,255,.15)}
-  .hud{display:flex;gap:22px;font-family:"Press Start 2P",monospace;font-size:11px;color:var(--muted);flex-wrap:wrap;justify-content:center}
-  .hud b{color:var(--ink)}
-  .mute{font:inherit;background:none;border:1px solid currentColor;color:inherit;border-radius:6px;padding:2px 8px;cursor:pointer}
-  .mute:focus-visible{outline:2px solid #ffe14d;outline-offset:2px}
-  .hint{color:var(--muted);font-size:13px;text-align:center}
-  @media (prefers-reduced-motion: reduce){#stars{display:none}}
-
-  /* cards */
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  @media(max-width:720px){.grid{grid-template-columns:1fr}}
-  .card{border:1px solid var(--line);background:linear-gradient(180deg,var(--bg2),#0a0a12);border-radius:16px;padding:22px;position:relative;overflow:hidden}
-  .card h3{margin:0 0 8px;font-size:20px}
-  .card p{color:var(--muted);margin:0 0 14px}
-  .tag{position:absolute;top:14px;right:14px;font-family:"Press Start 2P",monospace;font-size:9px;
-    padding:6px 8px;border-radius:999px;background:rgba(138,92,255,.15);color:var(--v1);border:1px solid rgba(138,92,255,.4)}
-  .tag.soon{background:rgba(255,59,78,.12);color:var(--soul);border-color:rgba(255,59,78,.4)}
-  .lock{filter:blur(1px);opacity:.6}
-
-  .board{border:1px dashed var(--line);border-radius:16px;padding:22px;text-align:center}
-  .board .pix{font-size:11px;color:var(--v2)}
-
-  footer{border-top:1px solid var(--line);margin-top:40px;padding:26px 0;color:var(--muted);font-size:13px;text-align:center}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
 </head>
 <body>
 <div id="bg"></div>
@@ -100,226 +34,145 @@
 <div class="scan"></div>
 
 <div class="wrap">
-  <header>
-    <div class="brand">PY<b>R</b>MI</div>
+  <header class="top">
+    <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
     <nav>
-      <a href="#play">play</a>
-      <a href="#store">store</a>
-      <a href="#board">board</a>
-      <a href="/deltastack/">deltastack</a>
+      <a href="#how">how it works</a>
+      <a href="#demo">sandbox</a>
+      <a href="/docs/">docs</a>
+      <a href="/dashboard/" class="nav-cta">dashboard</a>
     </nav>
   </header>
 
-  <div class="hero">
-    <h1>SURVIVE THE <span class="g">VESSEL</span></h1>
-    <p>A browser bullet-hell boss fight. Move your soul, dodge the storm, last as long as you can. Weekly contest coming soon.</p>
+  <section class="hero">
+    <div class="eyebrow pix">OPEN SOURCE · MIT</div>
+    <h1>Bot and tamper detection<br>for <span class="g">your site</span>. One script tag.</h1>
+    <p>Pyrmi spots bots, scrapers, replayed requests and tampered pages in the browser. Your server asks for a verdict before it trusts a sign-up, a vote, a checkout or a score, and the dashboard shows every flag and why.</p>
     <div class="cta">
-      <button class="btn primary" onclick="document.getElementById('play').scrollIntoView({behavior:'smooth'})">▶ play now</button>
-      <a class="btn" href="/deltastack/">deltastack →</a>
-    </div>
-  </div>
-
-  <section id="play">
-    <h2 class="sec">// the vessel — endless</h2>
-    <div class="stage">
-      <canvas id="game" width="640" height="420" tabindex="0" aria-label="The Vessel: a bullet dodging game. Click or tap to start, then use arrow keys or WASD, or drag on touch."></canvas>
-      <div class="hud">
-        <span>TIME <b id="t">0.0</b></span>
-        <span>BEST <b id="best">0.0</b></span>
-        <span>STAGE <b id="stage">1</b></span>
-        <button class="mute" type="button" data-sfx-mute>♪ on</button>
-        <button class="mute" type="button" data-share="/">share best</button>
-      </div>
-      <div class="hint">Click the arena, then arrow keys / WASD to move · drag anywhere on touch · don't let the soul get hit</div>
+      <a class="btn primary" href="#demo">▶ try to get flagged</a>
+      <a class="btn" href="/dashboard/">get your keys →</a>
     </div>
   </section>
 
-  <section id="store">
-    <h2 class="sec">// store</h2>
-    <div class="grid">
+  <section id="how">
+    <h2 class="sec">// how it works</h2>
+    <div class="steps">
       <div class="card">
-        <span class="tag soon">coming soon</span>
-        <h3>DeltaStack</h3>
-        <p>Run a whole stack of mods at once. Merged, checked, and launched in one click. Dropping once payments are live.</p>
-        <a class="btn" href="/deltastack/">see the preview →</a>
+        <div class="step-num pix">1</div>
+        <h3>Add the script</h3>
+        <p>Each visit gets a signed session from a real page load. The script watches for automation, scripted input, replaced browser functions, devtools and clock tricks.</p>
       </div>
       <div class="card">
-        <span class="tag">early access</span>
-        <h3>Win a lifetime key</h3>
-        <p>Top the weekly Vessel board and claim a lifetime DeltaStack key — free. Contest opens when the leaderboard goes live.</p>
-        <button class="btn" onclick="document.getElementById('board').scrollIntoView({behavior:'smooth'})">how it works</button>
+        <div class="step-num pix">2</div>
+        <h3>Check on your server</h3>
+        <p>Before you act on a request, call <code>pyrmi.verify()</code>. You get <b>accept</b>, <b>review</b> or <b>reject</b>, a risk score from 0 to 100, and the reasons.</p>
+      </div>
+      <div class="card">
+        <div class="step-num pix">3</div>
+        <h3>Watch it work</h3>
+        <p>The dashboard shows every verdict, which checks fired, and which users keep getting flagged, so you see how well it's working instead of a yes or no.</p>
+      </div>
+    </div>
+
+    <div class="code-pair">
+      <div class="code">
+        <div class="code-h">in your page <button class="copy" data-copy="c1">copy</button></div>
+<pre id="c1">&lt;script src="https://pyrmi.com/sdk/pyrmi.js" data-site="pk_..."&gt;&lt;/script&gt;
+&lt;script&gt;
+  const s = await Pyrmi.start();   // on page load
+  // when the user signs up, votes, buys...
+  await Pyrmi.flush();
+  await fetch('/signup', { method: 'POST',
+    body: JSON.stringify({ token: s.token, email }) });
+&lt;/script&gt;</pre>
+      </div>
+      <div class="code">
+        <div class="code-h">on your server <button class="copy" data-copy="c2">copy</button></div>
+<pre id="c2">const { Pyrmi } = require('pyrmi-server');
+const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
+
+const v = await pyrmi.verify({ token, user: email });
+if (v.verdict === 'reject') return res.status(403).end();</pre>
       </div>
     </div>
   </section>
 
-  <section id="board">
-    <h2 class="sec">// weekly board</h2>
-    <div class="board">
-      <div class="pix">LEADERBOARD · LAUNCHING SOON</div>
-      <p style="color:var(--muted);margin:14px auto 0;max-width:560px">
-        Once it opens, the longest Vessel survivor each week wins a lifetime DeltaStack key.
-        It opens once scores are checked on the server, so nobody can fake a time. Until then, your best only lives in this browser:
-        <b id="board-best" style="color:var(--ink)">no runs yet</b>.
-      </p>
+  <section id="catches">
+    <h2 class="sec">// what it catches</h2>
+    <div class="grid3">
+      <div class="mini"><b>Bots and headless browsers</b><span>Webdriver flags, headless Chrome, Playwright, Puppeteer, Selenium and Cypress markers.</span></div>
+      <div class="mini"><b>Scrapers and direct API calls</b><span>A request with no signed session from a real page, or a session that never reported from one, gets flagged.</span></div>
+      <div class="mini"><b>Replayed requests</b><span>Each session token works once and expires. Sending the same request twice fails.</span></div>
+      <div class="mini"><b>Forged or edited tokens</b><span>Sessions are signed on the server. Change one byte and the verdict is reject.</span></div>
+      <div class="mini"><b>Tampered pages</b><span>Replaced <code>fetch</code>, <code>performance.now</code>, <code>requestAnimationFrame</code> and other built-ins.</span></div>
+      <div class="mini"><b>Devtools</b><span>An open devtools panel is noted on the session, so you can weigh it with everything else.</span></div>
+      <div class="mini"><b>Scripted input</b><span>Synthetic events and typing or clicking that's too even or too fast for a human hand.</span></div>
+      <div class="mini"><b>Impossible values</b><span>Actions sent faster than a person could, numbers past your caps, or values that grow too fast.</span></div>
+      <div class="mini honest"><b>What it won't do</b><span>Block devtools or "stop code running". Whoever owns the browser can switch any of that off. Pyrmi watches and reports, and your server has the final say.</span></div>
+    </div>
+  </section>
+
+  <section id="demo">
+    <h2 class="sec">// sandbox: try to get flagged</h2>
+    <p class="lead">This box stands in for a form on your site. Each button really does what it says, and the verdict is the one your server would get. Then check the <a href="/dashboard/?demo=1">public sandbox dashboard</a> to see it logged.</p>
+    <div class="demo">
+      <div class="panel sandbox">
+        <div class="panel-h">a protected action</div>
+        <label class="field">value it carries <span class="muted">(a score, points, a quantity · limit 1000)</span><input id="value" inputmode="decimal" value="42"></label>
+        <div class="acts">
+          <button class="btn primary" type="button" data-act="honest">send it normally</button>
+          <button class="btn" type="button" data-act="replay">replay the last request</button>
+          <button class="btn" type="button" data-act="edit">edit the token</button>
+          <button class="btn" type="button" data-act="big">send an impossible value</button>
+          <button class="btn" type="button" data-act="direct">skip the page (direct API call)</button>
+        </div>
+        <p class="muted small-t">Want more? Open devtools, or paste <code>performance.now = () =&gt; 0</code> into the console, then send it normally again.</p>
+      </div>
+      <aside class="side">
+        <div class="panel" id="verdict" hidden>
+          <div class="panel-h">verdict</div>
+          <div class="verdict-row"><span id="v-chip" class="chip"></span><span id="v-risk-n" class="pix small"></span></div>
+          <div class="meter"><i id="v-risk"></i></div>
+          <ul id="v-reasons" class="reasons"></ul>
+        </div>
+        <div class="panel">
+          <div class="panel-h">what pyrmi sees right now</div>
+          <ul id="live" class="live"></ul>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="agents">
+    <h2 class="sec">// set it up with your ai agent</h2>
+    <p class="lead">Building with Claude Code, Cursor or another coding agent? Paste this in and it will wire Pyrmi into your pages and your server.</p>
+    <div class="code">
+      <div class="code-h">prompt <button class="copy" data-copy="c3">copy</button></div>
+<pre id="c3">Read https://pyrmi.com/install.md and add Pyrmi Security to this site. Find the requests worth protecting (sign-ups, logins, votes, checkouts, scores, any endpoint bots hit), wire in the script tag and pyrmi-server as described, keep my secret key in an environment variable, and tell me which env vars to set.</pre>
+    </div>
+  </section>
+
+  <section id="oss">
+    <h2 class="sec">// open source</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>MIT licensed</h3>
+        <p>The browser script, the server SDK, the API and the dashboard are all MIT. Read how every check works, fork it, or send a fix.</p>
+      </div>
+      <div class="card">
+        <h3>Host it or self-host it</h3>
+        <p>Use pyrmi.com for free while it's in early access, or deploy your own copy to Vercel with a free Upstash Redis. Point <code>pyrmi-server</code> at your URL.</p>
+      </div>
     </div>
   </section>
 
   <footer>
-    PYRMI · an original arcade by Dizzysky1 · <a href="/rr/">the classic</a><br>
-    All characters, art and music here are original or royalty-free.
+    Pyrmi Security · made by Dizzysky1 · <a href="/docs/">docs</a> · <a href="/dashboard/">dashboard</a> · <a href="/install.md">install guide</a>
   </footer>
 </div>
 
-<script src="/sfx.js"></script>
-<script src="/share.js"></script>
-<script>
-/* ---------- starfield backdrop (original) ---------- */
-(function(){
-  const c=document.getElementById('stars'),x=c.getContext('2d');
-  let w,h,stars;
-  function rs(){w=c.width=innerWidth;h=c.height=innerHeight;
-    stars=Array.from({length:90},()=>({x:Math.random()*w,y:Math.random()*h,z:Math.random()*.8+.2}));}
-  if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
-  rs();addEventListener('resize',rs);
-  (function loop(){x.clearRect(0,0,w,h);
-    for(const s of stars){s.y+=s.z*.3;if(s.y>h)s.y=0;
-      x.globalAlpha=s.z;x.fillStyle='#b9c0ff';x.fillRect(s.x,s.y,s.z*2,s.z*2);}
-    x.globalAlpha=1;requestAnimationFrame(loop);})();
-})();
-
-/* ---------- THE VESSEL: original bullet-hell survival ---------- */
-(function(){
-  const cv=document.getElementById('game'),g=cv.getContext('2d');
-  const W=cv.width,H=cv.height;
-  const tEl=document.getElementById('t'),bestEl=document.getElementById('best'),stEl=document.getElementById('stage');
-  let best=0; try{best=parseFloat(localStorage.getItem('pyrmi_best')||'0')||0;}catch(e){}
-  bestEl.textContent=best.toFixed(1);
-  const boardBest=document.getElementById('board-best');
-  const showBoard=()=>{if(boardBest&&best>0)boardBest.textContent=best.toFixed(1)+'s';};showBoard();
-
-  const soul={x:W/2,y:H*0.72,r:6,speed:3.4};
-  const keys={};
-  let pointer=null;
-  cv.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','w','a','s','d'].includes(e.key)){keys[e.key]=true;e.preventDefault();}});
-  cv.addEventListener('keyup',e=>{keys[e.key]=false;});
-  cv.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
-  function pt(e){const r=cv.getBoundingClientRect();const p=e.touches?e.touches[0]:e;
-    return {x:(p.clientX-r.left)*(W/r.width),y:(p.clientY-r.top)*(H/r.height)};}
-  // relative drag: slide anywhere and the soul follows the motion, so your finger never covers it
-  cv.addEventListener('pointerdown',e=>{const p=pt(e);pointer={x:p.x,y:p.y,px:0,py:0};try{cv.setPointerCapture(e.pointerId);}catch(_){}});
-  cv.addEventListener('pointermove',e=>{if(!pointer)return;const p=pt(e);pointer.px+=p.x-pointer.x;pointer.py+=p.y-pointer.y;pointer.x=p.x;pointer.y=p.y;
-    const l=Math.hypot(pointer.px,pointer.py);if(l>60){pointer.px*=60/l;pointer.py*=60/l;}});
-  addEventListener('pointerup',()=>{pointer=null;});addEventListener('pointercancel',()=>{pointer=null;});
-
-  let bullets=[],t=0,stage=1,dead=false,started=false,shake=0;
-  const boss={x:W/2,y:70,phase:0,timer:0};
-
-  let banner=0; // seconds left on the "STAGE N" flash
-  function reset(){banner=0;bullets=[];t=0;stage=1;dead=false;soul.x=W/2;soul.y=H*0.72;boss.timer=0;boss.phase=0;}
-
-  function spawnRing(n,sp,off){for(let i=0;i<n;i++){const a=off+i/n*Math.PI*2;
-    bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:5,c:'#8a5cff'});}}
-  function spawnAimed(sp,spread,n){const a0=Math.atan2(soul.y-boss.y,soul.x-boss.x);
-    for(let i=0;i<n;i++){const a=a0+(i-(n-1)/2)*spread;
-      bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:5,c:'#36e0d0'});}}
-  function spawnRain(){const x=Math.random()*W;
-    bullets.push({x,y:-6,vx:(Math.random()-.5)*.6,vy:2.4+Math.random()*1.2,r:4,c:'#ff3b4e'});}
-
-  function step(dt){
-    if(dead||!started)return;
-    t+=dt; const ns=1+Math.floor(t/12); if(ns>stage){banner=1.3;if(window.PyrmiSFX)PyrmiSFX.stage();} stage=ns; stEl.textContent=stage;
-    if(banner>0)banner-=dt;
-    const sp=1.6+stage*0.25;
-
-    // movement
-    let dx=0,dy=0;
-    if(keys.ArrowLeft||keys.a)dx--; if(keys.ArrowRight||keys.d)dx++;
-    if(keys.ArrowUp||keys.w)dy--; if(keys.ArrowDown||keys.s)dy++;
-    let mvx=0,mvy=0;
-    if(dx||dy){const d=Math.hypot(dx,dy);mvx=dx/d*soul.speed;mvy=dy/d*soul.speed;}
-    if(pointer){const pl=Math.hypot(pointer.px,pointer.py);if(pl>0){const k=Math.min(1,soul.speed*1.6/pl);mvx=pointer.px*k;mvy=pointer.py*k;pointer.px-=mvx;pointer.py-=mvy;}}
-    soul.x=Math.max(soul.r,Math.min(W-soul.r,soul.x+mvx));
-    soul.y=Math.max(soul.r,Math.min(H-soul.r,soul.y+mvy));
-
-    // boss drifts
-    boss.x=W/2+Math.sin(t*0.8)*W*0.28;
-
-    // attack patterns scale with stage
-    boss.timer+=dt;
-    const every=Math.max(0.55-stage*0.03,0.22);
-    if(boss.timer>every){boss.timer=0;boss.phase++;
-      const p=boss.phase%4;
-      if(p===0)spawnRing(8+stage,sp,boss.phase*0.3);
-      else if(p===1)spawnAimed(sp+0.8,0.28,3+Math.min(stage,5));
-      else if(p===2){for(let k=0;k<2+Math.min(stage,4);k++)spawnRain();}
-      else spawnRing(12+stage*2,sp*0.9,Math.random()*6.28);
-    }
-    if(stage>=3&&Math.random()<0.2)spawnRain();
-
-    // update bullets + collision
-    for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];
-      b.x+=b.vx;b.y+=b.vy;
-      if(b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){bullets.splice(i,1);continue;}
-      if((b.x-soul.x)**2+(b.y-soul.y)**2<(b.r+soul.r)**2){die();break;}
-    }
-    tEl.textContent=t.toFixed(1);
-  }
-
-  function die(){dead=true;shake=14;if(window.PyrmiSFX)PyrmiSFX.death();
-    if(t>best){best=t;try{localStorage.setItem('pyrmi_best',best.toFixed(2));}catch(e){}bestEl.textContent=best.toFixed(1);showBoard();}}
-
-  function draw(){
-    g.save();
-    if(shake>0){g.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake*=.85;if(shake<.4)shake=0;}
-    g.clearRect(-20,-20,W+40,H+40);
-    // floor grid
-    g.strokeStyle='rgba(138,92,255,.08)';g.lineWidth=1;
-    for(let i=0;i<=W;i+=32){g.beginPath();g.moveTo(i,0);g.lineTo(i,H);g.stroke();}
-    for(let j=0;j<=H;j+=32){g.beginPath();g.moveTo(0,j);g.lineTo(W,j);g.stroke();}
-
-    // boss core (original: pulsing sigil, not a character)
-    const pr=18+Math.sin(t*4)*3;
-    g.save();g.translate(boss.x,boss.y);g.rotate(t*0.6);
-    g.strokeStyle='#8a5cff';g.lineWidth=2;
-    g.beginPath();for(let i=0;i<6;i++){const a=i/6*6.28;g.lineTo(Math.cos(a)*pr,Math.sin(a)*pr);}g.closePath();g.stroke();
-    g.fillStyle='rgba(54,224,208,.9)';g.beginPath();g.arc(0,0,5,0,6.28);g.fill();
-    g.restore();
-
-    // bullets
-    for(const b of bullets){g.fillStyle=b.c;g.beginPath();g.arc(b.x,b.y,b.r,0,6.28);g.fill();
-      g.globalAlpha=.3;g.beginPath();g.arc(b.x,b.y,b.r+2,0,6.28);g.fill();g.globalAlpha=1;}
-
-    // soul (original red heart)
-    g.fillStyle=dead?'#555':'#ff3b4e';
-    heart(soul.x,soul.y,soul.r);
-
-    g.restore();
-
-    if(banner>0&&!dead){g.save();g.globalAlpha=Math.min(1,banner/0.4);g.textAlign='center';g.fillStyle='#ffe14d';
-      g.font='22px "Press Start 2P",monospace';g.fillText('STAGE '+stage,W/2,H*0.42);g.restore();}
-    const how=document.activeElement===cv?'press any key or click':'click or tap';
-    if(!started){overlay('THE VESSEL',how+' to begin');}
-    else if(dead){overlay('SHATTERED','survived '+t.toFixed(1)+'s  ·  '+(document.activeElement===cv?'any key':'tap')+' to retry');}
-  }
-  function heart(cx,cy,r){g.beginPath();
-    g.moveTo(cx,cy+r*0.9);
-    g.bezierCurveTo(cx+r*1.3,cy-r*0.4,cx+r*0.5,cy-r*1.3,cx,cy-r*0.4);
-    g.bezierCurveTo(cx-r*0.5,cy-r*1.3,cx-r*1.3,cy-r*0.4,cx,cy+r*0.9);
-    g.closePath();g.fill();}
-  function overlay(a,b){g.fillStyle='rgba(0,0,0,.55)';g.fillRect(0,0,W,H);
-    g.textAlign='center';g.fillStyle='#fff';g.font='20px "Press Start 2P",monospace';g.fillText(a,W/2,H/2-6);
-    g.fillStyle='#9aa0c4';g.font='12px "Press Start 2P",monospace';g.fillText(b,W/2,H/2+26);}
-
-  function begin(){if(!started||dead){reset();started=true;dead=false;if(window.PyrmiSFX)PyrmiSFX.start();}}
-  cv.addEventListener('pointerdown',e=>{cv.focus({preventScroll:true});begin();});
-  cv.addEventListener('keydown',e=>{if(e.key==='Tab'||e.key==='Shift'||e.metaKey||e.ctrlKey||e.altKey)return;if(!started||dead)begin();});
-  // pause drawing while the arena is scrolled out of view
-  let onScreen=true;
-  if('IntersectionObserver' in window)new IntersectionObserver(es=>{onScreen=es[0].isIntersecting;}).observe(cv);
-
-  let last=performance.now();
-  (function loop(now){const dt=Math.min((now-last)/1000,0.05);last=now;if(onScreen){step(dt);draw();}requestAnimationFrame(loop);})(last);
-})();
-</script>
+<script src="/sdk/pyrmi.js" data-site="pk_demo_sandbox"></script>
+<script src="/site.js"></script>
+<script src="/sandbox.js"></script>
 </body>
 </html>

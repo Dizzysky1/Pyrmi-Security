@@ -1,0 +1,7 @@
+# Repo files that shouldn't be served on pyrmi.com
+DRAFTS.md
+PROGRESS.md
+README.md
+tests
+scripts
+packages
