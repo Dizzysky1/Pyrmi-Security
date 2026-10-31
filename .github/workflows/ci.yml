@@ -1,0 +1,27 @@
+name: CI
+
+# Repo-level guardrails. This is CI only — it does not change the Vercel project or how it deploys.
+# The no-python step would have caught the two leftover api/*.py files before they ever reached a deploy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: No Python under api/
+        run: node scripts/check-no-python.js
+      - name: Browser SDK build is up to date
+        run: node scripts/build-sdk.js --check
+      - name: Tests (production key prefix)
+        run: node --test tests/*.test.js
+        env:
+          PYRMI_KV: memory
+          PYRMI_KV_PREFIX: 'live:'

@@ -463,7 +463,17 @@ async function verify(project, body, ctx) {
     const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600);
     if (fresh !== 'OK') hard('token_reused');
     const sess = kv.pairs(await kv.cmd('HGETALL', 'ps:s:' + sid));
-    const elapsed = now - t.i;
+    const genuineSess = sess.p === project.pid;
+    // Measure elapsed time from the server-recorded session start, never the token's self-reported `i`. The token is
+    // only HMAC-signed, so a forged token (one precondition: a leaked PYRMI_SECRET) could otherwise carry a genuine
+    // session id with a backdated `i` to fake elapsed time and slip past minDurationMs / dilute maxScorePerSec — the
+    // real server-side anti-bot floor. Fall back to the token `i` only when no genuine session record backs the
+    // token (that path is already penalised as no_client below) (M9).
+    const started = genuineSess ? num(sess.i, t.i) : t.i;
+    // A genuine token's `i` is copied from the session at creation, so it must equal the stored start. A mismatch
+    // means the token was forged or edited — refuse it outright (M9).
+    if (genuineSess && num(sess.i, t.i) !== t.i) hard('invalid_token', 'token start does not match the session record');
+    const elapsed = now - started;
     // The 2 s grace is for clock skew on impossible_time only. Limits use the shorter of the claimed and the real
     // time, so a claimed duration can't satisfy minDurationMs or dilute maxScorePerSec (A2-03).
     const dur = durationMs === null ? elapsed : Math.min(durationMs, elapsed);
@@ -473,7 +483,7 @@ async function verify(project, body, ctx) {
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
     if (rp && rp.check === 'mismatch') hard('replay_mismatch', String(rp.detail || '').slice(0, 120));
-    if (sess.p === project.pid) { reasons.push(...assess(sess, s, durationMs)); genuine = true; }
+    if (genuineSess) { reasons.push(...assess(sess, s, durationMs)); genuine = true; }
     else reasons.push({ code: 'no_client', weight: WEIGHTS.no_client, detail: 'session record missing' });
   }
 

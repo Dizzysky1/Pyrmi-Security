@@ -344,3 +344,20 @@ test('email sign-in is bounded by a global per-day cap, not just per-IP/address 
     if (savedResend === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = savedResend;
   }
 });
+
+// The GET /api/v1/me limiter used to run before auth, like the old /sites one (F-11), so an anonymous flood could
+// burn a shared network's bucket and lock that network's signed-in users out of the dashboard's "am I signed in?"
+// check. A signed-out /me does no KV lookup, so it must never be limited; the limiter now runs only when a
+// well-formed session cookie is present (same class as F-11/F-20).
+test('the /me IP limiter never runs for a request with no session cookie', async () => {
+  const saved = process.env.PYRMI_ACCOUNT_CALLS_PER_MIN;
+  process.env.PYRMI_ACCOUNT_CALLS_PER_MIN = '1'; // if the limiter ran before auth, the second anonymous call would be 429
+  try {
+    const a = await call('GET', '/api/v1/me');
+    const b = await call('GET', '/api/v1/me');
+    assert.equal(a.status, 401, 'a signed-out /me should answer 401');
+    assert.equal(b.status, 401, 'a second signed-out /me must still be 401, not 429 — the limiter sits behind a valid cookie');
+  } finally {
+    if (saved === undefined) delete process.env.PYRMI_ACCOUNT_CALLS_PER_MIN; else process.env.PYRMI_ACCOUNT_CALLS_PER_MIN = saved;
+  }
+});

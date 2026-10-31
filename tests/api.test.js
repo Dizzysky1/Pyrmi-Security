@@ -292,3 +292,25 @@ test('a security.txt is published with a contact and an expiry (F-23)', () => {
   assert.ok(/^Contact:\s*\S+/mi.test(txt), 'security.txt names a Contact');
   assert.ok(/^Expires:\s*\S+/mi.test(txt), 'security.txt has an Expires field (RFC 9116)');
 });
+
+// M9: verify() used to measure elapsed time from the token's own self-reported start `i`, not the server-created
+// session record, and never compared the two. A forged token (precondition: a leaked signing secret) carrying a
+// genuine session id but a backdated `i` could therefore fake elapsed time and slip past minDurationMs / dilute
+// maxScorePerSec — the only durable server-side anti-bot floor. Elapsed now comes from the stored session start, and
+// a token whose `i` doesn't match the session is rejected.
+test('a forged backdated-start token cannot fake elapsed time (M9)', async () => {
+  const C = require('../api/_lib/crypto');
+  const created = await call('POST', '/api/v1/project', { name: 'M9 game', origins: ['https://m9.example'], pyrmiToken: await siteToken() });
+  const { publicKey: pk9, secretKey: sk9, pid: pid9 } = created.body.project;
+  await call('PATCH', '/api/v1/project', { settings: { minDurationMs: 1500, maxScorePerSec: 10 } }, { Authorization: 'Bearer ' + sk9 });
+  const s = (await call('POST', '/api/v1/session', { site: pk9 }, { Origin: 'https://m9.example' })).body;
+  await beacon(s, {}); // a real session record, so no_client won't fire and only the timing path is under test
+  const genuine = await C.readToken(s.token);
+  const now = Date.now();
+  // same (genuine) session id, but the start is backdated 5s and the expiry pushed out — exactly the attacker's forge
+  const forged = await C.signToken({ v: 1, p: pid9, s: genuine.s, i: now - 5000, e: now + 3600000, seed: genuine.seed, ih: genuine.ih, uh: genuine.uh });
+  const v = await call('POST', '/api/v1/verify', { token: forged, score: 50, player: 'm9' }, { Authorization: 'Bearer ' + sk9 });
+  assert.equal(v.body.verdict, 'reject', 'a backdated-start token must not be accepted: ' + JSON.stringify(v.body));
+  assert.ok(v.body.reasons.some((r) => r.code === 'invalid_token' || r.code === 'too_short'),
+    'rejected for the backdated/mismatched start, got ' + JSON.stringify(v.body.reasons));
+});
