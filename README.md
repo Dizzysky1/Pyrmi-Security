@@ -178,8 +178,10 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   (An earlier build XOR-encoded each session's beacons with a per-session key. That key was handed to the browser, so
   it protected nothing and is gone; pretending it did was the problem, not the encoding.)
 - **The hard floor is server-side and can't be forged from the browser:** the HMAC-signed session token, single-use
-  replay protection, expiry, the IP/UA bound into the token, `minDurationMs`, `maxScore`/`maxScorePerSec`, and the
-  per-network / per-project rate limits and quotas. These do not depend on the client cooperating.
+  replay protection, expiry, `minDurationMs` (measured from when the token was issued, so a claimed `durationMs`
+  can't satisfy it), `maxScore`/`maxScorePerSec`, and the per-network / per-project rate limits and quotas. These do
+  not depend on the client cooperating. (The network and browser a session started from are only compared on
+  beacons, as the soft `ip_changed`/`ua_changed` signals: your server calls verify, not the visitor.)
 - **So:** use `maxScore`/`maxScorePerSec`/`minDurationMs` and your own server rules for anything that matters (scores,
   payouts, sign-ups), and treat the telemetry-driven `risk`/`reasons` as a signal to flag or review, not as the sole
   gate. pyrmi.com guards its own forms this way: the Pyrmi accept is one layer, and the per-network rate limits are the

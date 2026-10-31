@@ -7,6 +7,9 @@ const assert = require('node:assert');
 const http = require('http');
 const { serve } = require('../scripts/dev.js');
 const auth = require('../api/v1/auth/[provider].js');
+const kv = require('../api/_lib/kv');
+const C = require('../api/_lib/crypto');
+const accounts = require('../api/_lib/accounts');
 
 let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
@@ -114,7 +117,7 @@ test('one account can never see or change another account\'s site', async () => 
 });
 
 test('the connection check turns green once the page and the server have both reported', async () => {
-  const s = (await call('POST', '/api/v1/session', { site: sitePk })).body;
+  const s = (await call('POST', '/api/v1/session', { site: sitePk }, { Origin: 'https://alice.example' })).body;
   let d = await call('GET', '/api/v1/sites?pid=' + sitePid, undefined, as(alice));
   assert.ok(d.body.status.page > 0 && !d.body.status.server && !d.body.status.connected);
   await beacon(s, {});
@@ -229,4 +232,71 @@ test('GitHub sign-in uses the primary verified email and lands in the same accou
   const me = await call('GET', '/api/v1/me', undefined, { Cookie: cookieOf(back, '__Host-pyrmi_session') });
   assert.equal(me.body.user.email, 'bob@example.com');
   assert.equal(me.body.sites[0].name, 'Old project');
+});
+
+// F-05: the per-address email-code limit must count its window down, not reset it on every request. The old code
+// re-set the TTL on each call, so an address under a steady stream of requests could be locked out indefinitely.
+test('the per-address email-code window counts down instead of resetting on every request (F-05)', async () => {
+  const saved = process.env.RESEND_API_KEY;
+  process.env.RESEND_API_KEY = 'test-resend-key'; // just enough for emailConfigured() to be true
+  const email = 'lockout-f05@example.com';
+  const key = 'ps:rl:emailto:' + C.sha256(email);
+  const mailer = async () => { /* don't actually send anything */ };
+  try {
+    await accounts.emailStart({ email }, '198.51.100.9', mailer);
+    const ttl1 = Number(await kv.cmd('TTL', key));
+    assert.ok(ttl1 > 0 && ttl1 <= 3600, 'window should be set on the first code: ' + ttl1);
+    await wait(1100);
+    await accounts.emailStart({ email }, '198.51.100.9', mailer); // a later code must NOT push the TTL back up
+    const ttl2 = Number(await kv.cmd('TTL', key));
+    assert.ok(ttl2 < ttl1, 'the window must keep counting down, not reset (was ' + ttl1 + ', now ' + ttl2 + ')');
+  } finally {
+    if (saved === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = saved;
+  }
+});
+
+// F-11: the /sites IP limiter used to run before requireUser, so an unauthenticated caller could burn the shared
+// network bucket (and pile up KV writes). With the limiter behind auth, anonymous calls never reach it.
+test('the /sites IP limiter never runs for an unauthenticated request (F-11)', async () => {
+  const saved = process.env.PYRMI_ACCOUNT_CALLS_PER_MIN;
+  process.env.PYRMI_ACCOUNT_CALLS_PER_MIN = '1'; // if the limiter ran pre-auth, the second anonymous call would be 429
+  try {
+    const a = await call('GET', '/api/v1/sites?pid=p_nope');
+    const b = await call('GET', '/api/v1/sites?pid=p_nope');
+    assert.equal(a.status, 401, 'an anonymous call should be rejected as signed out');
+    assert.equal(b.status, 401, 'a second anonymous call must still be 401, not 429 — the limiter sits behind auth');
+  } finally {
+    if (saved === undefined) delete process.env.PYRMI_ACCOUNT_CALLS_PER_MIN; else process.env.PYRMI_ACCOUNT_CALLS_PER_MIN = saved;
+  }
+});
+
+// F-07: an ordinary project's sessions were origin-unbound when its allowlist was empty, so a bare script could mint
+// them. A real browser always sends an Origin, so one is now required for non-builtin projects.
+test('an ordinary project requires a browser Origin to start a session (F-07)', async () => {
+  const u = (await signIn('707', 'f07@example.com')).cookie;
+  const created = await call('POST', '/api/v1/sites', { name: 'F07 shop', pyrmiToken: await siteToken() }, as(u));
+  const pk = created.body.project.publicKey; // a fresh project with an empty origins allowlist
+  const noOrigin = await call('POST', '/api/v1/session', { site: pk });
+  assert.equal(noOrigin.status, 403);
+  const withOrigin = await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://f07.example' });
+  assert.equal(withOrigin.status, 200);
+});
+
+// A2-08: createSite checked the per-owner cap and then added, as two steps, so parallel POSTs could both pass the
+// check and race past the cap. With a re-check-and-rollback after reserving, concurrent creates can't exceed it.
+test('parallel site creates cannot race past the per-owner cap (A2-08)', async () => {
+  const savedCap = process.env.PYRMI_SITES_PER_USER;
+  process.env.PYRMI_SITES_PER_USER = '2';
+  const uid = 'u_race_' + Date.now();
+  try {
+    await accounts.createSite(uid, { name: 'one' }, '198.51.100.51');
+    await Promise.allSettled([
+      accounts.createSite(uid, { name: 'two' }, '198.51.100.52'),
+      accounts.createSite(uid, { name: 'three' }, '198.51.100.53'),
+    ]);
+    const card = Number(await kv.cmd('ZCARD', 'ps:us:' + uid));
+    assert.ok(card <= 2, 'owner must never exceed the cap, even under concurrent creates (was ' + card + ')');
+  } finally {
+    if (savedCap === undefined) delete process.env.PYRMI_SITES_PER_USER; else process.env.PYRMI_SITES_PER_USER = savedCap;
+  }
 });

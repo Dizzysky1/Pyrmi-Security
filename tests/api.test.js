@@ -6,6 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const { serve } = require('../scripts/dev.js');
+const kv = require('../api/_lib/kv');
+const core = require('../api/_lib/core');
 
 let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
@@ -241,4 +243,22 @@ test('the built browser script is current and works end to end', async () => {
   const v = await call('POST', '/api/v1/demo', { token: s.token, value: 5, visitor: 'visitor-feed01' });
   assert.ok(!v.body.reasons.some((r) => r.code === 'no_client'), JSON.stringify(v.body.reasons));
   assert.ok(!v.body.reasons.some((r) => /pyrmi\.js|telemetry/.test(r.detail || '')), JSON.stringify(v.body.reasons));
+});
+
+// A2-06: /demo wrote a 30-day per-visitor record on every call under a caller-chosen label, even for a forged token,
+// so anyone could grow the store without bound. The record is now written only when a genuine session backs it.
+test('a forged demo call writes no per-visitor record (A2-06)', async () => {
+  const label = 'visitor-deadbeef'; // matches the allowed visitor pattern
+  const v = await call('POST', '/api/v1/demo', { token: 'not-a-real-token', value: 1, visitor: label });
+  assert.ok(v.body.reasons.some((r) => r.code === 'invalid_token'));
+  assert.equal(Number(await kv.cmd('EXISTS', 'ps:pl:' + core.DEMO.pid + ':' + label)), 0, 'no per-visitor record for a forged call');
+});
+
+// F-17 / F-18: the sandbox must use the shared (TTL-correct) limiter and pass IP context to verify, not hand-roll an
+// INCR+EXPIRE limiter or land every tokenless call in one shared verify bucket.
+test('the sandbox endpoint uses the shared limiter and passes IP context to verify (F-17/F-18)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../api/v1/demo.js'), 'utf8');
+  assert.ok(/core\.limitIp\(/.test(src), 'demo should rate-limit via the shared core.limitIp (F-17)');
+  assert.ok(!/\bEXPIRE\b/.test(src), 'demo should not hand-roll an INCR+EXPIRE limiter (F-17)');
+  assert.ok(/,\s*\{\s*ip\s*\}\)/.test(src), 'demo should pass { ip } ctx to verify (F-18)');
 });
