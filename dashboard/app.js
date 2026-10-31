@@ -13,6 +13,34 @@
   guardStart();
   var KEY = 'pyrmi_sk', sk = null, timer = null, lastLoad = 0, data = null;
   var me = null, pid = null; // signed in: the account, and the site being looked at
+  // Cloudflare Turnstile, once the server has a site key for it (GET /api/v1/me says): a human check on sign-in codes,
+  // new projects and sites, and account changes. Each form gets a fresh token; Cloudflare accepts a token once.
+  var tsKey = null, tsLoad = null, HUMAN_ERR = 'The human check didn\'t finish. Try again.';
+  function turnstileReady() {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    if (!tsLoad) tsLoad = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true;
+      s.onload = function () { if (window.turnstile) resolve(window.turnstile); else reject(new Error('human_check')); };
+      s.onerror = function () { tsLoad = null; reject(new Error('human_check')); };
+      document.head.appendChild(s);
+    });
+    return tsLoad;
+  }
+  function human(action, box) {
+    if (!tsKey) return Promise.resolve(undefined);
+    return turnstileReady().then(function (ts) {
+      return new Promise(function (resolve, reject) {
+        var el = $(box), old = el.getAttribute('data-wid');
+        if (old) { try { ts.remove(old); } catch (e) { /* already gone */ } }
+        el.hidden = false;
+        var fail = function () { reject(new Error('human_check')); };
+        el.setAttribute('data-wid', ts.render(el, { sitekey: tsKey, action: action, appearance: 'interaction-only',
+          callback: resolve, 'error-callback': fail, 'timeout-callback': fail }));
+      });
+    });
+  }
+  function whyFailed(e) { return e && e.message === 'human_check' ? HUMAN_ERR : 'Could not reach the server.'; }
   try { sk = sessionStorage.getItem(KEY) || localStorage.getItem(KEY); } catch (e) { /* storage blocked */ }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -41,17 +69,17 @@
     e.preventDefault();
     var f = e.target, btn = f.querySelector('button');
     btn.disabled = true; $('create-err').textContent = '';
-    var flush = window.Pyrmi ? Pyrmi.flush() : Promise.resolve();
-    flush.then(function () {
+    var human1;
+    human('new-project', 'ts-create').then(function (t) { human1 = t; return window.Pyrmi ? Pyrmi.flush() : null; }).then(function () {
       var token = guard && guard.token; guard = null;
-      return api('POST', 'project', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token });
+      return api('POST', 'project', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token, turnstileToken: human1 });
     }).then(function (r) {
       btn.disabled = false;
       guardStart(); // tokens are single use
       if (!r.ok) { $('create-err').textContent = r.message || r.error; return; }
       $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey;
       sk = r.project.secretKey; save(sk, false); show('keys');
-    }, function () { btn.disabled = false; $('create-err').textContent = 'Could not reach the server.'; });
+    }, function (e) { btn.disabled = false; $('create-err').textContent = whyFailed(e); });
   });
   $('k-saved').addEventListener('change', function () { $('k-go').disabled = !this.checked; });
   $('k-go').addEventListener('click', function () { $('k-sk').textContent = ''; $('k-saved').checked = false; $('k-go').disabled = true; if (me) location.hash = 'site=' + pid; else load(true); });
@@ -81,15 +109,16 @@
     e.preventDefault();
     var f = e.target, btn = f.querySelector('button');
     btn.disabled = true; $('signin-err').textContent = '';
-    (window.Pyrmi ? Pyrmi.flush() : Promise.resolve()).then(function () {
+    var human1;
+    human('signin', 'ts-signin').then(function (t) { human1 = t; return window.Pyrmi ? Pyrmi.flush() : null; }).then(function () {
       var token = guard && guard.token; guard = null;
       codeEmail = f.email.value.trim();
-      return api('POST', 'auth/email?action=start', { email: codeEmail, pyrmiToken: token });
+      return api('POST', 'auth/email?action=start', { email: codeEmail, pyrmiToken: token, turnstileToken: human1 });
     }).then(function (r) {
       btn.disabled = false; guardStart();
       if (!r.ok) { $('signin-err').textContent = r.message || r.error; return; }
       $('code-to').textContent = codeEmail; codeStep(true);
-    }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
+    }, function (e) { btn.disabled = false; $('signin-err').textContent = whyFailed(e); });
   });
   $('code-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -112,7 +141,7 @@
     clearInterval(timer); timer = null; pid = null;
     return api('GET', 'me').then(function (r) {
       if (!r.ok) { me = null; return boot(); }
-      me = r.user; $('a-email').textContent = me.email; show('account');
+      me = r.user; tsKey = r.turnstile || null; $('a-email').textContent = me.email; show('account');
       $('sites').innerHTML = r.sites.length ? r.sites.map(function (x) {
         return '<button class="card site" type="button" data-pid="' + esc(x.pid) + '"><b>' + esc(x.name) + '</b><code>' + esc(x.publicKey) + '</code>' +
           '<span class="dots">' + dot(x.status.page, 'page') + dot(x.status.server, 'server') + '</span></button>';
@@ -124,23 +153,24 @@
     e.preventDefault();
     var f = e.target, btn = f.querySelector('button');
     btn.disabled = true; $('add-err').textContent = '';
-    (window.Pyrmi ? Pyrmi.flush() : Promise.resolve()).then(function () {
+    var human1;
+    human('new-site', 'ts-add').then(function (t) { human1 = t; return window.Pyrmi ? Pyrmi.flush() : null; }).then(function () {
       var token = guard && guard.token; guard = null;
-      return api('POST', 'sites', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token });
+      return api('POST', 'sites', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token, turnstileToken: human1 });
     }).then(function (r) {
       btn.disabled = false; guardStart();
       if (!r.ok) { $('add-err').textContent = r.message || r.error; return; }
       f.reset(); pid = r.project.pid;
       $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey; show('keys');
-    }, function () { btn.disabled = false; $('add-err').textContent = 'Could not reach the server.'; });
+    }, function (e) { btn.disabled = false; $('add-err').textContent = whyFailed(e); });
   });
   $('claim').addEventListener('submit', function (e) {
     e.preventDefault();
     var f = e.target; $('claim-err').textContent = '';
-    api('POST', 'sites?action=claim', { secretKey: f.sk.value.trim() }).then(function (r) {
+    human('claim', 'ts-claim').then(function (t) { return api('POST', 'sites?action=claim', { secretKey: f.sk.value.trim(), turnstileToken: t }); }).then(function (r) {
       if (!r.ok) { $('claim-err').textContent = r.message || r.error; return; }
       f.reset(); location.hash = 'site=' + r.site.pid;
-    });
+    }, function (e) { $('claim-err').textContent = whyFailed(e); });
   });
   $('g-check').addEventListener('click', function () { $('g-note').textContent = 'checking…'; load().then(function () { $('g-note').textContent = 'checked ' + new Date().toLocaleTimeString(); }); });
   function guide(d) {
@@ -243,13 +273,16 @@
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });
   $('rotate-no').addEventListener('click', function () { $('rotate-confirm').hidden = true; });
   $('rotate-yes').addEventListener('click', function () {
-    api('POST', me ? 'sites?pid=' + pid + '&action=rotate' : 'project?action=rotate', {}).then(function (r) {
+    $('rotate-err').textContent = '';
+    (me ? human('rotate', 'ts-rotate') : Promise.resolve(undefined)).then(function (t) {
+      return api('POST', me ? 'sites?pid=' + pid + '&action=rotate' : 'project?action=rotate', me ? { turnstileToken: t } : {});
+    }).then(function (r) {
+      if (!r.ok) { $('rotate-err').textContent = r.message || r.error; return; }
       $('rotate-confirm').hidden = true;
-      if (!r.ok) return;
       if (me) { $('r-sk').textContent = r.secretKey; $('rotate-out').hidden = false; return; }
       sk = r.secretKey; var remembered = false; try { remembered = !!localStorage.getItem(KEY); } catch (e) { /* ignore */ }
       save(sk, remembered); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
-    });
+    }, function (e) { $('rotate-err').textContent = whyFailed(e); });
   });
 
   function load(first) {
@@ -270,6 +303,7 @@
   function boot() {
     if (demo) return load(true);
     return api('GET', 'me').then(function (r) {
+      tsKey = r.turnstile || null;
       if (r.ok) { me = r.user; return route(); }
       var p = r.providers || {}, any = p.email || p.github || p.google;
       $('signin-card').hidden = !any; $('skip-acct').hidden = !any;

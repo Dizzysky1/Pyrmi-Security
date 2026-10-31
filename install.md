@@ -90,6 +90,19 @@ browser, and no reason other than the harmless ones (`wrapped_runtime`, `devtool
 Telemetry is advisory: a script that copies the real one closely enough can still pass, so keep your own limits too
 (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
 
+For the most sensitive actions (sign-ups that unlock something, payouts), also add a Cloudflare Turnstile widget to
+that form and check its token on the server with the same call. The developer creates the widget in Cloudflare and
+sets `TURNSTILE_SECRET_KEY`; the widget's `data-action` must match the `action` you check:
+
+```js
+const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY }); // reads TURNSTILE_SECRET_KEY too
+const t = await pyrmi.verifyTurnstile(req.body['cf-turnstile-response'], { action: 'payout', hostname: 'example.com', remoteip: ip });
+if (!trusted(v, t)) return res.status(403).json({ error: 'not_verified' });
+```
+
+`verifyTurnstile` fails closed (no secret, no token, a used token, a different action or hostname, or Cloudflare
+unreachable all give `success: false`). Cloudflare accepts each token once.
+
 If the request carries a number worth capping (points, a quantity, a score), also pass `score: thatNumber` and
 `durationMs` if known, and tell the developer to set the max value on the dashboard.
 
@@ -104,7 +117,8 @@ Content-Type: application/json
 ```
 
 Response: `{"ok":true,"verdict":"accept"|"review"|"reject","risk":0-100,"client":"corroborated"|"unverified"|"none","reasons":[{"code":"...","text":"...","weight":..}]}`.
-For a sensitive action, require `verdict == "accept"` and `client == "corroborated"`.
+For a sensitive action, require `trusted == true` (set by the server: a corroborated accept with a real key press or
+click and no reason beyond the harmless ones).
 
 If the site has no server (a static site writing to Firebase or Supabase directly from the browser), say so to the
 developer: a write made from the browser cannot be protected. Suggest a small serverless function (Vercel, Netlify,

@@ -2,11 +2,13 @@
 // Signing in.
 // GET  /api/v1/auth/github | /api/v1/auth/google  -> off to GitHub or Google
 // GET  /api/v1/auth/github?code=... (and google)    -> they send people back here; signs them in, opens the dashboard
-// POST /api/v1/auth/email?action=start   {email, pyrmiToken}  -> emails a 6-digit code (same answer for any address)
+// POST /api/v1/auth/email?action=start   {email, pyrmiToken, turnstileToken?}  -> emails a 6-digit code (same answer for any address)
+//      turnstileToken is required once Turnstile is set up (TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY).
 // POST /api/v1/auth/email?action=verify  {email, code}        -> signs in
 // Each way in is off until its env vars are set (see README).
 const accounts = require('../../_lib/accounts');
 const core = require('../../_lib/core');
+const turnstile = require('../../_lib/turnstile');
 const { send, fail, readJson, clientIp, handle } = require('../../_lib/http');
 
 function redirect(res, location, cookies) {
@@ -35,6 +37,7 @@ module.exports = handle(async (req, res) => {
     const body = await readJson(req, 4096);
     if (q.get('action') === 'start') {
       await core.limitIp(ip, 'emailcode', 600, 'PYRMI_EMAIL_CODES_PER_IP', 10, 'Too many sign-in codes from your network. Try again in a few minutes.');
+      await turnstile.check(body.turnstileToken, ip, 'signin', req.headers.host);
       await core.guardSite(body.pyrmiToken, ip);
       await accounts.emailStart(body, ip, module.exports.mailer);
       return send(res, 200, { ok: true });

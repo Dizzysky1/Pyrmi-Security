@@ -7,6 +7,9 @@
 //   const v = await pyrmi.verify({ token, user });          // add score: n to check a number too
 //   if (v.verdict !== 'reject') doTheThing(...);             // everyday actions: let review through, flagged
 //   if (trusted(v)) payOut(...);                             // sensitive ones: only a corroborated accept
+//   const t = await pyrmi.verifyTurnstile(body.turnstileToken, { remoteip, action: 'payout' });
+//   if (trusted(v, t)) payOut(...);                          // ...plus Cloudflare Turnstile, a check that doesn't
+//                                                            // depend on Pyrmi's browser telemetry at all
 
 class Pyrmi {
   constructor(opts) {
@@ -15,6 +18,9 @@ class Pyrmi {
     this.endpoint = String(opts.endpoint || process.env.PYRMI_ENDPOINT || 'https://pyrmi.com/api/v1').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs || 8000;
     this.failOpen = !!opts.failOpen; // if Pyrmi is unreachable: false = reject the action, true = accept it unverified
+    // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
+    this.turnstileSecret = opts.turnstileSecret || process.env.TURNSTILE_SECRET_KEY || null;
+    this.turnstileEndpoint = opts.turnstileEndpoint || 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
     if (!this.secretKey || !/^sk_/.test(this.secretKey)) throw new Error('pyrmi-server: pass { secretKey: "sk_..." } or set PYRMI_SECRET_KEY');
     if (typeof window !== 'undefined' && typeof document !== 'undefined') throw new Error('pyrmi-server: this runs on your server only, never in the browser');
   }
@@ -51,6 +57,30 @@ class Pyrmi {
       return { ok: false, verdict: this.failOpen ? 'accept' : 'reject', risk: null, reasons: [{ code: 'pyrmi_unreachable', text: 'Could not reach Pyrmi: ' + (e && e.message) }], unverified: true };
     }
   }
+
+  // Checks a Cloudflare Turnstile token from your page (the widget's cf-turnstile-response) with Cloudflare.
+  // Returns { success, errorCodes, hostname, action }. Fails closed: no secret, no token, a token Cloudflare already
+  // saw, a different action or hostname than you expect, or Cloudflare being unreachable all give success: false.
+  // opts: remoteip (the visitor's IP), action (what your widget's data-action was), hostname (your site's host).
+  async verifyTurnstile(token, opts) {
+    opts = opts || {};
+    const no = (code, r) => ({ success: false, errorCodes: [code], hostname: r && r.hostname, action: r && r.action });
+    if (!this.turnstileSecret) return no('missing-input-secret');
+    if (typeof token !== 'string' || !token || token.length > 2048) return no('missing-input-response');
+    let r;
+    try {
+      const form = new URLSearchParams({ secret: this.turnstileSecret, response: token });
+      if (opts.remoteip) form.set('remoteip', String(opts.remoteip));
+      const res = await fetch(this.turnstileEndpoint, { method: 'POST', body: form, signal: AbortSignal.timeout(this.timeoutMs) });
+      r = await res.json();
+    } catch (e) {
+      return no('turnstile-unreachable');
+    }
+    if (!r || r.success !== true) return { success: false, errorCodes: (r && r['error-codes']) || ['failed'], hostname: r && r.hostname, action: r && r.action };
+    if (opts.action && r.action !== opts.action) return no('action-mismatch', r);
+    if (opts.hostname && r.hostname !== opts.hostname) return no('hostname-mismatch', r);
+    return { success: true, errorCodes: [], hostname: r.hostname, action: r.action };
+  }
 }
 
 // The gate for anything that matters (payouts, prizes, leaderboards, account changes). Pyrmi works it out on the
@@ -59,9 +89,11 @@ class Pyrmi {
 // false positives can't make a tampered or webdriver session trusted. A review is never trusted, nor is the stand-in
 // verdict from failOpen when Pyrmi is down. This still isn't proof of a person: a script that copies the real one
 // closely enough can pass, so pair it with your own limits (maxScore, minDurationMs, rate limits), Turnstile, and,
-// for a deterministic game, simulate.
+// for a deterministic game, simulate. Pass a Turnstile result (from verifyTurnstile) as the second argument to
+// require that too.
 const TRUST_ALLOWS = new Set(['wrapped_runtime', 'devtools_open', 'ip_changed', 'idle_input']);
-function trusted(v) {
+function trusted(v, turnstile) {
+  if (arguments.length > 1 && !(turnstile && turnstile.success === true)) return false;
   if (!v || v.ok === false || v.unverified || v.verdict !== 'accept' || v.client !== 'corroborated') return false;
   if (typeof v.trusted === 'boolean') return v.trusted;
   // An older Pyrmi server that doesn't send `trusted`: the same allow-list over the reasons.

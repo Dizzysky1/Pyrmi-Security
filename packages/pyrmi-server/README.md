@@ -42,4 +42,17 @@ If the request carries a number worth capping (points, a quantity, a score), pas
 the dashboard. If your app is deterministic (a seed plus recorded inputs always gives the same result), pass
 `replay` and a `simulate(replay)` function, and Pyrmi rejects any result the inputs don't reproduce.
 
-Options: `secretKey` (or `PYRMI_SECRET_KEY`), `endpoint` (for self-hosting), `timeoutMs`, `failOpen`.
+For the most sensitive actions, add a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) widget
+to the form and check both:
+
+```js
+const t = await pyrmi.verifyTurnstile(req.body['cf-turnstile-response'], { action: 'payout', hostname: 'example.com', remoteip: req.ip });
+if (!trusted(v, t)) return res.status(403).json({ error: 'not_verified' });
+```
+
+`verifyTurnstile` returns `{ success, errorCodes, hostname, action }` and fails closed: no secret, no token, a token
+Cloudflare already saw, a different action or hostname than you pass, or Cloudflare being unreachable all give
+`success: false`. `trusted(v, t)` needs both a trusted verdict and a passed check.
+
+Options: `secretKey` (or `PYRMI_SECRET_KEY`), `endpoint` (for self-hosting), `timeoutMs`, `failOpen`,
+`turnstileSecret` (or `TURNSTILE_SECRET_KEY`), `turnstileEndpoint`.
