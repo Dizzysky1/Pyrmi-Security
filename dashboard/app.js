@@ -242,7 +242,7 @@
     if (demo) return load(true);
     return api('GET', 'me').then(function (r) {
       if (r.ok) { me = r.user; return route(); }
-      $('google-card').hidden = !r.google;
+      $('google-card').hidden = !r.google; $('skip-acct').hidden = !r.google;
       if (sk) load(true); else show('gate');
     }, function () { if (sk) load(true); else show('gate'); });
   }
