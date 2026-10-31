@@ -107,6 +107,7 @@ const mem = {
         return n;
       }
       case 'ZINCRBY': { const z = this.ensure(k, () => new Map()); const n = (z.get(c[3]) || 0) + Number(c[2]); z.set(c[3], n); return String(n); }
+      case 'ZREM': { const z = this.get(k); let n = 0; if (z) for (const m of c.slice(2)) if (z.delete(m)) n++; return n; }
       case 'ZSCORE': { const z = this.get(k); return z && z.has(c[2]) ? String(z.get(c[2])) : null; }
       case 'ZCARD': { const z = this.get(k); return z ? z.size : 0; }
       case 'ZREVRANK': { const z = this.get(k); if (!z || !z.has(c[2])) return null; return this.zsorted(z).reverse().findIndex((e) => e[0] === c[2]); }
