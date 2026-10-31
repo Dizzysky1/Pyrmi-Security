@@ -55,4 +55,6 @@ export declare class Pyrmi {
   constructor(opts?: PyrmiOptions);
   verify(input: VerifyInput): Promise<VerifyResult>;
 }
+/** True only for an accept whose telemetry the server corroborated. Use it to gate sensitive actions. */
+export declare function trusted(v: VerifyResult | null | undefined): boolean;
 export default Pyrmi;

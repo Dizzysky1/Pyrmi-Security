@@ -94,11 +94,12 @@
       </div>
       <div class="code">
         <div class="code-h">on your server <button class="copy" data-copy="c2">copy</button></div>
-<pre id="c2">const { Pyrmi } = require('pyrmi-server');
+<pre id="c2">const { Pyrmi, trusted } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
 const v = await pyrmi.verify({ token, user: email });
-if (v.verdict === 'reject') return res.status(403).end();</pre>
+if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review goes through, flagged
+// a payout or a prize instead: if (!trusted(v)) return res.status(403).end();</pre>
       </div>
     </div>
   </section>

@@ -18,9 +18,21 @@ app.post('/signup', async (req, res) => {
   await db.createUser(email, { flagged: v.verdict === 'review' });
   res.json({ ok: true });
 });
+
+// A sensitive action: only an accept whose telemetry the server corroborated.
+const { trusted } = require('pyrmi-server');
+app.post('/claim-prize', async (req, res) => {
+  const v = await pyrmi.verify({ token: req.body.pyrmiToken, user: req.user.id, score: req.body.score });
+  if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
+  await payPrize(req.user.id);
+  res.json({ ok: true });
+});
 ```
 
-`verify` returns a verdict (`accept`, `review` or `reject`), a risk score from 0 to 100, and the reasons. The
+`verify` returns a verdict (`accept`, `review` or `reject`), a risk score from 0 to 100, `client`
+(`corroborated`, `unverified` or `none`: whether the browser telemetry held up against what the server saw), and the
+reasons. `trusted(v)` is true only for an `accept` with a `corroborated` client. Browser telemetry is advisory, so a
+script that copies the real one closely enough can still pass; keep your own limits too. The
 browser half is one script tag; see the [docs](https://pyrmi.com/docs/).
 
 If the request carries a number worth capping (points, a quantity, a score), pass it as `score` and set limits on

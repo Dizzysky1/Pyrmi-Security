@@ -5,7 +5,8 @@
 //   const { Pyrmi } = require('pyrmi-server');
 //   const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 //   const v = await pyrmi.verify({ token, user });          // add score: n to check a number too
-//   if (v.verdict !== 'reject') doTheThing(...);
+//   if (v.verdict !== 'reject') doTheThing(...);             // everyday actions: let review through, flagged
+//   if (trusted(v)) payOut(...);                             // sensitive ones: only a corroborated accept
 
 class Pyrmi {
   constructor(opts) {
@@ -18,7 +19,7 @@ class Pyrmi {
     if (typeof window !== 'undefined' && typeof document !== 'undefined') throw new Error('pyrmi-server: this runs on your server only, never in the browser');
   }
 
-  // Returns { verdict: 'accept'|'review'|'reject', risk, reasons, session, player, score }.
+  // Returns { verdict: 'accept'|'review'|'reject', risk, client: 'corroborated'|'unverified'|'none', reasons, session, player, score }.
   // user is an alias for player. score is optional: send it when the action carries a number you want capped.
   // simulate (optional): (replay) => ({ score, durationMs }) re-runs a deterministic app from its recorded inputs on
   // your server. If it gives a different score, the verdict is 'reject' with reason replay_mismatch.
@@ -52,5 +53,13 @@ class Pyrmi {
   }
 }
 
-module.exports = { Pyrmi };
+// The gate for anything that matters (payouts, prizes, leaderboards, account changes): an accept whose telemetry the
+// server could corroborate. A review is never trusted, nor is the stand-in verdict from failOpen when Pyrmi is down.
+// This still isn't proof of a person: a script that copies the real one closely enough can pass, so pair it with
+// your own limits (maxScore, minDurationMs, rate limits) and, for a deterministic game, simulate.
+function trusted(v) {
+  return !!(v && v.ok !== false && !v.unverified && v.verdict === 'accept' && v.client === 'corroborated');
+}
+
+module.exports = { Pyrmi, trusted };
 module.exports.default = Pyrmi;

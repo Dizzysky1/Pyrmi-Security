@@ -39,7 +39,7 @@ const BUILTIN = { [DEMO.pid]: DEMO, [SITE.pid]: SITE };
 // Soft signals add risk; hard reasons reject outright.
 const WEIGHTS = {
   automation: 70, no_client: 40, synthetic_input: 40, speed_hack: 35, time_warp: 35,
-  unverified_client: 40, tampered_runtime: 30, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10, wrapped_runtime: 5,
+  unverified_client: 40, tampered_runtime: 40, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10, wrapped_runtime: 5,
 };
 const REASONS = {
   invalid_token: 'The session token was missing, forged or edited.',
@@ -189,8 +189,10 @@ function decodeShaped(body, shape) {
 // This only catches a careless edit: the fingerprints are public (this file, the built script), so a deliberate fake
 // just sends the right one. The served build is always known. The readable source (src/, never deployed) is only
 // known outside production, for the tests and local dev. Builds that came before are known for a grace period after
-// they were replaced, long enough for cached copies to expire, then they stop being a free pass.
-const SDK_GRACE_MS = () => intEnv('PYRMI_SDK_GRACE_DAYS', 7) * DAY * 1000;
+// they were replaced (the CDN caches the script for 5 minutes; the day covers tabs left open), and even then they are
+// never "corroborated": they can't pass the checks below, so a beacon from one is `unverified_client` (review by
+// default). After the grace period they count as tampered too.
+const SDK_GRACE_MS = () => intEnv('PYRMI_SDK_GRACE_DAYS', 1) * DAY * 1000;
 const inProduction = () => process.env.VERCEL_ENV === 'production';
 function sdkStatus(sh, now) {
   if (typeof sh !== 'string' || !sh) return 'missing';
@@ -209,15 +211,29 @@ function sdkStatus(sh, now) {
 // request, and the server's own clock. A failure adds `unverified_client` (40, review by default). None of this proves
 // a person: someone in their own browser can still send what the real script would. It makes a scripted or
 // hand-written client do the work of looking like a browser that kept the session open in real time.
+// The current build always sends a number for pt (the page clock) and true, false or null for ac (null only where the
+// browser has no navigator.userActivation). Leaving either out, or sending pt: null, fails the shape (round 8).
 const BEACON_SHAPE = { wd: 'boolean', hl: 'boolean', au: 'array', tp: 'array', dt: 'number', ut: 'number', ih: 'number',
-  k: 'number', p: 'number', h: 'number', pt: 'number|null', gt: 'number|null', sh: 'string' };
-// (`wr` is left out: builds before round 6 didn't send it.)
+  k: 'number', p: 'number', h: 'number', pt: 'number', gt: 'number|null', sh: 'string', ac: 'boolean|null' };
+// Builds before round 7 didn't send ac and could send pt: null; they are judged on this shape (and are never corroborated).
+// (`wr` is left out of both: builds before round 6 didn't send it.)
+const LEGACY_SHAPE = (() => { const o = { ...BEACON_SHAPE, pt: 'number|null' }; delete o.ac; return o; })();
 const COUNTERS = ['k', 'p', 'ut', 'ih', 'h', 'dt'];
 const CLOCK_SLACK_MS = 3000;   // two request latencies apart, plus slack
 const MAX_INPUTS_PER_SEC = 60; // a click is ~3 counted events (pointerdown, mousedown, click); 20 clicks a second is already fake
 // Browsers that always send Sec-Fetch-Site (Chrome/Edge/Opera 76+, Firefox 90+). Safari only added it in 16.4, and
 // iOS browsers report CriOS/FxiOS, so a missing header is only held against a UA that claims one of these.
 const SENDS_FETCH_METADATA = /\b(Chrome|Firefox)\/\d/;
+// Browsers that have navigator.userActivation: Chromium 72+, Firefox 120+, Safari 16.4+. On these the script can always
+// say whether the page was activated, so null (or no answer) there is made up. Other UAs may send null.
+function hasUserActivation(ua) {
+  ua = String(ua || '');
+  let m = ua.match(/\bChrome\/(\d+)/); if (m) return Number(m[1]) >= 72;
+  m = ua.match(/\bFirefox\/(\d+)/); if (m) return Number(m[1]) >= 120;
+  if (/\b(CriOS|FxiOS|EdgiOS)\//.test(ua)) return false; // iOS shells: version is the app's, not WebKit's
+  m = ua.match(/\bVersion\/(\d+)(?:\.(\d+))?.*\bSafari\//); if (m) return Number(m[1]) > 16 || (Number(m[1]) === 16 && Number(m[2] || 0) >= 4);
+  return false;
+}
 function typeOk(v, t) {
   return t.split('|').some((x) => (x === 'array' ? Array.isArray(v) : x === 'null' ? v === null : typeof v === x && (x !== 'number' || Number.isFinite(v))));
 }
@@ -225,13 +241,19 @@ function typeOk(v, t) {
 function corroborate(raw, body, sess, ctx, now) {
   const out = [];
   if (!num(sess.sv, 0)) return out; // a session from before this check existed (in flight across the deploy)
-  const shapeOk = Object.keys(BEACON_SHAPE).every((k) => k in raw && typeOk(raw[k], BEACON_SHAPE[k]));
+  const status = sdkStatus(raw.sh, now);
+  // Only the current build sends pt0, ac, bn and n, so only it can be corroborated. Any other known build (a cached
+  // copy in its grace period) or an edited copy is unverified however clean its numbers look: this used to skip the
+  // clock, activation and nonce checks and come back corroborated (round 8).
+  const current = status === 'current';
+  const want = current ? BEACON_SHAPE : LEGACY_SHAPE;
+  const shapeOk = Object.keys(want).every((k) => k in raw && typeOk(raw[k], want[k]));
   if (!shapeOk) out.push('shape');
-  if (typeof raw.sh !== 'string' || !raw.sh) out.push('fingerprint');
+  if (status === 'missing') out.push('fingerprint');
+  else if (!current) out.push('sdk_version');
   const origin = String(ctx.origin || '');
   if (!origin || origin !== String(sess.o || '')) out.push('transport');
   else if (!ctx.sfs && SENDS_FETCH_METADATA.test(String(ctx.ua || ''))) out.push('transport');
-  const current = sdkStatus(raw.sh, now) === 'current'; // only the current build sends pt0, ac, bn and n
   const pt0 = sess.pt0 === undefined || sess.pt0 === '' ? null : Number(sess.pt0);
   const span = now - num(sess.i, now);
   if (Number.isFinite(pt0) && pt0 !== null && Number.isFinite(raw.pt)) {
@@ -239,13 +261,18 @@ function corroborate(raw, body, sess, ctx, now) {
     // impossible; behind can be a sleeping laptop, so only short sessions are held to it.
     const drift = (raw.pt - pt0) - span, slack = CLOCK_SLACK_MS + span * 0.1;
     if (drift > slack || (drift < -slack && span < 120000)) out.push('clock');
-  } else if (current && Number.isFinite(raw.pt)) out.push('clock'); // this build always sends its start clock
+  } else if (current) out.push('clock'); // this build always sends its start clock and a page clock on every beacon
   let last = null; try { last = sess.lc ? JSON.parse(sess.lc) : null; } catch (_) { last = null; }
   if (last && COUNTERS.some((k) => Number.isFinite(raw[k]) && raw[k] < num(last[k], 0))) out.push('counters'); // counters only grow
   if (Number.isFinite(raw.k) && Number.isFinite(raw.p) && raw.k + raw.p > MAX_INPUTS_PER_SEC * Math.max(span, 0) / 1000 + 30) out.push('input_rate');
   // A browser marks a page "activated" on a real key press or click whatever any script does. Lots of counted input
   // on a page the browser never saw activated means the counts were made up.
-  if (current && raw.ac === false && (num(raw.k, 0) + num(raw.p, 0)) >= 8) out.push('activation');
+  // Where the browser has userActivation, only true counts as activated: false, null or nothing with that much input
+  // is flagged, and null on its own is too (the script there always gets a true or false).
+  if (current) {
+    const inputs = num(raw.k, 0) + num(raw.p, 0), known = hasUserActivation(ctx.ua);
+    if (raw.ac !== true && (inputs >= 8 ? (known || raw.ac === false) : known && raw.ac !== false)) out.push('activation');
+  }
   if (current && sess.bn && (body.bn === undefined || body.n === undefined)) out.push('nonce');
   return out;
 }
