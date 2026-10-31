@@ -300,3 +300,47 @@ test('parallel site creates cannot race past the per-owner cap (A2-08)', async (
     if (savedCap === undefined) delete process.env.PYRMI_SITES_PER_USER; else process.env.PYRMI_SITES_PER_USER = savedCap;
   }
 });
+
+// F-20: a request carrying a malformed session cookie must not reach KV. currentUser used to GET ps:auth for any
+// present cookie (even junk), one uncapped Redis read per hit; now a cookie that isn't a well-formed session id is
+// rejected before any KV call, and sessionSid() lets the handler cap the lookups that do happen with a separate bucket.
+test('a malformed session cookie never triggers a KV read (F-20)', async () => {
+  const cookie = (v) => ({ headers: { cookie: accounts.SESSION_COOKIE + '=' + v } });
+  // sessionSid only accepts the 43-char base64url shape a real session id has.
+  assert.equal(accounts.sessionSid(cookie('short')), null, 'too-short cookie is rejected');
+  assert.equal(accounts.sessionSid(cookie('!!!not-base64url-at-all!!!')), null, 'non-base64url cookie is rejected');
+  assert.equal(accounts.sessionSid(cookie('x'.repeat(200))), null, 'over-long cookie is rejected');
+  const good = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v'; // 43 base64url chars
+  assert.equal(accounts.sessionSid(cookie(good)), good, 'a well-formed session id is accepted');
+
+  // Count ps:auth GETs while reading a few junk cookies: there must be none.
+  const orig = kv.cmd; let authReads = 0;
+  kv.cmd = async (...a) => { if (a[0] === 'GET' && String(a[1]).includes('ps:auth:')) authReads++; return orig(...a); };
+  try {
+    for (const v of ['short', '!!!bad!!!', 'x'.repeat(200), '']) assert.equal(await accounts.currentUser(cookie(v)), null);
+    assert.equal(authReads, 0, 'malformed cookies must cost zero KV reads, got ' + authReads);
+    await accounts.currentUser(cookie(good)); // a well-formed (but unknown) id is allowed to do its one lookup
+    assert.equal(authReads, 1, 'a well-formed id does exactly one lookup');
+  } finally { kv.cmd = orig; }
+});
+
+// F-24: per-IP (10/600s) and per-address (5/hour) limits don't bound the TOTAL number of sign-in emails, so a script
+// rotating IPs and addresses could email-bomb inboxes and burn login@pyrmi.com's reputation. A global per-day cap
+// bounds the blast radius however the source is spread. (Uses a stub mailer; no real mail is sent.)
+test('email sign-in is bounded by a global per-day cap, not just per-IP/address (F-24)', async () => {
+  const savedCap = process.env.PYRMI_EMAIL_STARTS_PER_DAY, savedResend = process.env.RESEND_API_KEY;
+  process.env.PYRMI_EMAIL_STARTS_PER_DAY = '3';
+  process.env.RESEND_API_KEY = 'test-key'; // make email sign-in "configured" without real SMTP
+  await kv.cmd('DEL', 'ps:rl:emailstart:' + new Date().toISOString().slice(0, 10)); // isolate from other tests' sends
+  const sent = [];
+  const mailer = async (m) => { sent.push(m.to); };
+  try {
+    for (let i = 0; i < 3; i++) await accounts.emailStart({ email: 'bomb' + i + '@example.com' }, '198.51.100.' + (200 + i), mailer);
+    await assert.rejects(() => accounts.emailStart({ email: 'bomb9@example.com' }, '198.51.100.250', mailer),
+      (e) => e.status === 429 && e.code === 'rate_limited', 'past the global daily cap, email sign-in is refused');
+    assert.equal(sent.length, 3, 'no more than the cap of codes are ever sent, got ' + sent.length);
+  } finally {
+    if (savedCap === undefined) delete process.env.PYRMI_EMAIL_STARTS_PER_DAY; else process.env.PYRMI_EMAIL_STARTS_PER_DAY = savedCap;
+    if (savedResend === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = savedResend;
+  }
+});

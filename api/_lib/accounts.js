@@ -23,6 +23,9 @@ const smtp = require('./smtp');
 
 const SESSION_COOKIE = '__Host-pyrmi_session';
 const STATE_COOKIE = '__Host-pyrmi_oauth';
+// A real session id is base64url of 32 random bytes (crypto.randomId(32)) -> exactly 43 url-safe chars. Matching
+// the shape lets us reject a junk cookie before any KV lookup, so a flood of forged cookies can't drive Redis reads (F-20).
+const SID_RE = /^[A-Za-z0-9_-]{43}$/;
 const SESSION_TTL = 7 * 86400;
 const MAX_SITES = 10;
 const CODE_TTL = 600;
@@ -96,7 +99,15 @@ async function emailStart(body, ip, mailer) {
   // so an address under a steady stream of requests never cleared its limit and stayed locked out for good (F-05).
   const n = Number(await kv.cmd('INCR', per));
   if (n === 1) await kv.cmd('EXPIRE', per, 3600);
-  if (n > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.');
+  if (n > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; throw e; }
+  // Per-IP and per-address limits don't bound the TOTAL: rotating both lets a script send one code to each of many
+  // addresses, bombing inboxes and burning login@pyrmi.com's sender reputation. Cap the whole server's sign-in codes
+  // per day so the blast radius is bounded no matter how the source is spread (F-24). Generous, and env-tunable.
+  const day = new Date().toISOString().slice(0, 10);
+  const gk = 'ps:rl:emailstart:' + day;
+  const g = Number(await kv.cmd('INCR', gk));
+  if (g === 1) await kv.cmd('EXPIRE', gk, 2 * 86400);
+  if (g > intEnv('PYRMI_EMAIL_STARTS_PER_DAY', 500)) { const e = httpError(429, 'rate_limited', 'Email sign-in is temporarily paused on this server. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
   const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
   await kv.cmd('HSET', 'ps:ec:' + C.sha256(email), 'h', await codeHash(email, code), 'n', 0);
   await kv.cmd('EXPIRE', 'ps:ec:' + C.sha256(email), CODE_TTL);
@@ -254,9 +265,16 @@ const githubApi = {
 
 // ---- signed-in requests -------------------------------------------------------------------------------------------
 
-async function currentUser(req) {
+// The session id from the cookie, but only if it's well-formed. A missing or malformed cookie returns null with no
+// KV call, so junk cookies cost nothing (F-20). Callers can use this to decide whether a request is worth a lookup.
+function sessionSid(req) {
   const sid = readCookies(req)[SESSION_COOKIE];
-  if (!sid || sid.length > 100) return null;
+  return sid && SID_RE.test(sid) ? sid : null;
+}
+
+async function currentUser(req) {
+  const sid = sessionSid(req);
+  if (!sid) return null;
   const uid = await kv.cmd('GET', 'ps:auth:' + C.sha256(sid));
   if (!uid) return null;
   const u = kv.pairs(await kv.cmd('HGETALL', 'ps:u:' + uid));
@@ -343,6 +361,6 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 module.exports = {
   providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
-  readIdToken, cleanEmail, sendMail, currentUser, requireUser, checkCsrf, signOut,
+  readIdToken, cleanEmail, sendMail, currentUser, requireUser, sessionSid, checkCsrf, signOut,
   listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE,
 };
