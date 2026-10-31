@@ -3,7 +3,12 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var demo = new URLSearchParams(location.search).has('demo');
+  var q = new URLSearchParams(location.search);
+  var demo = q.has('demo') ? (q.get('demo') === 'site' ? 'site' : '1') : null;
+  // pyrmi.com protects its own "new project" form with Pyrmi: start a session now, send its token with the form.
+  var guard = null;
+  function guardStart() { if (window.Pyrmi && !demo) Pyrmi.start().then(function (s) { guard = s; }, function () { guard = null; }); }
+  guardStart();
   var KEY = 'pyrmi_sk', sk = null, timer = null, lastLoad = 0, data = null;
   try { sk = sessionStorage.getItem(KEY) || localStorage.getItem(KEY); } catch (e) { /* storage blocked */ }
 
@@ -31,8 +36,13 @@
     e.preventDefault();
     var f = e.target, btn = f.querySelector('button');
     btn.disabled = true; $('create-err').textContent = '';
-    api('POST', 'project', { name: f.name.value, origins: lines(f.origins.value) }).then(function (r) {
+    var flush = window.Pyrmi ? Pyrmi.flush() : Promise.resolve();
+    flush.then(function () {
+      var token = guard && guard.token; guard = null;
+      return api('POST', 'project', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token });
+    }).then(function (r) {
       btn.disabled = false;
+      guardStart(); // tokens are single use
       if (!r.ok) { $('create-err').textContent = r.message || r.error; return; }
       $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey;
       sk = r.project.secretKey; save(sk, false); show('keys');
@@ -141,7 +151,7 @@
   });
 
   function load(first) {
-    return api('GET', demo ? 'dashboard?demo=1' : 'dashboard').then(function (r) {
+    return api('GET', demo ? 'dashboard?demo=' + demo : 'dashboard').then(function (r) {
       if (!r.ok) {
         if (r._status === 401 && !demo) { forget(); show('gate'); return; }
         if (first) { show(demo ? 'dash' : 'gate'); $(demo ? 'd-name' : 'login-err').textContent = r.message || 'Could not load the dashboard.'; }

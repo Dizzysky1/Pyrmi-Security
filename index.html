@@ -25,13 +25,13 @@
 <meta name="theme-color" content="#07070c">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
-<div id="bg"></div>
-<canvas id="stars"></canvas>
-<div class="scan"></div>
+<div id="bg-fallback"></div>
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="veil"></div>
 
 <div class="wrap">
   <header class="top">
@@ -174,5 +174,6 @@ if (v.verdict === 'reject') return res.status(403).end();</pre>
 <script src="/sdk/pyrmi.js" data-site="pk_demo_sandbox"></script>
 <script src="/site.js"></script>
 <script src="/sandbox.js"></script>
+<script type="module" src="/bg/singularity.js"></script>
 </body>
 </html>
