@@ -12,6 +12,11 @@ const { send, fail, readJson, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
   const ip = clientIp(req);
+  // A request carrying a well-formed session cookie triggers a KV lookup in requireUser, so cap those per IP with a
+  // separate, higher pre-auth bucket (F-20). A missing or malformed cookie never reaches KV (sessionSid returns null),
+  // so it stays free and isn't counted here. This is deliberately NOT the authenticated 'sites' bucket below, which
+  // stays behind auth so an anonymous flood can't lock out a shared network's signed-in users (F-11).
+  if (accounts.sessionSid(req)) await core.limitIp(ip, 'sitespre', 60, 'PYRMI_PREAUTH_CALLS_PER_MIN', 300);
   // Authenticate first: the IP limiter below must not run for an anonymous request, or an attacker could burn a
   // shared network's bucket (and pile up KV writes) without ever signing in (F-11).
   const user = await accounts.requireUser(req);

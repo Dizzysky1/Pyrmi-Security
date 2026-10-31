@@ -10,6 +10,7 @@ const SDK = require('./sdk-build.json');
 const DAY = 86400;
 const MAX_EVENTS = 200;
 const MAX_BEACONS = 120;
+const MAX_PLAYERS = 1000; // cap on the per-player detail records a project keeps, matching the recent-players index
 
 const DEFAULTS = {
   reviewAt: 40,          // risk at or above this: accepted but flagged for review
@@ -70,6 +71,10 @@ const HARD = new Set(['invalid_token', 'wrong_project', 'expired', 'token_reused
 const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
+// When on, every ordinary project must register at least one allowed origin, and a project with none can't mint
+// sessions (F-07). Off by default so turning it on is a deliberate step once existing projects have origins set
+// and the create form collects them; an origin-bound project is already enforced regardless of this flag.
+const requireOrigins = () => /^(1|true|on|yes)$/i.test(String(process.env.PYRMI_REQUIRE_ORIGINS || ''));
 
 // Fixed-window counter: INCR, and set the TTL only on the first hit so the window actually expires.
 // (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever and lock the victim out of a limit.)
@@ -82,7 +87,11 @@ async function bump(key, ttl, limit) {
 // Per-network limit for one kind of request. Limits can be changed with env vars (see README).
 async function limitIp(ip, name, ttl, env, dflt, message) {
   const ipf = await C.fingerprint('ip', ip);
-  if (await bump('ps:rl:' + name + ':' + ipf, ttl, intEnv(env, dflt))) throw httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
+  if (await bump('ps:rl:' + name + ':' + ipf, ttl, intEnv(env, dflt))) {
+    const e = httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
+    e.retryAfter = ttl; // the window length, surfaced as Retry-After (F-23)
+    throw e;
+  }
 }
 
 // Secret-key lookup with a cap on wrong guesses per network, so nobody can hammer the key check.
@@ -231,6 +240,10 @@ async function createProject(body, ip, owner) {
   if (String(process.env.PYRMI_SIGNUPS || '').toLowerCase() === 'off') throw httpError(403, 'signups_closed', 'New projects are paused on this server.');
   const name = cleanName(body.name);
   const settings = cleanSettings({ origins: body.origins || [] }, DEFAULTS);
+  // A public key alone can mint sessions, so a project with no allowed origins is effectively open to any page.
+  // When origin enforcement is on, make registering one a condition of creation (checked before the counter is
+  // touched, so a rejected create can't poison the capacity count) (F-07).
+  if (requireOrigins() && !settings.origins.length) throw httpError(400, 'origins_required', 'Register at least one allowed origin (the page URL that will start sessions) for this project.');
   const ipf = await C.fingerprint('ip', ip);
   if (await bump('ps:rl:newproj:' + ipf, DAY, intEnv('PYRMI_PROJECTS_PER_IP', 3))) throw httpError(429, 'rate_limited', 'Too many new projects from your network today.');
   const count = await kv.cmd('INCR', 'ps:projects');
@@ -293,11 +306,19 @@ function view(p) { const { owner, ...rest } = p; return rest; }
 
 async function deleteProject(project) {
   if (project.demo) throw httpError(403, 'demo_locked');
-  const skh = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  const pid = project.pid;
+  const skh = await kv.cmd('HGET', 'ps:p:' + pid, 'skh');
   // Only give back a capacity slot for a project that was actually still there. A repeat delete of an already-gone
   // project must be a no-op, and the counter must never go negative (which would disable the cap) (F-13/F-14).
-  const existed = num(await kv.cmd('EXISTS', 'ps:p:' + project.pid), 0);
-  await kv.cmd('DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid, 'ps:plf:' + project.pid, 'ps:plr:' + project.pid);
+  const existed = num(await kv.cmd('EXISTS', 'ps:p:' + pid), 0);
+  // "Delete site" is sold as deletion, so take the visitor and stats data with the project, not just the project
+  // record. Read the recent-players index before dropping it to learn which per-player hashes to remove; the daily
+  // stats/quota keys are day-stamped (<=35d TTL), so clear a generous window of them by day.
+  const players = (await kv.cmd('ZRANGE', 'ps:plr:' + pid, 0, -1)) || [];
+  const now = Date.now(), dayKeys = [];
+  for (let d = 0; d <= 40; d++) { const day = ymd(now - d * DAY * 1000); dayKeys.push('ps:st:' + pid + ':' + day, 'ps:q:' + pid + ':' + day); }
+  await kv.cmd('DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + pid, 'ps:ev:' + pid, 'ps:plf:' + pid, 'ps:plr:' + pid,
+    ...players.map((m) => 'ps:pl:' + pid + ':' + m), ...dayKeys);
   if (existed) {
     const left = num(await kv.cmd('DECR', 'ps:projects'), 0);
     if (left < 0) await kv.cmd('SET', 'ps:projects', '0');
@@ -315,10 +336,16 @@ async function readSession(token) {
 
 async function startSession(project, ctx) {
   const s = project.settings;
+  // An allowed-origins list is a real binding: the request's Origin must be in it (a missing Origin is '' and so
+  // never matches, which rejects bare non-browser callers too). This is enforced whenever a project has origins set.
   if (s.origins.length && !s.origins.includes(ctx.origin)) throw httpError(403, 'origin_not_allowed', 'This page is not on the project\'s allowed origins.');
   // A real browser always sends an Origin. Require one for ordinary projects so sessions can't be minted by a bare
   // script with no page behind it; the builtin site widget and public sandbox are exempt (F-07).
   if (!project.demo && !ctx.origin) throw httpError(403, 'origin_required', 'A browser Origin is required to start a session.');
+  // With enforcement on, an ordinary project that never registered an origin stays open to any page (the check
+  // above is vacuous for an empty list), so refuse to mint sessions for it until one is set (F-07). The per-project
+  // daily cap below (ps:q, independent of IP) remains the backstop against quota drain in every case.
+  if (requireOrigins() && !project.demo && !s.origins.length) throw httpError(403, 'origin_required', 'This project has no allowed origins registered; add one in the dashboard to start sessions.');
   const ipf = await C.fingerprint('ip', ctx.ip), uaf = await C.fingerprint('ua', ctx.ua || '');
   const now = Date.now(), day = ymd(now);
   if (await bump('ps:rl:sess:' + ipf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
@@ -461,6 +488,7 @@ async function verify(project, body, ctx) {
 }
 
 async function logVerdict(pid, ev, genuine) {
+  const isDemo = pid === DEMO.pid;
   const day = ymd(ev.t), stat = 'ps:st:' + pid + ':' + day, pl = 'ps:pl:' + pid + ':' + ev.player;
   const flagged = ev.verdict !== 'accept';
   const cmds = [
@@ -472,9 +500,17 @@ async function logVerdict(pid, ev, genuine) {
   // The per-visitor records are keyed on a caller-chosen label. Only write them when a genuine session backs the
   // verdict; otherwise anyone could spray labels through the keyless /demo endpoint and grow the store unbounded (A2-06).
   if (genuine) {
-    cmds.push(['HINCRBY', pl, ev.verdict, 1], ['HSET', pl, 'last', ev.t, 'risk', ev.risk, 'top', (ev.reasons[0] && ev.reasons[0].code) || '']);
-    cmds.push(['EXPIRE', pl, 30 * DAY]);
-    cmds.push(['ZADD', 'ps:plr:' + pid, ev.t, ev.player], ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, -1001]);
+    // The public sandbox lets anyone pick the visitor label, so per-player detail hashes would grow without bound
+    // there (F-19). Never keep them for the demo project; the recent/flagged indexes below are capped on their own.
+    if (!isDemo) {
+      cmds.push(['HINCRBY', pl, ev.verdict, 1], ['HSET', pl, 'last', ev.t, 'risk', ev.risk, 'top', (ev.reasons[0] && ev.reasons[0].code) || '']);
+      cmds.push(['EXPIRE', pl, 30 * DAY]);
+    }
+    cmds.push(['ZADD', 'ps:plr:' + pid, ev.t, ev.player]);
+    // For the demo the recent-players index is self-bounded here (nothing else to clean up). For real projects the
+    // index is trimmed in trimPlayers below, which also deletes the detail hash of anyone it evicts, so ps:pl stays
+    // capped at MAX_PLAYERS and can't grow without bound either (F-19).
+    if (isDemo) cmds.push(['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, -1001]);
     if (flagged) {
       cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
       // Cap the flagged-players set to the worst ~1000, so a flood of one-off names can't grow it without bound (F-08).
@@ -482,6 +518,20 @@ async function logVerdict(pid, ev, genuine) {
     }
   }
   await kv.pipeline(cmds);
+  if (genuine && !isDemo) await trimPlayers(pid);
+}
+
+// Keep a real project's recent-players index at MAX_PLAYERS and delete the per-player detail hash of each player
+// trimmed out, so ps:pl is capped the same way the index is (F-19). Does nothing until the project passes the cap.
+async function trimPlayers(pid) {
+  const over = num(await kv.cmd('ZCARD', 'ps:plr:' + pid), 0) - MAX_PLAYERS;
+  if (over <= 0) return;
+  const gone = (await kv.cmd('ZRANGE', 'ps:plr:' + pid, 0, over - 1)) || []; // the oldest members
+  if (!gone.length) return;
+  await kv.pipeline([
+    ['DEL', ...gone.map((m) => 'ps:pl:' + pid + ':' + m)],
+    ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, over - 1],
+  ]);
 }
 
 // ---- dashboard --------------------------------------------------------------------------------------------------
