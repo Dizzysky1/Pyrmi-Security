@@ -83,6 +83,7 @@ const mem = {
       case 'DEL': { let n = 0; for (const x of c.slice(1)) { if (this.alive(x)) { this.data.delete(x); this.exp.delete(x); n++; } } return n; }
       case 'EXISTS': return this.alive(k) ? 1 : 0;
       case 'INCR': case 'INCRBY': { const n = Number(this.get(k) || 0) + (op === 'INCR' ? 1 : Number(c[2])); this.data.set(k, String(n)); return n; }
+      case 'DECR': case 'DECRBY': { const n = Number(this.get(k) || 0) - (op === 'DECR' ? 1 : Number(c[2])); this.data.set(k, String(n)); return n; }
       case 'EXPIRE': if (!this.alive(k)) return 0; this.exp.set(k, Date.now() + Number(c[2]) * 1000); return 1;
       case 'TTL': { if (!this.alive(k)) return -2; const e = this.exp.get(k); return e ? Math.ceil((e - Date.now()) / 1000) : -1; }
       case 'HSET': { const h = this.ensure(k, () => new Map()); let n = 0; for (let i = 2; i + 1 < c.length; i += 2) { if (!h.has(c[i])) n++; h.set(c[i], c[i + 1]); } return n; }

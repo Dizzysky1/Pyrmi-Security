@@ -10,9 +10,9 @@
  * switched off from devtools. It watches for bots, tampering and devtools and reports them, and your server asks
  * Pyrmi for a verdict before it trusts the action. That's where the real protection is.
  *
- * This is the readable source. pyrmi.com serves a scrambled build of it (node scripts/build-sdk.js): names mangled,
- * strings encoded, plus a fingerprint of its own code that the server checks. Each session also gets its own random
- * field names and key for the telemetry it sends, so a bot written against one session's requests fails on the next.
+ * This is the readable source. pyrmi.com serves a minified build of it (node scripts/build-sdk.js) with a fingerprint
+ * of its own code that the server checks. The telemetry it sends is advisory: your server still asks Pyrmi for a
+ * verdict, and the real protection is the signed, single-use session token checked there, not anything in this file.
  */
 (function pyrmiMain(w, d) {
   'use strict';
@@ -108,20 +108,11 @@
     return { wd: env.wd, hl: env.hl, au: env.au, tp: env.tp, dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
       pt: perf ? Math.round(perf.now()) : null, gt: gameTime, sh: selfHash };
   }
-  // The session's own shape: random field names and a key, so each session's telemetry looks different on the wire.
-  var FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
-  function encode(sig, x) {
-    var out = {}, i;
-    for (i = 0; i < FIELDS.length; i++) out[x.f[i]] = sig[FIELDS[i]];
-    var json = JSON.stringify(out), key = atob(x.k.replace(/-/g, '+').replace(/_/g, '/')), bin = '';
-    for (i = 0; i < json.length; i++) bin += String.fromCharCode((json.charCodeAt(i) ^ key.charCodeAt(i % key.length) ^ (i * 7)) & 255);
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
+  // Telemetry is sent in the clear under `signals`. It's advisory only: the server treats it as hints that can raise
+  // risk, never as proof, because any client can send whatever it likes. (We used to XOR it with a per-session key,
+  // but that key was handed to the browser, so it protected nothing and only made the wire format look clever.)
   function payload() {
-    var body = { token: session.token };
-    if (session.x && session.x.f && session.x.f.length === FIELDS.length) body[session.x.n] = encode(signals(), session.x);
-    else body.signals = signals();
-    return body;
+    return { token: session.token, signals: signals() };
   }
   function post(path, body, beacon) {
     var json = JSON.stringify(body);
