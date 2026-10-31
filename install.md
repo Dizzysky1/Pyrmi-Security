@@ -12,6 +12,11 @@ The developer needs a project from https://pyrmi.com/dashboard/ (no account need
 - a public key `pk_...` that goes in the page, and
 - a secret key `sk_...` that goes ONLY in the server environment as `PYRMI_SECRET_KEY`.
 
+A new project is strict until it's set up: it only starts sessions on the pages registered as its allowed pages (the
+developer enters them when creating it), it rejects an action sent less than 1.5 seconds after the session started
+(`too_short`), and it rejects a value (`score`) until a maximum is set (`no_score_limit`: set `maxScore` or
+`maxScorePerSec` in the dashboard). Tell the developer which of these apply.
+
 If you don't have the keys, use the placeholder `pk_REPLACE_ME`, read the secret from `process.env.PYRMI_SECRET_KEY`,
 and tell the developer to create a project and set the env var. Never write a real secret key into source files,
 client code, logs or commits.
@@ -27,7 +32,7 @@ that scrapers hit. Ask the developer if it isn't clear. Protect those, not every
 Add once to each page that sends a protected request, before the page's own script:
 
 ```html
-<script src="https://pyrmi.com/sdk/pyrmi.js" data-site="pk_REPLACE_ME"></script>
+<script src="https://pyrmi.com/sdk/1.3.0/pyrmi.js" integrity="sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
 ```
 
 It defines `window.Pyrmi`.

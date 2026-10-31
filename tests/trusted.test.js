@@ -27,9 +27,10 @@ const call = B.wrap(rawCall);
 // A project with the given thresholds, one session from a real-looking page, one beacon, then the server's verdict.
 async function verdict(settings, signals) {
   ipn++;
-  const p = (await call('POST', '/api/v1/project', { name: 'tuned' })).body.project;
+  const p = (await call('POST', '/api/v1/project', { name: 'tuned', origins: ['https://shop.example'] })).body.project;
   const auth = { Authorization: 'Bearer ' + p.secretKey };
-  if (settings) assert.equal((await call('PATCH', '/api/v1/project', { settings }, auth)).status, 200);
+  // These tests are about trusted, not the minimum time: let the action through as soon as the beacon is in.
+  assert.equal((await call('PATCH', '/api/v1/project', { settings: { minDurationMs: 0, ...(settings || {}) } }, auth)).status, 200);
   const s = (await call('POST', '/api/v1/session', { site: p.publicKey }, { Origin: 'https://shop.example' })).body;
   assert.equal((await B.beacon(call, s, { pt: 1300, ...(signals || {}) })).status, 200);
   await wait(1300);

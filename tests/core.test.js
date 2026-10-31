@@ -10,7 +10,7 @@ const core = require('../api/_lib/core');
 // F-09: deleting a project must free the capacity slot it took, or delete+create would exhaust PYRMI_MAX_PROJECTS.
 test('deleting a project decrements the capacity counter', async () => {
   const before = Number((await kv.cmd('GET', 'ps:projects')) || 0);
-  const p = await core.createProject({ name: 'Temp' }, '198.51.100.21', 'owner-x');
+  const p = await core.createProject({ name: 'Temp', origins: ['https://t.example'] }, '198.51.100.21', 'owner-x');
   assert.equal(Number(await kv.cmd('GET', 'ps:projects')), before + 1);
   await core.deleteProject(await core.loadProject(p.pid));
   assert.equal(Number(await kv.cmd('GET', 'ps:projects')), before, 'count should return to where it started');
@@ -38,7 +38,7 @@ test('under a key prefix, deleting a project removes every key and stays idempot
   process.env.PYRMI_KV_PREFIX = 'live:'; // the exact production path: VERCEL_ENV=production -> prefix "live:"
   try {
     const before = Number((await kv.cmd('GET', 'ps:projects')) || 0);
-    const p = await core.createProject({ name: 'Doomed' }, '198.51.100.61', 'owner-del');
+    const p = await core.createProject({ name: 'Doomed', origins: ['https://t.example'] }, '198.51.100.61', 'owner-del');
     assert.ok(await core.loadProject(p.pid), 'project should exist before delete');
     await core.deleteProject(await core.loadProject(p.pid));
     assert.equal(await core.loadProject(p.pid), null, 'the project record must be gone');
@@ -56,11 +56,11 @@ test('under a key prefix, deleting a project removes every key and stays idempot
 // F-09: createProject did INCR before the capacity check, so an over-cap attempt permanently inflated the counter.
 test('a create rejected for being over capacity leaves the project counter unchanged (F-09)', async () => {
   const savedMax = process.env.PYRMI_MAX_PROJECTS;
-  const p0 = await core.createProject({ name: 'Cap filler' }, '198.51.100.70', 'owner-cap0');
+  const p0 = await core.createProject({ name: 'Cap filler', origins: ['https://t.example'] }, '198.51.100.70', 'owner-cap0');
   try {
     const at = Number(await kv.cmd('GET', 'ps:projects'));
     process.env.PYRMI_MAX_PROJECTS = String(at); // now exactly at capacity
-    await assert.rejects(() => core.createProject({ name: 'Over' }, '198.51.100.71', 'owner-cap'),
+    await assert.rejects(() => core.createProject({ name: 'Over', origins: ['https://t.example'] }, '198.51.100.71', 'owner-cap'),
       (e) => e.status === 403 && e.code === 'at_capacity');
     assert.equal(Number(await kv.cmd('GET', 'ps:projects')), at, 'a rejected create must not inflate the counter');
   } finally {

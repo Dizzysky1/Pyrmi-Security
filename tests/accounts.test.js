@@ -89,16 +89,16 @@ test('Google sign-in: state, PKCE and a verified email are required', async () =
 });
 
 test('adding a site needs the CSRF header, a same-site request and a clean Pyrmi token', async () => {
-  const noHeader = await call('POST', '/api/v1/sites', { name: 'Alice shop' }, { Cookie: alice });
+  const noHeader = await call('POST', '/api/v1/sites', { name: 'Alice shop', origins: ['https://alice.example'] }, { Cookie: alice });
   assert.equal(noHeader.status, 403);
-  const crossSite = await call('POST', '/api/v1/sites', { name: 'Alice shop' }, as(alice, { 'Sec-Fetch-Site': 'cross-site' }));
+  const crossSite = await call('POST', '/api/v1/sites', { name: 'Alice shop', origins: ['https://alice.example'] }, as(alice, { 'Sec-Fetch-Site': 'cross-site' }));
   assert.equal(crossSite.status, 403);
-  const otherOrigin = await call('POST', '/api/v1/sites', { name: 'Alice shop' }, as(alice, { Origin: 'https://evil.example' }));
+  const otherOrigin = await call('POST', '/api/v1/sites', { name: 'Alice shop', origins: ['https://alice.example'] }, as(alice, { Origin: 'https://evil.example' }));
   assert.equal(otherOrigin.status, 403);
-  const noToken = await call('POST', '/api/v1/sites', { name: 'Alice shop' }, as(alice));
+  const noToken = await call('POST', '/api/v1/sites', { name: 'Alice shop', origins: ['https://alice.example'] }, as(alice));
   assert.equal(noToken.status, 403);
   assert.equal(noToken.body.error, 'blocked_by_pyrmi');
-  const ok = await call('POST', '/api/v1/sites', { name: 'Alice shop', pyrmiToken: await siteToken() }, as(alice));
+  const ok = await call('POST', '/api/v1/sites', { name: 'Alice shop', origins: ['https://alice.example'], pyrmiToken: await siteToken() }, as(alice));
   assert.equal(ok.status, 201, JSON.stringify(ok.body));
   ({ pid: sitePid, secretKey: siteSk, publicKey: sitePk } = ok.body.project);
   assert.equal(ok.body.project.owner, undefined);
@@ -142,7 +142,7 @@ test('settings, rotation and delete work for the owner', async () => {
 });
 
 test('a key-only project can be claimed with its secret key', async () => {
-  const k = await call('POST', '/api/v1/project', { name: 'Old project', pyrmiToken: await siteToken() }, { 'X-Forwarded-For': '198.51.100.7' });
+  const k = await call('POST', '/api/v1/project', { name: 'Old project', origins: ['https://t.example'], pyrmiToken: await siteToken() }, { 'X-Forwarded-For': '198.51.100.7' });
   assert.equal(k.status, 201, JSON.stringify(k.body));
   const c = await call('POST', '/api/v1/sites?action=claim', { secretKey: k.body.project.secretKey }, as(bob));
   assert.equal(c.status, 200);
@@ -293,7 +293,7 @@ test('the /sites IP limiter never runs for an unauthenticated request (F-11)', a
 // them. A real browser always sends an Origin, so one is now required for non-builtin projects.
 test('an ordinary project requires a browser Origin to start a session (F-07)', async () => {
   const u = (await signIn('707', 'f07@example.com')).cookie;
-  const created = await call('POST', '/api/v1/sites', { name: 'F07 shop', pyrmiToken: await siteToken() }, as(u));
+  const created = await call('POST', '/api/v1/sites', { name: 'F07 shop', origins: ['https://f07.example'], pyrmiToken: await siteToken() }, as(u));
   const pk = created.body.project.publicKey; // a fresh project with an empty origins allowlist
   const noOrigin = await call('POST', '/api/v1/session', { site: pk });
   assert.equal(noOrigin.status, 403);
@@ -308,10 +308,10 @@ test('parallel site creates cannot race past the per-owner cap (A2-08)', async (
   process.env.PYRMI_SITES_PER_USER = '2';
   const uid = 'u_race_' + Date.now();
   try {
-    await accounts.createSite(uid, { name: 'one' }, '198.51.100.51');
+    await accounts.createSite(uid, { name: 'one', origins: ['https://t.example'] }, '198.51.100.51');
     await Promise.allSettled([
-      accounts.createSite(uid, { name: 'two' }, '198.51.100.52'),
-      accounts.createSite(uid, { name: 'three' }, '198.51.100.53'),
+      accounts.createSite(uid, { name: 'two', origins: ['https://t.example'] }, '198.51.100.52'),
+      accounts.createSite(uid, { name: 'three', origins: ['https://t.example'] }, '198.51.100.53'),
     ]);
     const card = Number(await kv.cmd('ZCARD', 'ps:us:' + uid));
     assert.ok(card <= 2, 'owner must never exceed the cap, even under concurrent creates (was ' + card + ')');
@@ -346,20 +346,46 @@ test('a malformed session cookie never triggers a KV read (F-20)', async () => {
 // F-24: per-IP (10/600s) and per-address (5/hour) limits don't bound the TOTAL number of sign-in emails, so a script
 // rotating IPs and addresses could email-bomb inboxes and burn login@pyrmi.com's reputation. A global per-day cap
 // bounds the blast radius however the source is spread. (Uses a stub mailer; no real mail is sent.)
-test('email sign-in is bounded by a global per-day cap, not just per-IP/address (F-24)', async () => {
+// Retest of b127c08: that cap covered everyone, so filling it locked every user out of email sign-in until midnight.
+// It now covers new addresses only, answers them the same as anyone else, and people with an account still get codes.
+test('email sign-in: the server-wide cap bounds codes to new addresses and never locks out existing accounts (F-24)', async () => {
   const savedCap = process.env.PYRMI_EMAIL_STARTS_PER_DAY, savedResend = process.env.RESEND_API_KEY;
   process.env.PYRMI_EMAIL_STARTS_PER_DAY = '3';
   process.env.RESEND_API_KEY = 'test-key'; // make email sign-in "configured" without real SMTP
-  await kv.cmd('DEL', 'ps:rl:emailstart:' + new Date().toISOString().slice(0, 10)); // isolate from other tests' sends
+  await kv.cmd('DEL', 'ps:rl:emailstart:' + require('../api/_lib/core').ymd(Date.now())); // isolate from other tests' sends
   const sent = [];
   const mailer = async (m) => { sent.push(m.to); };
   try {
-    for (let i = 0; i < 3; i++) await accounts.emailStart({ email: 'bomb' + i + '@example.com' }, '198.51.100.' + (200 + i), mailer);
-    await assert.rejects(() => accounts.emailStart({ email: 'bomb9@example.com' }, '198.51.100.250', mailer),
-      (e) => e.status === 429 && e.code === 'rate_limited', 'past the global daily cap, email sign-in is refused');
-    assert.equal(sent.length, 3, 'no more than the cap of codes are ever sent, got ' + sent.length);
+    const known = 'already-here@example.com';
+    await kv.cmd('SET', 'ps:ue:' + require('../api/_lib/crypto').sha256(known), 'u_known' + Date.now());
+    for (let i = 0; i < 3; i++) assert.deepEqual(await accounts.emailStart({ email: 'bomb' + i + '@example.com' }, '198.51.100.' + (200 + i), mailer), { sent: true });
+    // over the cap: a new address gets the same answer, but no mail goes out
+    assert.deepEqual(await accounts.emailStart({ email: 'bomb9@example.com' }, '198.51.100.250', mailer), { sent: false });
+    assert.equal(sent.length, 3, 'no more than the cap of codes go to new addresses, got ' + sent.length);
+    // an address that already has an account still gets its code
+    assert.deepEqual(await accounts.emailStart({ email: known }, '198.51.100.251', mailer), { sent: true });
+    assert.equal(sent[sent.length - 1], known);
+    // and the HTTP answer is the same either way, so the cap says nothing about which addresses have accounts
+    const a = await call('POST', '/api/v1/auth/email?action=start', { email: 'bomb10@example.com', pyrmiToken: await siteToken() }, { 'X-Pyrmi-CSRF': '1', 'Sec-Fetch-Site': 'same-origin', 'X-Forwarded-For': '198.51.100.252' });
+    assert.equal(a.status, 200); assert.deepEqual(a.body, { ok: true });
   } finally {
     if (savedCap === undefined) delete process.env.PYRMI_EMAIL_STARTS_PER_DAY; else process.env.PYRMI_EMAIL_STARTS_PER_DAY = savedCap;
+    if (savedResend === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = savedResend;
+  }
+});
+
+test('email sign-in: each network has its own daily share of codes', async () => {
+  const saved = process.env.PYRMI_EMAIL_CODES_PER_IP_PER_DAY, savedResend = process.env.RESEND_API_KEY;
+  process.env.PYRMI_EMAIL_CODES_PER_IP_PER_DAY = '2';
+  process.env.RESEND_API_KEY = 'test-key';
+  const mailer = async () => {};
+  try {
+    for (let i = 0; i < 2; i++) await accounts.emailStart({ email: 'net' + i + '@example.com' }, '2001:db8:aa::' + (i + 1), mailer);
+    // another address in the same IPv6 /64 is the same network
+    await assert.rejects(() => accounts.emailStart({ email: 'net9@example.com' }, '2001:db8:aa::ffff', mailer), (e) => e.status === 429);
+    await accounts.emailStart({ email: 'net9@example.com' }, '2001:db8:bb::1', mailer); // another network is fine
+  } finally {
+    if (saved === undefined) delete process.env.PYRMI_EMAIL_CODES_PER_IP_PER_DAY; else process.env.PYRMI_EMAIL_CODES_PER_IP_PER_DAY = saved;
     if (savedResend === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = savedResend;
   }
 });

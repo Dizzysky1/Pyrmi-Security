@@ -150,7 +150,7 @@ test('an account sees all of its sites when the per-account cap is raised', asyn
   try {
     const uid = 'u_many' + C.randomId(4);
     for (let i = 0; i < 25; i++) {
-      const p = await core.createProject({ name: 'S' + i }, '10.9.' + Math.floor(i / 3) + '.' + i, uid);
+      const p = await core.createProject({ name: 'S' + i, origins: ['https://t.example'] }, '10.9.' + Math.floor(i / 3) + '.' + i, uid);
       await kv.cmd('ZADD', 'ps:us:' + uid, Date.now() + i, p.pid);
     }
     assert.equal((await accounts.listSites(uid)).length, 25);

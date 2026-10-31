@@ -18,8 +18,9 @@ function creds() {
 
 function useMemory() { return process.env.PYRMI_KV === 'memory'; }
 
-// Preview deploys share the production Redis, so every key is namespaced by Vercel environment: test runs on a
-// preview never show up on pyrmi.com. Every command used in this project takes its key as the first argument.
+// Every key is namespaced by Vercel environment, so a preview that does reach the same Redis never mixes with
+// pyrmi.com's keys. A prefix is not a permission, though: give previews their own store (pyrmi.com runs them on
+// PYRMI_KV=memory). Every command used in this project takes its key as the first argument.
 function prefix() {
   if (process.env.PYRMI_KV_PREFIX !== undefined) return process.env.PYRMI_KV_PREFIX;
   const env = process.env.VERCEL_ENV;
@@ -95,6 +96,7 @@ const mem = {
       case 'TTL': { if (!this.alive(k)) return -2; const e = this.exp.get(k); return e ? Math.ceil((e - Date.now()) / 1000) : -1; }
       case 'HSET': { const h = this.ensure(k, () => new Map()); let n = 0; for (let i = 2; i + 1 < c.length; i += 2) { if (!h.has(c[i])) n++; h.set(c[i], c[i + 1]); } return n; }
       case 'HSETNX': { const h = this.ensure(k, () => new Map()); if (h.has(c[2])) return 0; h.set(c[2], c[3]); return 1; }
+      case 'HDEL': { const h = this.get(k); let n = 0; if (h) for (const f of c.slice(2)) if (h.delete(f)) n++; return n; }
       case 'HGET': { const h = this.get(k); return h && h.has(c[2]) ? h.get(c[2]) : null; }
       case 'HGETALL': { const h = this.get(k); return h ? [...h.entries()].flat() : []; }
       case 'HINCRBY': { const h = this.ensure(k, () => new Map()); const n = Number(h.get(c[2]) || 0) + Number(c[3]); h.set(c[2], String(n)); return n; }

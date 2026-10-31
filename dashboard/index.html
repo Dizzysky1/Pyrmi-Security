@@ -43,7 +43,7 @@
         <button class="btn primary" type="submit">email me a code</button>
       </form>
       <form class="email-in" id="code-form" hidden>
-        <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes.</p>
+        <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes. No code after a few minutes? Sign in with GitHub instead.</p>
         <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456"></label>
         <button class="btn primary" type="submit">sign in</button>
         <button class="btn" type="button" id="code-back">use another email</button>
@@ -55,8 +55,8 @@
       <form class="card" id="create">
         <h3>New project</h3>
         <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
-        <label>Allowed pages <span class="muted">(optional, one per line)</span>
-          <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
+        <label>Allowed pages <span class="muted">(the pages that will run the script, one per line)</span>
+          <textarea name="origins" rows="2" placeholder="https://mysite.com" required></textarea></label>
         <div class="ts" id="ts-create" hidden></div>
         <button class="btn primary" type="submit">create project</button>
         <p class="err" id="create-err" role="alert"></p>
@@ -86,8 +86,8 @@
       <form class="card" id="add-site">
         <h3>Add a site</h3>
         <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
-        <label>Allowed pages <span class="muted">(optional, one per line)</span>
-          <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
+        <label>Allowed pages <span class="muted">(the pages that will run the script, one per line)</span>
+          <textarea name="origins" rows="2" placeholder="https://mysite.com" required></textarea></label>
         <div class="ts" id="ts-add" hidden></div>
         <button class="btn primary" type="submit">add site</button>
         <p class="err" id="add-err" role="alert"></p>
@@ -124,6 +124,11 @@
         <div class="muted small-t"><span id="d-demo" hidden class="chip info">public demo · read only</span> public key <code id="d-pk"></code> <button class="copy" data-copy="d-pk">copy</button> · <span id="d-updated"></span></div>
       </div>
       <div class="acts"><button class="btn" id="back" hidden>all sites</button><button class="btn" id="signout">sign out</button></div>
+    </div>
+
+    <div class="panel" id="warns" hidden>
+      <div class="panel-h">worth fixing <span class="chip review">settings</span></div>
+      <ul class="muted" id="warn-list"></ul>
     </div>
 
     <div class="panel guide" id="guide" hidden>
@@ -179,7 +184,7 @@
           <label>Flag at risk<input name="reviewAt" inputmode="numeric"></label>
           <label>Reject at risk<input name="rejectAt" inputmode="numeric"></label>
         </div>
-        <label>Allowed pages <span class="muted">(one per line, blank = any)</span><textarea name="origins" rows="2"></textarea></label>
+        <label>Allowed pages <span class="muted">(one per line)</span><textarea name="origins" rows="2"></textarea></label>
         <label class="check"><input type="checkbox" name="strictClock"> flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)</label>
         <button class="btn" type="submit">save settings</button>
         <p class="err" id="settings-msg" role="status"></p>
@@ -205,7 +210,7 @@
   </section>
   <footer>Pyrmi Security · open source, MIT · <a href="/">home</a> · <a href="/docs/">docs</a></footer>
 </div>
-<script src="/sdk/pyrmi.js" data-site="pk_pyrmi_site"></script>
+<script src="/sdk/1.3.0/pyrmi.js" integrity="sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR" crossorigin="anonymous" data-site="pk_pyrmi_site"></script>
 <script src="/site.js"></script>
 <script src="/dashboard/app.js"></script>
 <script type="module" src="/bg/singularity.js?v=2"></script>

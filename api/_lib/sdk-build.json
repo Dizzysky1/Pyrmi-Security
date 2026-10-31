@@ -2,6 +2,8 @@
   "version": "1.3.0",
   "hash": "a854eb80",
   "sourceHash": "1ec24b94",
+  "path": "/sdk/1.3.0/pyrmi.js",
+  "integrity": "sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR",
   "previous": [
     "0e801aba",
     "533da63c",

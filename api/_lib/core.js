@@ -12,27 +12,36 @@ const MAX_EVENTS = 200;
 const MAX_BEACONS = 120;
 const MAX_PLAYERS = 1000; // cap on the per-player detail records a project keeps, matching the recent-players index
 
-const DEFAULTS = {
+// What a project made before secure defaults had. A stored project is read on top of these, so a project created
+// back then keeps working exactly as it did (instant and open if that's how it was set up; the dashboard warns).
+const LEGACY_DEFAULTS = {
   reviewAt: 40,          // risk at or above this: accepted but flagged for review
   rejectAt: 70,          // risk at or above this: rejected
   maxScore: null,        // hard cap on the value sent with an action (a score, points, a quantity)
   maxScorePerSec: null,  // hard cap on that value per second of session
   minDurationMs: 0,      // actions sent sooner than this after the session started are rejected
-  origins: [],           // pages allowed to start sessions (empty = any)
+  origins: [],           // pages allowed to start sessions
   sessionTtlSec: 3600,   // how long a session token can be used
   strictClock: false,    // also flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)
+  requireOrigins: false, // refuse to start sessions while no allowed origin is registered
+  requireScoreLimit: false, // reject an action that sends a value while neither maxScore nor maxScorePerSec is set
 };
+// What a new project gets. Secure by default: no session from a page that isn't registered, no action sooner than
+// 1.5 s after the page started its session, and no value taken without a limit on it (retest of b127c08: a new
+// project used to be instant and open, so a bare script could mint sessions and send any score at once).
+// requireOrigins and requireScoreLimit can be turned off on purpose later; the dashboard warns while they are.
+const DEFAULTS = { ...LEGACY_DEFAULTS, minDurationMs: 1500, requireOrigins: true, requireScoreLimit: true };
 
 // The sandbox on pyrmi.com. Its settings live in code so nobody can loosen them through the API.
 const DEMO = {
   pid: 'sandbox', publicKey: 'pk_demo_sandbox', name: 'Pyrmi sandbox (pyrmi.com live demo)',
-  settings: { maxScore: 1000, maxScorePerSec: null, minDurationMs: 1500, strictClock: false, sessionTtlSec: 1800 },
+  settings: { maxScore: 1000, maxScorePerSec: null, minDurationMs: 1500, strictClock: false, sessionTtlSec: 1800, requireOrigins: false, requireScoreLimit: false },
 };
 // pyrmi.com protecting itself: the dashboard's "new project" form sends a token from this project, and the API
 // refuses the request unless Pyrmi accepts it. Its verdicts are public at /dashboard/?demo=site.
 const SITE = {
   pid: 'pyrmi-site', publicKey: 'pk_pyrmi_site', name: 'pyrmi.com (the site protecting itself)',
-  settings: { maxScore: null, maxScorePerSec: null, minDurationMs: 1200, strictClock: false, sessionTtlSec: 3600 },
+  settings: { maxScore: null, maxScorePerSec: null, minDurationMs: 1200, strictClock: false, sessionTtlSec: 3600, requireOrigins: false, requireScoreLimit: false },
 };
 const BUILTIN = { [DEMO.pid]: DEMO, [SITE.pid]: SITE };
 
@@ -51,6 +60,7 @@ const REASONS = {
   score_over_max: 'The value sent is higher than your limit.',
   score_too_fast: 'The value grew faster than your limit allows.',
   bad_score: 'The value sent is not a valid number.',
+  no_score_limit: 'A value was sent, but this site has no maximum set for it (maxScore or maxScorePerSec), so it can\'t be checked.',
   replay_mismatch: 'Replaying the recorded inputs gave a different result.',
   rate_limited: 'Too many actions from this user in a short time.',
   automation: 'The browser looks automated (webdriver, headless or a bot framework).',
@@ -68,27 +78,61 @@ const REASONS = {
   ip_changed: 'The network address changed partway through the session.',
 };
 const HARD = new Set(['invalid_token', 'wrong_project', 'expired', 'token_reused', 'impossible_time', 'too_short',
-  'score_over_max', 'score_too_fast', 'bad_score', 'replay_mismatch', 'rate_limited']);
+  'score_over_max', 'score_too_fast', 'bad_score', 'no_score_limit', 'replay_mismatch', 'rate_limited']);
 
 const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
-// When on, every ordinary project must register at least one allowed origin, and a project with none can't mint
-// sessions (F-07). Off by default so turning it on is a deliberate step once existing projects have origins set
-// and the create form collects them; an origin-bound project is already enforced regardless of this flag.
-const requireOrigins = () => /^(1|true|on|yes)$/i.test(String(process.env.PYRMI_REQUIRE_ORIGINS || ''));
+// Which projects must register an allowed origin before they can start sessions (F-07, retest of b127c08):
+//   new (default)  new projects must give one when they're created and keep at least one (requireOrigins in their
+//                  settings); projects made before this keep working as they were
+//   all            every ordinary project, old ones too (also: 1, true, on, yes, which is what "on" meant before)
+//   off            nobody has to (new projects can still be created without one)
+function originPolicy() {
+  const v = String(process.env.PYRMI_REQUIRE_ORIGINS || '').trim().toLowerCase();
+  if (/^(1|true|on|yes|all)$/.test(v)) return 'all';
+  if (/^(0|false|off|no)$/.test(v)) return 'off';
+  return 'new';
+}
+const mustHaveOrigins = (s) => originPolicy() === 'all' || (originPolicy() === 'new' && s.requireOrigins === true);
+
+// The network a request came from, for counting. An IPv4 address is its own network. An IPv6 host usually gets a
+// whole /64 and can pick any address in it, so per-address limits on IPv6 were per-request in practice: count the /64.
+function network(ip) {
+  const s = String(ip || '').trim().toLowerCase();
+  const v4 = s.match(/^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) return v4[1];
+  if (!s.includes(':') || !/^[0-9a-f:]+$/.test(s) || (s.match(/::/g) || []).length > 1) return s;
+  const [head, tail] = s.includes('::') ? s.split('::') : [s, null];
+  const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
+  const groups = tail === null ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  if (groups.length !== 8) return s;
+  return groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':') + '::/64';
+}
+const netFingerprint = (ip) => C.fingerprint('ip', network(ip));
 
 // Fixed-window counter. The window's TTL is set when the key is created, in the same request as the count: SET NX EX
 // then INCR. (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever, and INCR then a separate EXPIRE
 // left a key with no TTL at all if the second call was lost, which locked that limit for good.)
-async function bump(key, ttl, limit) {
+async function hit(key, ttl) {
   const r = await kv.pipeline([['SET', key, '0', 'EX', ttl, 'NX'], ['INCR', key]]);
-  return num(r[1], 1) > limit;
+  return num(r[1], 1);
+}
+async function bump(key, ttl, limit) { return (await hit(key, ttl)) > limit; }
+
+// A counter crossed 80% of its limit: say so once a day in the server log (and for a project, on its dashboard),
+// so whoever runs it hears about a drain before the limit is reached, not after.
+async function nearLimit(name, count, limit, day) {
+  if (count < Math.ceil(limit * 0.8)) return false;
+  if ((await kv.cmd('SET', 'ps:alert:' + name + ':' + day, String(Date.now()), 'NX', 'EX', 2 * DAY)) === 'OK') {
+    console.warn('[pyrmi] ' + name + ' is at ' + count + ' of its ' + limit + ' limit for ' + day);
+  }
+  return true;
 }
 
 // Per-network limit for one kind of request. Limits can be changed with env vars (see README).
 async function limitIp(ip, name, ttl, env, dflt, message) {
-  const ipf = await C.fingerprint('ip', ip);
+  const ipf = await netFingerprint(ip);
   if (await bump('ps:rl:' + name + ':' + ipf, ttl, intEnv(env, dflt))) {
     const e = httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
     e.retryAfter = ttl; // the window length, surfaced as Retry-After (F-23)
@@ -103,7 +147,7 @@ async function limitIp(ip, name, ttl, env, dflt, message) {
 async function projectForKey(sk, ip) {
   const project = await projectBySecretKey(sk);
   if (project) return project;
-  const ipf = await C.fingerprint('ip', ip);
+  const ipf = await netFingerprint(ip);
   if (await bump('ps:rl:badkey:' + ipf, 900, intEnv('PYRMI_BAD_KEYS_PER_IP', 20))) throw httpError(429, 'rate_limited', 'Too many wrong secret keys from your network. Try again later.');
   return null;
 }
@@ -142,9 +186,13 @@ function cleanOrigins(list) {
   return out.slice(0, 10);
 }
 
+// Player labels are keys, so only safe characters are kept. A label that needed changing gets a short hash of the
+// original on the end: before, "a<b", "a>b" and "a/b" all became "a_b" and shared one record (retest of b127c08).
 function cleanPlayer(p) {
-  const s = String(p == null ? '' : p).slice(0, 64).replace(/[^\w .\-@:#]/g, '_').trim();
-  return s || 'anonymous';
+  const raw = String(p == null ? '' : p).slice(0, 64);
+  const s = raw.replace(/[^\w .\-@:#]/g, '_').trim();
+  if (!s) return 'anonymous';
+  return s === raw ? s : s.slice(0, 54) + '~' + C.sha256('player:' + raw).slice(0, 8);
 }
 
 function cleanSettings(patch, base) {
@@ -161,9 +209,28 @@ function cleanSettings(patch, base) {
   optNum('reviewAt', 1, 100); optNum('rejectAt', 1, 100); optNum('minDurationMs', 0, 864e5); optNum('sessionTtlSec', 60, 86400);
   for (const k of ['reviewAt', 'rejectAt', 'minDurationMs', 'sessionTtlSec']) if (s[k] === null) s[k] = DEFAULTS[k];
   if (s.reviewAt > s.rejectAt) throw httpError(400, 'bad_setting', 'reviewAt must not be above rejectAt');
-  if ('strictClock' in p) s.strictClock = !!p.strictClock;
+  for (const k of ['strictClock', 'requireOrigins', 'requireScoreLimit']) if (k in p) s[k] = p[k] === true || p[k] === 'true';
   if ('origins' in p) s.origins = cleanOrigins(p.origins);
+  // Clearing the last origin of a project that must have one would quietly stop every session; say so instead.
+  if (('origins' in p || 'requireOrigins' in p) && mustHaveOrigins(s) && !s.origins.length) throw httpError(400, 'origins_required', ORIGINS_REQUIRED);
   return s;
+}
+const ORIGINS_REQUIRED = 'Register at least one allowed origin (the page URL that will start sessions, like https://yourgame.com). ' +
+  'To let any page start sessions on purpose, set requireOrigins to false.';
+
+// What the dashboard warns about. A project that's instant (no minimum time) and open (any page can start a
+// session) takes an action from a bare script the moment it has the public key.
+const WARNINGS = {
+  open: 'Any page can start sessions for this site. Add the pages that run your game or form under Allowed pages.',
+  instant: 'Actions are accepted the moment a session starts. Set a minimum time (1500 ms is a good start).',
+  quota: 'This site has used most of today\'s sessions. Heavy networks are cut off first once the limit is reached.',
+};
+function warnings(s, extra) {
+  const out = [];
+  if (!s.origins.length) out.push('open');
+  if (!s.minDurationMs) out.push('instant');
+  for (const c of extra || []) out.push(c);
+  return out.map((code) => ({ code, text: WARNINGS[code] }));
 }
 
 // Telemetry fields the browser script may report. These are ADVISORY: client telemetry is attacker-controlled,
@@ -303,7 +370,7 @@ function parseProject(pid, h) {
   if (!h || !h.pk) return null;
   let settings = {};
   try { settings = JSON.parse(h.settings || '{}'); } catch (_) { /* keep defaults */ }
-  settings = { ...DEFAULTS, ...settings };
+  settings = { ...LEGACY_DEFAULTS, ...settings };
   const b = BUILTIN[pid];
   if (b) settings = { ...settings, ...b.settings, origins: [] };
   return { pid, name: h.name, publicKey: h.pk, created: num(h.created, 0), settings, demo: !!b,
@@ -331,19 +398,26 @@ async function ensureBuiltin(b) {
 async function createProject(body, ip, owner) {
   if (String(process.env.PYRMI_SIGNUPS || '').toLowerCase() === 'off') throw httpError(403, 'signups_closed', 'New projects are paused on this server.');
   const name = cleanName(body.name);
-  const settings = cleanSettings({ origins: body.origins || [] }, DEFAULTS);
-  // A public key alone can mint sessions, so a project with no allowed origins is effectively open to any page.
-  // When origin enforcement is on, make registering one a condition of creation (checked before the counter is
-  // touched, so a rejected create can't poison the capacity count) (F-07).
-  if (requireOrigins() && !settings.origins.length) throw httpError(400, 'origins_required', 'Register at least one allowed origin (the page URL that will start sessions) for this project.');
-  const ipf = await C.fingerprint('ip', ip);
+  // New projects start from the secure defaults. Settings can be given up front (a site that sends no values can
+  // turn requireScoreLimit off, a test page can set minDurationMs), except requireOrigins: a new project registers
+  // its pages unless the server's policy is off. A public key alone can mint sessions, so a project with no allowed
+  // origins is open to any page. Checked before any counter is touched, so a refused create costs nothing (F-07).
+  const { requireOrigins: _ignored, ...initial } = body.settings && typeof body.settings === 'object' ? body.settings : {};
+  const settings = cleanSettings({ ...initial, origins: body.origins || [] }, DEFAULTS);
+  if (originPolicy() === 'off') settings.requireOrigins = false;
+  else if (!settings.origins.length) throw httpError(400, 'origins_required', ORIGINS_REQUIRED);
+  const ipf = await netFingerprint(ip);
   if (await bump('ps:rl:newproj:' + ipf, DAY, intEnv('PYRMI_PROJECTS_PER_IP', 3))) throw httpError(429, 'rate_limited', 'Too many new projects from your network today.');
-  const count = await kv.cmd('INCR', 'ps:projects');
+  // Server-wide cap, plus a smaller one on projects made without an account (the key-only form): those take one
+  // human check and no sign-in, so they alone must not be able to fill the server and lock out real sign-ups.
+  const anon = !owner;
+  const [count, anonCount] = await kv.pipeline([['INCR', 'ps:projects'], anon ? ['INCR', 'ps:projects:anon'] : ['GET', 'ps:projects:anon']]);
+  const full = num(count, 0) > intEnv('PYRMI_MAX_PROJECTS', 2000) || (anon && num(anonCount, 0) > intEnv('PYRMI_MAX_ANON_PROJECTS', 200));
   // Give the slot back on rejection: an over-cap attempt must not permanently inflate the counter (F-09).
-  if (count > intEnv('PYRMI_MAX_PROJECTS', 500)) { await kv.cmd('DECR', 'ps:projects'); throw httpError(403, 'at_capacity', 'This server is not taking new projects right now.'); }
+  if (full) { await kv.pipeline([['DECR', 'ps:projects'], ...(anon ? [['DECR', 'ps:projects:anon']] : [])]); throw httpError(403, 'at_capacity', 'This server is not taking new projects right now.'); }
   const pid = 'p_' + C.randomId(9), pk = 'pk_' + C.randomId(18), sk = 'sk_' + C.randomId(30);
   await kv.pipeline([
-    ['HSET', 'ps:p:' + pid, 'name', name, 'pk', pk, 'skh', C.sha256(sk), 'created', Date.now(), 'settings', JSON.stringify(settings), ...(owner ? ['owner', owner] : [])],
+    ['HSET', 'ps:p:' + pid, 'name', name, 'pk', pk, 'skh', C.sha256(sk), 'created', Date.now(), 'settings', JSON.stringify(settings), ...(owner ? ['owner', owner] : ['anon', 1])],
     ['SET', 'ps:pk:' + pk, pid],
     ['SET', 'ps:sk:' + C.sha256(sk), pid],
   ]);
@@ -403,6 +477,11 @@ async function rotateSecret(project, oldSk) {
   }
 }
 
+// Give back a slot of the key-only project cap (the project was deleted, or claimed into an account).
+async function releaseAnon() {
+  if (num(await kv.cmd('DECR', 'ps:projects:anon'), 0) < 0) await kv.cmd('SET', 'ps:projects:anon', '0');
+}
+
 // What an API response may show of a project (never the owner's account id).
 function view(p) { const { owner, ...rest } = p; return rest; }
 
@@ -413,6 +492,7 @@ async function deleteProject(project) {
   // Only give back a capacity slot for a project that was actually still there. A repeat delete of an already-gone
   // project must be a no-op, and the counter must never go negative (which would disable the cap) (F-13/F-14).
   const existed = num(await kv.cmd('EXISTS', 'ps:p:' + pid), 0);
+  const wasAnon = !!(await kv.cmd('HGET', 'ps:p:' + pid, 'anon'));
   // "Delete site" is sold as deletion, so take the visitor and stats data with the project, not just the project
   // record. Read the recent-players index before dropping it to learn which per-player hashes to remove; the daily
   // stats/quota keys are day-stamped (<=35d TTL), so clear a generous window of them by day.
@@ -424,10 +504,28 @@ async function deleteProject(project) {
   if (existed) {
     const left = num(await kv.cmd('DECR', 'ps:projects'), 0);
     if (left < 0) await kv.cmd('SET', 'ps:projects', '0');
+    if (wasAnon) await releaseAnon();
   }
 }
 
 // ---- sessions & signals -----------------------------------------------------------------------------------------
+
+// The daily session quota. Sessions start from a public key, so anyone can spend a project's quota. Per network first:
+// each network has its own daily share. The project-wide limit is soft: past it, only networks that already started
+// more than a handful of sessions today are refused, so a few heavy sources (the retest drained 20k with ten
+// addresses) cut off themselves, not the players arriving after them. A hard ceiling (5x by default) still bounds the
+// worst case. Refused requests aren't counted against the project, only granted sessions are.
+async function takeQuota(project, nf, day) {
+  const mine = await hit('ps:qi:' + project.pid + ':' + nf + ':' + day, 2 * DAY);
+  if (mine > intEnv('PYRMI_SESSIONS_PER_IP_PER_DAY', 2000)) throw httpError(429, 'quota', 'Too many sessions from this network for this project today.');
+  const soft = intEnv('PYRMI_SESSIONS_PER_DAY', 20000), ceiling = intEnv('PYRMI_SESSIONS_HARD_PER_DAY', soft * 5);
+  const qk = 'ps:q:' + project.pid + ':' + day, total = await hit(qk, 2 * DAY);
+  const refuse = total > ceiling ? 'This project hit its daily session limit.'
+    : total > soft && mine > intEnv('PYRMI_SESSIONS_PER_IP_OVER_QUOTA', 20) ? 'This project is over its daily session limit and this network has already started many sessions today.'
+      : null;
+  if (refuse) { await kv.cmd('DECR', qk); throw httpError(429, 'quota', refuse); }
+  await nearLimit('sessions:' + project.pid, total, soft, day);
+}
 
 // A session token, and only a session token. OAuth state cookies are signed with the same key and format, and anyone
 // can get one by starting a sign-in, so check the shape too (A2-07).
@@ -447,14 +545,12 @@ async function startSession(project, ctx, body) {
   // With enforcement on, an ordinary project that never registered an origin stays open to any page (the check
   // above is vacuous for an empty list), so refuse to mint sessions for it until one is set (F-07). The per-project
   // daily cap below (ps:q, independent of IP) remains the backstop against quota drain in every case.
-  if (requireOrigins() && !project.demo && !s.origins.length) throw httpError(403, 'origin_required', 'This project has no allowed origins registered; add one in the dashboard to start sessions.');
+  if (!project.demo && !s.origins.length && mustHaveOrigins(s)) throw httpError(403, 'origin_required', 'This project has no allowed origins registered; add one in the dashboard to start sessions.');
   const ipf = await C.fingerprint('ip', ctx.ip), uaf = await C.fingerprint('ua', ctx.ua || '');
+  const nf = await netFingerprint(ctx.ip);
   const now = Date.now(), day = ymd(now);
-  if (await bump('ps:rl:sess:' + ipf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
-  // Per-network share of the project's daily quota, so one source can't drain the whole project-wide limit
-  // (sessions start from a public key, which anyone can read). Kept generous for real traffic behind a shared NAT.
-  if (await bump('ps:qi:' + project.pid + ':' + ipf + ':' + day, 2 * DAY, intEnv('PYRMI_SESSIONS_PER_IP_PER_DAY', 2000))) throw httpError(429, 'quota', 'Too many sessions from this network for this project today.');
-  if (await bump('ps:q:' + project.pid + ':' + day, 2 * DAY, intEnv('PYRMI_SESSIONS_PER_DAY', 20000))) throw httpError(429, 'quota', 'This project hit its daily session limit.');
+  if (await bump('ps:rl:sess:' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
+  await takeQuota(project, nf, day);
   const sid = C.randomId(12), seed = C.randomUint32(), exp = now + s.sessionTtlSec * 1000, bn = C.randomId(9);
   const token = await C.signToken({ v: 1, p: project.pid, s: sid, i: now, e: exp, seed, ih: ipf, uh: uaf });
   // What the server saw at the start, for corroborating the beacons later: the page that asked (Origin) and the page's
@@ -586,7 +682,7 @@ async function verify(project, body, ctx) {
   // let an attacker reset the limit by spraying new names (was F-12). Keying on the session id never fired either: a
   // token is single-use, so each session gets one call. Key on the network the session started from, which is in the
   // signed token and can't be changed, and fall back to the calling server's network when there is no token.
-  const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await C.fingerprint('ip', ctx.ip) : 'none');
+  const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await netFingerprint(ctx.ip) : 'none');
   if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 60))) hard('rate_limited');
 
   if (!t) hard('invalid_token');
@@ -620,6 +716,8 @@ async function verify(project, body, ctx) {
     const dur = durationMs === null ? elapsed : Math.min(durationMs, elapsed);
     if (durationMs !== null && durationMs > elapsed + 2000) hard('impossible_time', Math.round(durationMs / 1000) + 's run in a ' + Math.round(elapsed / 1000) + 's session');
     if (dur < s.minDurationMs) hard('too_short');
+    // A value with nothing to check it against: on a new project that's an unfinished setup, not a pass.
+    if (hasScore && s.requireScoreLimit && s.maxScore === null && s.maxScorePerSec === null) hard('no_score_limit');
     if (hasScore && s.maxScore !== null && score > s.maxScore) hard('score_over_max', score + ' > ' + s.maxScore);
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
@@ -704,6 +802,7 @@ async function dashboard(project) {
     ['ZREVRANGE', 'ps:plf:' + pid, 0, 19, 'WITHSCORES'],
     ['ZREVRANGE', 'ps:plr:' + pid, 0, 19, 'WITHSCORES'],
     ['ZCARD', 'ps:plr:' + pid],
+    ['GET', 'ps:q:' + pid + ':' + ymd(now)],
   ]);
   const stats = days.map((d, i) => {
     const h = kv.pairs(res[i]); const reasons = {};
@@ -711,27 +810,32 @@ async function dashboard(project) {
     return { day: d, sessions: num(h.sessions, 0), accept: num(h.accept, 0), review: num(h.review, 0), reject: num(h.reject, 0), reasons };
   });
   const events = (res[days.length] || []).map((s) => { try { return JSON.parse(s); } catch (_) { return null; } }).filter(Boolean)
-    // The demo dashboards are public: no session ids on them.
-    .map((e) => { if (!BUILTIN[pid]) return e; const { sid, ...rest } = e; return rest; });
+    // The demo dashboards are public: no session ids on them, and on pyrmi.com's own one no network labels either
+    // (each is a per-day pseudonym of a visitor's address: enough to follow one network through a day).
+    .map((e) => { if (!BUILTIN[pid]) return e; const { sid, ...rest } = e; return pid === SITE.pid ? { ...rest, player: 'visitor' } : rest; });
   const flaggedList = kv.pairs(res[days.length + 1]);
   const recentList = kv.pairs(res[days.length + 2]);
-  const names = [...new Set([...Object.keys(flaggedList), ...Object.keys(recentList)])].slice(0, 40);
+  const names = pid === SITE.pid ? [] : [...new Set([...Object.keys(flaggedList), ...Object.keys(recentList)])].slice(0, 40);
   const ph = names.length ? await kv.pipeline(names.map((n) => ['HGETALL', 'ps:pl:' + pid + ':' + n])) : [];
   const players = names.map((n, i) => {
     const h = kv.pairs(ph[i]);
     return { player: n, accept: num(h.accept, 0), review: num(h.review, 0), reject: num(h.reject, 0), lastRisk: num(h.risk, 0), topReason: h.top || null, lastSeen: num(h.last, 0) };
   }).sort((a, b) => (b.reject + b.review) - (a.reject + a.review) || b.lastSeen - a.lastSeen);
+  const sessionsToday = num(res[days.length + 4], 0), quota = intEnv('PYRMI_SESSIONS_PER_DAY', 20000);
   return {
     ok: true,
     project: { pid, name: project.name, publicKey: project.publicKey, created: project.created, settings: project.settings, demo: project.demo,
       lastSession: project.lastSession, lastVerify: project.lastVerify },
+    warnings: project.demo ? [] : warnings(project.settings, sessionsToday >= Math.ceil(quota * 0.8) ? ['quota'] : []),
+    quota: project.demo ? null : { sessionsToday, limit: quota },
+    sdk: { version: SDK.version, path: SDK.path || null, integrity: SDK.integrity || null },
     days: stats, events, players, playerCount: num(res[days.length + 3], 0), reasonText: REASONS,
   };
 }
 
 module.exports = {
   TRUST_ALLOWS, isTrusted,
-  DEFAULTS, DEMO, SITE, WEIGHTS, REASONS, HARD,
-  createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret,
+  DEFAULTS, LEGACY_DEFAULTS, DEMO, SITE, WEIGHTS, REASONS, HARD,
+  createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
   startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
 };

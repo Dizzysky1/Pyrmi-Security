@@ -11,16 +11,20 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-// Signing secret: PYRMI_SECRET if set (recommended), otherwise one random secret generated once and kept in KV,
-// so a fresh deploy works with zero configuration.
+// Signing secret: PYRMI_SECRET, 32+ characters. With no secret set the server fails closed: every call that signs or
+// checks a token answers 503 until it's set. It used to fall back to a random secret kept in Redis under ps:secret, so
+// anyone who could read the store (a leaked KV token, a shared preview) could forge any session token.
+// The one exception is the in-memory store (PYRMI_KV=memory: local dev, tests, previews with no Redis), which keeps
+// nothing past the process anyway: there a random secret for this process is used, and never written anywhere.
 let cached = null;
 async function secret() {
-  if (process.env.PYRMI_SECRET && process.env.PYRMI_SECRET.length >= 32) return process.env.PYRMI_SECRET;
-  if (cached) return cached;
-  const fresh = randomId(48);
-  await kv.cmd('SET', 'ps:secret', fresh, 'NX');
-  cached = await kv.cmd('GET', 'ps:secret');
-  return cached;
+  const env = process.env.PYRMI_SECRET;
+  if (env && env.length >= 32) return env;
+  if (process.env.PYRMI_KV === 'memory') return cached || (cached = randomId(48));
+  const e = new Error('This server is not set up yet: PYRMI_SECRET is ' + (env ? 'shorter than 32 characters.' : 'not set.'));
+  e.status = 503; e.code = 'secret_not_configured';
+  console.error('[pyrmi] ' + e.message + ' Refusing to sign or check tokens.');
+  throw e;
 }
 
 // Salted hash so raw IPs / user agents are never stored.
