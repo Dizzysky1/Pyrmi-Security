@@ -1,4 +1,4 @@
-/* Pyrmi Security dashboard. Two ways in: signed in with Google (a session cookie this script never sees; every change
+/* Pyrmi Security dashboard. Two ways in: signed in (by email code, GitHub or Google; a session cookie this script never sees; every change
    also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in sessionStorage (or localStorage if
    "remember" is ticked) and is only ever sent to this site's own API. Everything shown is escaped: user names come
    from your users. */
@@ -20,8 +20,9 @@
   function api(method, path, body) {
     var h = { 'Content-Type': 'application/json' };
     if (sk && !demo && !me) h.Authorization = 'Bearer ' + sk;
-    if (me) h['X-Pyrmi-CSRF'] = '1';
-    return fetch('/api/v1/' + path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, credentials: me || path === 'me' ? 'same-origin' : 'omit' })
+    var own = me || path === 'me' || path.indexOf('auth/') === 0;
+    if (own) h['X-Pyrmi-CSRF'] = '1';
+    return fetch('/api/v1/' + path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, credentials: own ? 'same-origin' : 'omit' })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'http_' + r.status }; }).then(function (j) { j._status = r.status; return j; }); });
   }
   function ago(t) {
@@ -68,11 +69,39 @@
     forget(); clearInterval(timer); show('gate');
   });
 
-  // ---- signed in with Google ----
-  var SIGNIN_ERR = { google_cancelled: 'Google sign-in was cancelled.', bad_state: 'That sign-in link expired. Try again.',
-    bad_id_token: 'Google didn\'t confirm a verified email for that account.', google_exchange_failed: 'Google didn\'t accept the sign-in. Try again.',
-    google_not_configured: 'Sign in with Google isn\'t set up on this server yet.' };
+  // ---- signing in ----
+  var SIGNIN_ERR = { cancelled: 'Sign-in was cancelled.', bad_state: 'That sign-in link expired. Try again.',
+    bad_id_token: 'Google didn\'t confirm a verified email for that account.', exchange_failed: 'The sign-in didn\'t go through. Try again.',
+    no_verified_email: 'Your GitHub account has no verified primary email. Verify one on GitHub and try again.',
+    github_not_configured: 'Sign in with GitHub isn\'t set up on this server yet.', google_not_configured: 'Sign in with Google isn\'t set up on this server yet.' };
   if (q.get('signin')) $('signin-err').textContent = SIGNIN_ERR[q.get('signin')] || 'Sign-in didn\'t work. Try again.';
+  var codeEmail = '';
+  function codeStep(on) { $('email-form').hidden = on; $('code-form').hidden = !on; if (on) $('code-form').code.focus(); }
+  $('email-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target, btn = f.querySelector('button');
+    btn.disabled = true; $('signin-err').textContent = '';
+    (window.Pyrmi ? Pyrmi.flush() : Promise.resolve()).then(function () {
+      var token = guard && guard.token; guard = null;
+      codeEmail = f.email.value.trim();
+      return api('POST', 'auth/email?action=start', { email: codeEmail, pyrmiToken: token });
+    }).then(function (r) {
+      btn.disabled = false; guardStart();
+      if (!r.ok) { $('signin-err').textContent = r.message || r.error; return; }
+      $('code-to').textContent = codeEmail; codeStep(true);
+    }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
+  });
+  $('code-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target, btn = f.querySelector('button');
+    btn.disabled = true; $('signin-err').textContent = '';
+    api('POST', 'auth/email?action=verify', { email: codeEmail, code: f.code.value }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) { $('signin-err').textContent = r.message || r.error; if (r.error === 'too_many_tries') codeStep(false); return; }
+      f.reset(); codeStep(false); boot();
+    }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
+  });
+  $('code-back').addEventListener('click', function () { $('signin-err').textContent = ''; codeStep(false); });
   function signOut() {
     api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; clearInterval(timer); timer = null; history.replaceState(null, '', '/dashboard/'); boot(); });
   }
@@ -242,7 +271,10 @@
     if (demo) return load(true);
     return api('GET', 'me').then(function (r) {
       if (r.ok) { me = r.user; return route(); }
-      $('google-card').hidden = !r.google; $('skip-acct').hidden = !r.google;
+      var p = r.providers || {}, any = p.email || p.github || p.google;
+      $('signin-card').hidden = !any; $('skip-acct').hidden = !any;
+      $('github-btn').hidden = !p.github; $('google-btn').hidden = !p.google;
+      if (!p.email) { $('email-form').hidden = true; $('code-form').hidden = true; } else if ($('code-form').hidden) $('email-form').hidden = false;
       if (sk) load(true); else show('gate');
     }, function () { if (sk) load(true); else show('gate'); });
   }
