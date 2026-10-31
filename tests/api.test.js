@@ -15,12 +15,28 @@ const call = async (method, p, body, headers) => {
   const r = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', ...(headers || {}) }, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });
   return { status: r.status, body: await r.json() };
 };
-const beacon = (token, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token, signals: { pt: 1000, k: 5, p: 3, ...signals } }), { 'Content-Type': 'text/plain' });
+// What the browser script sends: the signals under this session's own field names, XOR-encoded with its key.
+const FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
+function encode(sig, x) {
+  const out = {};
+  FIELDS.forEach((f, i) => { out[x.f[i]] = sig[f] === undefined ? null : sig[f]; });
+  const json = JSON.stringify(out), key = Buffer.from(x.k, 'base64url');
+  return Buffer.from([...json].map((c, i) => (c.charCodeAt(0) ^ key[i % key.length] ^ (i * 7)) & 255)).toString('base64url');
+}
+const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, [s.x.n]: encode({ pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals }, s.x) }), { 'Content-Type': 'text/plain' });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// pyrmi.com's own new-project form is protected by Pyrmi: get a token the way the dashboard page does.
+async function siteToken() {
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
+  await beacon(s, {});
+  await wait(1300);
+  return s.token;
+}
 
 let pk, sk;
 
 test('create project returns keys once', async () => {
-  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'] });
+  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'], pyrmiToken: await siteToken() });
   assert.equal(r.status, 201);
   ({ publicKey: pk, secretKey: sk } = r.body.project);
   assert.match(pk, /^pk_/); assert.match(sk, /^sk_/);
@@ -39,7 +55,7 @@ test('origins are enforced on session start', async () => {
 
 test('clean run is accepted, replayed token is rejected', async () => {
   const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  await beacon(s.token, {});
+  await beacon(s, {});
   const v = await call('POST', '/api/v1/verify', { token: s.token, score: 10, durationMs: 0, player: 'alice' }, { Authorization: 'Bearer ' + sk });
   assert.equal(v.body.verdict, 'accept', JSON.stringify(v.body));
   const again = await call('POST', '/api/v1/verify', { token: s.token, score: 10, player: 'alice' }, { Authorization: 'Bearer ' + sk });
@@ -60,7 +76,7 @@ test('forged token, impossible time and no page all get caught', async () => {
 
 test('bot signals raise risk to reject', async () => {
   const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  await beacon(s.token, { wd: true, ut: 12 });
+  await beacon(s, { wd: true, ut: 12 });
   const v = await call('POST', '/api/v1/verify', { token: s.token, score: 5, player: 'botty' }, { Authorization: 'Bearer ' + sk });
   assert.equal(v.body.verdict, 'reject');
   assert.ok(v.body.risk >= 70);
@@ -97,7 +113,7 @@ test('settings update and secret rotation', async () => {
 
 test('the value is optional and user works as an alias for player', async () => {
   const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  await beacon(s.token, {});
+  await beacon(s, {});
   const v = await call('POST', '/api/v1/verify', { token: s.token, user: 'carol@example.com' }, { Authorization: 'Bearer ' + sk });
   assert.equal(v.body.verdict, 'accept', JSON.stringify(v.body));
   assert.equal(v.body.player, 'carol@example.com');
@@ -105,11 +121,10 @@ test('the value is optional and user works as an alias for player', async () => 
 });
 
 // ---- the homepage sandbox ----
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('sandbox: a normal request is accepted, a replay of it is rejected', async () => {
   const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
-  await beacon(s.token, {});
+  await beacon(s, {});
   await wait(1600);
   const v = await call('POST', '/api/v1/demo', { token: s.token, value: 42, visitor: 'visitor-abc123' });
   assert.equal(v.body.verdict, 'accept', JSON.stringify(v.body.reasons));
@@ -127,7 +142,7 @@ test('sandbox: direct API calls, huge values and edited tokens are rejected', as
   assert.ok(direct.body.reasons.some((r) => r.code === 'no_client'));
   assert.equal(direct.body.player, 'visitor');
   const s2 = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
-  await beacon(s2.token, {});
+  await beacon(s2, {});
   await wait(1600);
   const big = await call('POST', '/api/v1/demo', { token: s2.token, value: 999999 });
   assert.ok(big.body.reasons.some((r) => r.code === 'score_over_max'));
@@ -149,10 +164,86 @@ test('pyrmi-server SDK verifies through the API, including a simulate hook', asy
   const { Pyrmi } = require('../packages/pyrmi-server');
   const pyrmi = new Pyrmi({ secretKey: sk, endpoint: base + '/api/v1' });
   const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  await beacon(s.token, {});
+  await beacon(s, {});
   const lied = await pyrmi.verify({ token: s.token, score: 50, player: 'sdk', replay: [1, 2, 3], simulate: () => ({ score: 20 }) });
   assert.equal(lied.verdict, 'reject');
   assert.ok(lied.reasons.some((r) => r.code === 'replay_mismatch'));
   const down = new Pyrmi({ secretKey: sk, endpoint: 'http://127.0.0.1:9/api/v1', timeoutMs: 500 });
   assert.equal((await down.verify({ token: 'x', score: 1 })).verdict, 'reject');
+});
+
+// ---- pyrmi.com protecting itself ----
+test('site: creating a project without a clean Pyrmi token is refused', async () => {
+  const none = await call('POST', '/api/v1/project', { name: 'Bot' });
+  assert.equal(none.status, 403);
+  assert.equal(none.body.error, 'blocked_by_pyrmi');
+  assert.ok(none.body.reasons.includes('invalid_token'));
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
+  const rushed = await call('POST', '/api/v1/project', { name: 'Bot', pyrmiToken: s.token });
+  assert.equal(rushed.status, 403);
+  assert.ok(rushed.body.reasons.includes('too_short') && rushed.body.reasons.includes('no_client'));
+  const s2 = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
+  await beacon(s2, { wd: true });
+  await wait(1300);
+  const bot = await call('POST', '/api/v1/project', { name: 'Bot', pyrmiToken: s2.token });
+  assert.equal(bot.status, 403);
+  assert.ok(bot.body.reasons.includes('automation'));
+  const d = await call('GET', '/api/v1/dashboard?demo=site');
+  assert.equal(d.status, 200);
+  assert.ok(d.body.days[d.body.days.length - 1].reject >= 3);
+});
+
+test('site: telemetry in the wrong shape is refused and flags the session', async () => {
+  const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
+  const other = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
+  assert.notDeepEqual(s.x.f, other.x.f);
+  const raw = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3 } }), { 'Content-Type': 'text/plain' });
+  assert.equal(raw.status, 400);
+  const copied = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, [other.x.n]: encode({ k: 5, p: 3 }, other.x) }), { 'Content-Type': 'text/plain' });
+  assert.equal(copied.status, 400);
+  const v = await call('POST', '/api/v1/verify', { token: s.token, player: 'copycat' }, { Authorization: 'Bearer ' + sk });
+  assert.ok(v.body.reasons.some((r) => r.code === 'tampered_runtime' && /telemetry/.test(r.detail)), JSON.stringify(v.body.reasons));
+});
+
+test('site: an edited copy of the browser script is flagged', async () => {
+  const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
+  await beacon(s, { sh: 'deadbeef' });
+  const v = await call('POST', '/api/v1/verify', { token: s.token, player: 'editor' }, { Authorization: 'Bearer ' + sk });
+  assert.ok(v.body.reasons.some((r) => r.code === 'tampered_runtime' && /pyrmi\.js/.test(r.detail)));
+});
+
+test('site: wrong secret keys from one network are capped', async () => {
+  const h = { Authorization: 'Bearer sk_wrongwrongwrongwrongwrong', 'X-Forwarded-For': '203.0.113.9' };
+  let last;
+  for (let i = 0; i < 21; i++) last = await call('GET', '/api/v1/project', undefined, h);
+  assert.equal(last.status, 429);
+});
+
+test('the built browser script is current and works end to end', async () => {
+  const { execFileSync } = require('child_process');
+  execFileSync(process.execPath, [require('path').join(__dirname, '../scripts/build-sdk.js'), '--check']);
+  const vm = require('vm');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../sdk/pyrmi.js'), 'utf8');
+  const noop = () => {};
+  const win = {
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/120', languages: ['en'] }, performance: { now: () => Date.now() % 1e6 },
+    addEventListener: noop, location: { href: base + '/', origin: base }, outerWidth: 0, innerWidth: 0,
+    fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': 'test-ua' } }),
+    Date, Math, JSON, String, Promise, Blob, URL, Error, Function, RegExp, EventTarget, setTimeout, setInterval, clearTimeout, clearInterval, isFinite,
+    atob, btoa, XMLHttpRequest: function () {},
+  };
+  win.XMLHttpRequest.prototype.send = noop;
+  const doc = { currentScript: { getAttribute: (n) => (n === 'data-site' ? 'pk_demo_sandbox' : null), src: base + '/sdk/pyrmi.js' },
+    addEventListener: noop, documentElement: { getAttribute: () => null }, hidden: false };
+  const ctx = vm.createContext({ ...win, window: win, document: doc });
+  vm.runInContext(src, ctx);
+  const Pyrmi = win.Pyrmi;
+  assert.equal(Pyrmi.version, require('../api/_lib/sdk-build.json').version);
+  const s = await Pyrmi.start();
+  await wait(1600);
+  await Pyrmi.flush();
+  Pyrmi.stop();
+  const v = await call('POST', '/api/v1/demo', { token: s.token, value: 5, visitor: 'visitor-feed01' });
+  assert.ok(!v.body.reasons.some((r) => r.code === 'no_client'), JSON.stringify(v.body.reasons));
+  assert.ok(!v.body.reasons.some((r) => /pyrmi\.js|telemetry/.test(r.detail || '')), JSON.stringify(v.body.reasons));
 });
