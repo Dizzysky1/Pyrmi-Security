@@ -30,7 +30,14 @@ function ready() { return useMemory() || !!creds(); }
 async function pipeline(cmds) {
   if (!cmds.length) return [];
   const pre = prefix();
-  if (pre) cmds = cmds.map((c) => (c.length > 1 ? [c[0], pre + c[1], ...c.slice(2)] : c));
+  // Commands whose arguments are ALL keys (not key + values) must have every key prefixed, not just the first, or a
+  // multi-key DEL in production (prefix "live:") would delete only its first key and silently no-op the rest (F-13).
+  const ALL_KEYS = new Set(['DEL', 'UNLINK', 'EXISTS', 'MGET', 'TOUCH', 'WATCH']);
+  if (pre) cmds = cmds.map((c) => {
+    if (c.length <= 1) return c;
+    if (ALL_KEYS.has(String(c[0]).toUpperCase())) return [c[0], ...c.slice(1).map((k) => pre + k)];
+    return [c[0], pre + c[1], ...c.slice(2)];
+  });
   if (useMemory()) return cmds.map((c) => mem.run(c.map(String)));
   const c = creds();
   if (!c) throw new Error('kv_not_configured');

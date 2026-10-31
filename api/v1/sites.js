@@ -12,8 +12,10 @@ const { send, fail, readJson, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
   const ip = clientIp(req);
-  await core.limitIp(ip, 'sites', 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
+  // Authenticate first: the IP limiter below must not run for an anonymous request, or an attacker could burn a
+  // shared network's bucket (and pile up KV writes) without ever signing in (F-11).
   const user = await accounts.requireUser(req);
+  await core.limitIp(ip, 'sites', 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
   accounts.checkCsrf(req);
   const q = new URL(req.url, 'http://x').searchParams, pid = q.get('pid'), action = q.get('action');
 
