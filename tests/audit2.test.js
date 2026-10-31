@@ -19,7 +19,7 @@ async function freshProject(settings) {
   return { ...p, project, ip };
 }
 async function cleanSession(project, ip) {
-  const s = await core.startSession(project, { ip, ua: UA, origin: '' });
+  const s = await core.startSession(project, { ip, ua: UA, origin: 'https://audit.example' });
   await core.recordSignals({ token: s.token, signals: { pt: 1000, k: 5, p: 3 } }, { ip, ua: UA });
   return s;
 }
