@@ -209,8 +209,13 @@ used to pass as clean. Instead:
 
 This raises the bar; it doesn't change the threat model above. Code that runs before the script and also fakes the
 iframe, or an edited copy of the script, can still report a clean runtime. Load the script first in `<head>`, and keep
-relying on the server-side floor. Pages that legitimately wrap built-ins (zone.js/Angular, Sentry, Datadog, New Relic
-browser agents, some extensions) will show `tampered_runtime` (30 risk on its own, under the 40 review line).
+relying on the server-side floor.
+
+Error trackers and frameworks (Sentry, zone.js/Angular, Datadog, New Relic) wrap timers, `requestAnimationFrame`,
+`fetch`, `XMLHttpRequest.send`, `addEventListener` and `Function.prototype.toString` on ordinary sites. A change to one
+of those is reported separately as `wrapped_runtime` (+5), not `tampered_runtime` (+30). None of those tools touch the
+clocks, `Math.random`, `call`/`apply`/`bind`, the descriptor lookups or the `navigator` getters, so replacing any of
+those stays `tampered_runtime`, whatever markers (`__sentry_original__`, `__zone_symbol__`) a replacement carries.
 
 ## License
 

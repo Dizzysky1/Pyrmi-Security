@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Pyrmi self-test</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px 16px; color: #111; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #eee; background: #111; } }
+  table { border-collapse: collapse; width: 100%; } td { border-top: 1px solid #8884; padding: 4px 8px 4px 0; vertical-align: top; }
+  .ok { color: #1a7f37; } .bad { color: #cf222e; font-weight: 600; } iframe.case { display: none; } #ua { opacity: .7; }
+</style>
+<script src="selftest-case.js"></script>
+<script src="pyrmi.js" data-site="pk_demo_sandbox"></script>
+</head>
+<body>
+<h1>Pyrmi replaced built-ins: self-test</h1>
+<p>Runs each trick in a fresh frame and checks what this browser's copy of the script reports. Nothing is sent anywhere.</p>
+<p id="ua"></p>
+<p id="summary">running...</p>
+<table><thead><tr><td>result</td><td>trick</td><td>tampered (+30)</td><td>wrapped (+5)</td><td>error</td></tr></thead><tbody id="rows"></tbody></table>
+<script src="selftest.js"></script>
+</body>
+</html>

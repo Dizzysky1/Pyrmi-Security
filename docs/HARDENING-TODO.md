@@ -18,10 +18,12 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 - [ ] **Try the new check in real Firefox and Safari before relying on it.** The tests run in V8 realms (Chrome's
   engine). The comparison is realm-to-realm in the same browser, so formatting differences shouldn't matter, but it
   hasn't been watched in Gecko or WebKit, or with common extensions installed.
-- [ ] **Expected wrappers.** zone.js (Angular), Sentry, Datadog and New Relic browser agents, and some extensions wrap
-  `fetch`, XHR, timers and `addEventListener`. They now show as `tampered_runtime` (30 risk, below the 40 review
-  line). Options: a per-site "expected hooks" setting, or a lower weight for the commonly wrapped network/event
-  built-ins than for the clocks and `Math.random` that speed hacks need.
+- [x] **Expected wrappers** (round 6). Changes to timers, rAF, `fetch`, XHR `send`, `addEventListener` and `toString`
+  (what Sentry, zone.js/Angular, Datadog and New Relic wrap) are now `wrapped_runtime` (+5), not `tampered_runtime`
+  (+30). Recognition is by which built-in, never by library markers, which an attacker could copy.
+- [ ] **Speed hacks through the wrapped group.** Scaling `setTimeout`/`setInterval` delays or rAF timestamps now costs
+  only +5 unless the clocks are touched too. Sites with their own game clock should call `Pyrmi.mark()` so `time_warp`
+  can catch it; a per-site "strict" setting could put the timers back at full weight.
 - [ ] **Input can be hidden from the script.** A capture listener on `window` registered before ours can call
   `stopImmediatePropagation()`, so the script never counts those events (scripted-input and cadence checks go blind).
   Fix idea: also listen on `document` capture and compare counts; flag when the window count lags far behind.

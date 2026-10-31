@@ -49,11 +49,15 @@
 
   // ---- where a built-in lives, and what it is ----
   // Built-ins that speed hacks, cheat scripts and bot "stealth" kits like to replace. Each is a path from the window.
+  // A third entry of 1 marks the ones that error trackers and frameworks (Sentry, zone.js/Angular, Datadog, New Relic)
+  // wrap on ordinary sites: timers, fetch/XHR, event listeners and toString. Replacing those is reported apart, as a
+  // "wrapped" built-in that adds little risk. The clocks, Math.random, call/apply/bind, the descriptor lookups and the
+  // navigator getters aren't wrapped by those tools, so replacing them stays a "tampered" built-in at full weight.
   var WATCH = [
-    ['performance.now', ['performance', 'now']], ['Date.now', ['Date', 'now']], ['requestAnimationFrame', ['requestAnimationFrame']],
-    ['setTimeout', ['setTimeout']], ['setInterval', ['setInterval']], ['Math.random', ['Math', 'random']], ['fetch', ['fetch']],
-    ['XMLHttpRequest.send', ['XMLHttpRequest', 'prototype', 'send']], ['addEventListener', ['EventTarget', 'prototype', 'addEventListener']],
-    ['Function.toString', ['Function', 'prototype', 'toString']], ['Function.call', ['Function', 'prototype', 'call']],
+    ['performance.now', ['performance', 'now']], ['Date.now', ['Date', 'now']], ['requestAnimationFrame', ['requestAnimationFrame'], 1],
+    ['setTimeout', ['setTimeout'], 1], ['setInterval', ['setInterval'], 1], ['Math.random', ['Math', 'random']], ['fetch', ['fetch'], 1],
+    ['XMLHttpRequest.send', ['XMLHttpRequest', 'prototype', 'send'], 1], ['addEventListener', ['EventTarget', 'prototype', 'addEventListener'], 1],
+    ['Function.toString', ['Function', 'prototype', 'toString'], 1], ['Function.call', ['Function', 'prototype', 'call']],
     ['Function.apply', ['Function', 'prototype', 'apply']], ['Function.bind', ['Function', 'prototype', 'bind']],
     ['Object.descriptor', ['Object', 'getOwnPropertyDescriptor']], ['Object.getPrototypeOf', ['Object', 'getPrototypeOf']],
     ['document.createElement', ['document', 'createElement']], ['iframe.contentWindow', ['HTMLIFrameElement', 'prototype', 'contentWindow']],
@@ -145,7 +149,7 @@
   try { selfHash = fnv(strOf(pyrmiMain)); } catch (_) { selfHash = 'unreadable'; }
 
   // ---- environment checks (once, plus re-checks on a timer) ----
-  var env = { wd: false, hl: false, au: [], tp: [], dt: 0 };
+  var env = { wd: false, hl: false, au: [], tp: [], wr: [], dt: 0 };
   function addOnce(list, v) { if (list.indexOf(v) < 0) list.push(v); }
   function checkEnv() {
     try {
@@ -160,9 +164,12 @@
       for (var k in marks) if (k in w) addOnce(env.au, marks[k]);
       if (d.documentElement && (d.documentElement.getAttribute('webdriver') || d.documentElement.getAttribute('selenium'))) addOnce(env.au, 'selenium');
     } catch (_) { /* never break the page */ }
-    if (toStrReplaced) addOnce(env.tp, 'Function.toString');
+    // Our own checks never rely on the page's toString, so a replaced one (Sentry and zone.js both patch it) is only "wrapped".
+    if (toStrReplaced) addOnce(env.wr, 'Function.toString');
     for (var i = 0; i < WATCH.length; i++) {
-      try { if (tampered(i)) addOnce(env.tp, WATCH[i][0]); } catch (_) { addOnce(env.tp, WATCH[i][0]); }
+      var hit;
+      try { hit = tampered(i); } catch (_) { hit = true; }
+      if (hit) addOnce(WATCH[i][2] ? env.wr : env.tp, WATCH[i][0]);
     }
     // devtools: a docked panel shrinks the page well below the window. A rough hint, so it only adds a little risk.
     try {
@@ -209,7 +216,7 @@
   // (speed_hack) as well as the replacement (tampered_runtime). Everything else here uses the references taken at load.
   function pageClock() { try { return perf ? Math.round(perf.now()) : null; } catch (_) { return null; } }
   function signals() {
-    return { wd: env.wd, hl: env.hl, au: env.au, tp: env.tp, dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
+    return { wd: env.wd, hl: env.hl, au: env.au, tp: env.tp, wr: env.wr, dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
       pt: pageClock(), gt: gameTime, sh: selfHash };
   }
   // Telemetry is sent in the clear under `signals`. It's advisory only: the server treats it as hints that can raise

@@ -87,10 +87,36 @@ function page(file, opts) {
   if (opts.prelude) vm.runInContext(opts.prelude, ctx);
   vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
   const run = (code) => vm.runInContext(code, ctx);
-  return { run, Pyrmi: run('window.Pyrmi'), tp: () => Array.from(run('window.Pyrmi.report().tp')) };
+  return { run, Pyrmi: run('window.Pyrmi'), tp: () => Array.from(run('window.Pyrmi.report().tp')), wr: () => Array.from(run('window.Pyrmi.report().wr || []')) };
 }
 
 const BIND = 'performance.now = (() => 0).bind(window);';
+// Built-ins that error trackers and frameworks wrap on ordinary sites: reported as "wrapped" (low risk), not "tampered".
+const WRAPPABLE = ['setTimeout', 'setInterval', 'requestAnimationFrame', 'fetch', 'XMLHttpRequest.send', 'addEventListener', 'Function.toString'];
+
+// What Sentry's browser SDK does (helpers.ts fill() + the FunctionToString integration): plain wrapper functions that
+// call the original, an __sentry_original__ back-pointer, and a toString patched to print the original for them.
+const SENTRY = `(function () {
+  function fill(obj, name, make) { var orig = obj[name]; var w = make(orig); w.__sentry_original__ = orig; obj[name] = w; }
+  fill(window, 'setTimeout', function (orig) { return function (fn, ms) { return orig.call(this, function () { return fn.apply(this, arguments); }, ms); }; });
+  fill(window, 'setInterval', function (orig) { return function (fn, ms) { return orig.call(this, function () { return fn.apply(this, arguments); }, ms); }; });
+  fill(window, 'requestAnimationFrame', function (orig) { return function (fn) { return orig.call(this, fn); }; });
+  fill(window, 'fetch', function (orig) { return function () { return orig.apply(window, arguments); }; });
+  fill(XMLHttpRequest.prototype, 'send', function (orig) { return function () { return orig.apply(this, arguments); }; });
+  fill(EventTarget.prototype, 'addEventListener', function (orig) { return function (t, fn, o) { return orig.call(this, t, fn, o); }; });
+  var ts = Function.prototype.toString;
+  Function.prototype.toString = function () { var f = this && this.__sentry_original__ || this; return ts.apply(f, arguments); };
+  window.__SENTRY__ = { version: '8' };
+})();`;
+// What zone.js (Angular) does: patches timers, rAF, listeners, fetch, XHR and toString, with __zone_symbol__ originals.
+const ZONE = `(function () {
+  function patch(obj, name) { var orig = obj[name]; obj['__zone_symbol__' + name] = orig; obj[name] = function () { return orig.apply(this, arguments); }; obj[name].__zone_symbol__OriginalDelegate = orig; }
+  ['setTimeout', 'setInterval', 'requestAnimationFrame', 'fetch'].forEach(function (n) { patch(window, n); });
+  patch(XMLHttpRequest.prototype, 'send'); patch(EventTarget.prototype, 'addEventListener');
+  var ts = Function.prototype.toString;
+  Function.prototype.toString = function () { var d = this && this.__zone_symbol__OriginalDelegate; return ts.call(d || this); };
+  window.Zone = { __symbol__: function (n) { return '__zone_symbol__' + n; } };
+})();`;
 
 for (const file of FILES) {
   const which = path.relative(path.join(__dirname, '..'), file);
@@ -139,15 +165,16 @@ for (const file of FILES) {
     const lie = "Function.prototype.toString = function toString() { return 'function now() { [native code] }'; };";
     const fake = 'performance.now = function () { return 0; };';
     const before = page(file, { prelude: lie + fake });
-    assert.ok(before.tp().includes('Function.toString'), JSON.stringify(before.tp()));
+    // the replaced toString is noted (as "wrapped": error trackers patch it too), and it can't hide the fake clock
+    assert.ok(before.wr().includes('Function.toString'), JSON.stringify(before.wr()));
     assert.ok(before.tp().includes('performance.now'), JSON.stringify(before.tp()));
     const after = page(file);
     after.run(lie + fake);
-    assert.ok(after.tp().includes('Function.toString') && after.tp().includes('performance.now'), JSON.stringify(after.tp()));
+    assert.ok(after.wr().includes('Function.toString') && after.tp().includes('performance.now'), JSON.stringify([after.tp(), after.wr()]));
     // and with .bind() on toString itself (it then prints [native code] too)
     const bound = page(file);
     bound.run('Function.prototype.toString = Function.prototype.toString.bind(Date.now);');
-    assert.ok(bound.tp().includes('Function.toString'), JSON.stringify(bound.tp()));
+    assert.ok(bound.wr().includes('Function.toString'), JSON.stringify(bound.wr()));
   });
 
   test(which + ': every watched built-in is caught when bound-replaced after load', () => {
@@ -167,7 +194,8 @@ for (const file of FILES) {
     for (const label of Object.keys(cases)) {
       const p = page(file);
       p.run(cases[label]);
-      assert.ok(p.tp().includes(label), label + ' -> ' + JSON.stringify(p.tp()));
+      const list = WRAPPABLE.includes(label) ? p.wr() : p.tp();
+      assert.ok(list.includes(label), label + ' -> ' + JSON.stringify([p.tp(), p.wr()]));
     }
   });
 
@@ -190,7 +218,56 @@ for (const file of FILES) {
     const r = await p.Pyrmi.flush();
     p.Pyrmi.stop();
     assert.ok(r && r.ok, 'the beacon still got through: ' + JSON.stringify(r));
-    assert.ok(p.tp().includes('fetch') && p.tp().includes('setInterval'), JSON.stringify(p.tp()));
+    assert.ok(p.wr().includes('fetch') && p.wr().includes('setInterval'), JSON.stringify(p.wr()));
+  });
+
+  test(which + ': Sentry- and zone.js-style wrappers are "wrapped", not "tampered", loaded before or after the script', () => {
+    for (const [name, lib] of [['sentry', SENTRY], ['zone', ZONE]]) {
+      for (const when of ['before', 'after']) {
+        const p = page(file, when === 'before' ? { prelude: lib } : {});
+        if (when === 'after') p.run(lib);
+        assert.deepEqual(p.tp(), [], name + ' ' + when + ' -> tampered: ' + JSON.stringify(p.tp()));
+        for (const label of WRAPPABLE) assert.ok(p.wr().includes(label), name + ' ' + when + ' should list ' + label + ': ' + JSON.stringify(p.wr()));
+      }
+    }
+  });
+
+  test(which + ': a wrapper library on the page does not make the bind() bypass, or a fake dressed as Sentry, look benign', () => {
+    const tricks = [
+      BIND,
+      'var f = function () { return 0; }; f.__sentry_original__ = performance.now; performance.now = f;',
+      'var g = (() => 0.5).bind(null); g.__zone_symbol__OriginalDelegate = Math.random; Math.random = g;',
+    ];
+    for (const [name, lib] of [['sentry', SENTRY], ['zone', ZONE]]) {
+      for (const t of tricks) {
+        const p = page(file, { prelude: lib });
+        p.run(t);
+        const label = /Math\.random/.test(t) ? 'Math.random' : 'performance.now';
+        assert.ok(p.tp().includes(label), name + ': ' + t + ' -> ' + JSON.stringify(p.tp()));
+      }
+    }
+  });
+
+  test(which + ': at the server, a Sentry-wrapped page stays a low-risk accept and the bypass still costs +30', async () => {
+    const run = async (prelude, hijack, visitor) => {
+      const p = page(file, { prelude });
+      const s = await p.Pyrmi.start();
+      if (hijack) p.run(hijack);
+      await wait(1600);
+      await p.Pyrmi.flush();
+      p.Pyrmi.stop();
+      const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
+        body: JSON.stringify({ token: s.token, value: 5, visitor }) });
+      return r.json();
+    };
+    const benign = await run(SENTRY, null, 'visitor-5e0001');
+    assert.ok(!benign.reasons.some((r) => r.code === 'tampered_runtime'), JSON.stringify(benign.reasons));
+    const w = benign.reasons.find((r) => r.code === 'wrapped_runtime');
+    assert.ok(w && w.weight <= 5, JSON.stringify(benign.reasons));
+    assert.equal(benign.verdict, 'accept');
+    const attacked = await run(SENTRY, BIND, 'visitor-5e0002');
+    const t = attacked.reasons.find((r) => r.code === 'tampered_runtime');
+    assert.ok(t && t.weight === 30 && /performance\.now/.test(t.detail), JSON.stringify(attacked.reasons));
   });
 
   test(which + ': end to end, the bind() bypass now costs risk at the server instead of a clean accept', async () => {

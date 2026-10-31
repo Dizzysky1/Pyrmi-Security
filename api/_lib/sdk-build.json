@@ -1,8 +1,9 @@
 {
   "version": "1.2.0",
-  "hash": "533da63c",
-  "sourceHash": "538aa0e7",
+  "hash": "0e801aba",
+  "sourceHash": "7cf11e5c",
   "previous": [
+    "533da63c",
     "7aa308b7",
     "0486058e"
   ]

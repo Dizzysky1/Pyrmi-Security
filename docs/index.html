@@ -94,7 +94,8 @@ createAccount(email, { flagged: v.verdict === 'review' });</pre></div>
       <tr><td><code>no_client</code></td><td>+40</td><td>No telemetry ever came from a real page: a direct API call or a scraper.</td></tr>
       <tr><td><code>synthetic_input</code></td><td>+40</td><td>Input events created by script.</td></tr>
       <tr><td><code>speed_hack</code> / <code>time_warp</code></td><td>+35</td><td>Page or app clock out of step with real time.</td></tr>
-      <tr><td><code>tampered_runtime</code></td><td>+30</td><td>Built-in functions replaced. Some analytics and error tools wrap <code>fetch</code>, so this one alone only adds risk.</td></tr>
+      <tr><td><code>tampered_runtime</code></td><td>+30</td><td>Built-in functions replaced: the clocks, <code>Math.random</code>, <code>call</code>/<code>apply</code>/<code>bind</code> or the <code>navigator</code> getters, or an edited copy of the script.</td></tr>
+      <tr><td><code>wrapped_runtime</code></td><td>+5</td><td>Timers, <code>fetch</code>, XHR, event listeners or <code>toString</code> were wrapped. Error trackers and frameworks (Sentry, Angular) do this on ordinary sites, so it adds little risk.</td></tr>
       <tr><td><code>inhuman_input</code></td><td>+25</td><td>Input too fast or too regular for a hand.</td></tr>
       <tr><td><code>ua_changed</code> / <code>idle_input</code></td><td>+20 / +15</td><td>Browser changed mid-session / long session with almost no input.</td></tr>
       <tr><td><code>devtools_open</code> / <code>ip_changed</code></td><td>+10</td><td>Weak hints, worth a look only alongside others.</td></tr>

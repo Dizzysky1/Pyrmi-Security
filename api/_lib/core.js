@@ -39,7 +39,7 @@ const BUILTIN = { [DEMO.pid]: DEMO, [SITE.pid]: SITE };
 // Soft signals add risk; hard reasons reject outright.
 const WEIGHTS = {
   automation: 70, no_client: 40, synthetic_input: 40, speed_hack: 35, time_warp: 35,
-  tampered_runtime: 30, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10,
+  tampered_runtime: 30, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10, wrapped_runtime: 5,
 };
 const REASONS = {
   invalid_token: 'The session token was missing, forged or edited.',
@@ -59,6 +59,7 @@ const REASONS = {
   speed_hack: "The page's clock ran faster or slower than real time.",
   time_warp: 'The app clock moved at an impossible speed compared to real time.',
   tampered_runtime: 'Built-in browser functions or the Pyrmi script itself were changed (speed hacks, hooks).',
+  wrapped_runtime: 'Timers, fetch or event listeners were wrapped. Error trackers and frameworks do this on ordinary sites, so it adds little risk.',
   inhuman_input: 'Input timing was too fast or too regular for a person.',
   ua_changed: 'The browser changed partway through the session.',
   idle_input: 'A long session with almost no input from a person.',
@@ -191,14 +192,14 @@ function cleanSignals(raw) {
   const n = (v) => Math.max(0, Math.min(1e6, Math.floor(num(v, 0))));
   const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x).replace(/[^\w.:-]/g, '').slice(0, 24)).filter(Boolean).slice(0, 10);
   const t = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) < 1e12 ? Number(v) : null);
-  return { wd: !!r.wd, hl: !!r.hl, au: list(r.au), dt: n(r.dt), ut: n(r.ut), ih: n(r.ih), tp: list(r.tp), k: n(r.k), p: n(r.p), h: n(r.h), pt: t(r.pt), gt: t(r.gt),
+  return { wd: !!r.wd, hl: !!r.hl, au: list(r.au), dt: n(r.dt), ut: n(r.ut), ih: n(r.ih), tp: list(r.tp), wr: list(r.wr), k: n(r.k), p: n(r.p), h: n(r.h), pt: t(r.pt), gt: t(r.gt),
     sh: typeof r.sh === 'string' ? r.sh.replace(/[^\w]/g, '').slice(0, 16) : null };
 }
 
 function mergeSignals(a, b) {
   const u = (x, y) => [...new Set([...(x || []), ...(y || [])])].slice(0, 10);
   return {
-    wd: !!(a.wd || b.wd), hl: !!(a.hl || b.hl), au: u(a.au, b.au), tp: u(a.tp, b.tp),
+    wd: !!(a.wd || b.wd), hl: !!(a.hl || b.hl), au: u(a.au, b.au), tp: u(a.tp, b.tp), wr: u(a.wr, b.wr),
     dt: Math.max(a.dt || 0, b.dt), ut: Math.max(a.ut || 0, b.ut), ih: Math.max(a.ih || 0, b.ih),
     k: Math.max(a.k || 0, b.k), p: Math.max(a.p || 0, b.p), h: Math.max(a.h || 0, b.h),
     uac: !!(a.uac || b.uac), ipc: !!(a.ipc || b.ipc),
@@ -407,6 +408,7 @@ function assess(sess, settings, durationMs) {
   if (sig.ut > 0) add('synthetic_input', sig.ut + ' scripted events');
   if (sig.ih > 0) add('inhuman_input', sig.ih + ' bursts');
   if (sig.tp && sig.tp.length) add('tampered_runtime', sig.tp.join(', '));
+  if (sig.wr && sig.wr.length) add('wrapped_runtime', sig.wr.join(', '));
   if (sig.dt > 0) add('devtools_open');
   if (sig.uac) add('ua_changed');
   if (sig.ipc) add('ip_changed');
