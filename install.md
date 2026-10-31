@@ -1,6 +1,6 @@
 # Pyrmi Security: install guide for coding agents
 
-You are adding Pyrmi Security (open-source bot and tamper detection for websites, MIT) to a site. Follow these steps
+You are adding Pyrmi Security (open-source bot and tamper detection for websites, Apache 2.0) to a site. Follow these steps
 in order. Pyrmi has two halves: a browser script that starts a signed session on a real page load and reports signs of
 bots and tampering, and a server check that returns a verdict before the server trusts a request. Both halves are
 required: the browser half alone protects nothing.

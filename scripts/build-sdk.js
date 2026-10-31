@@ -89,7 +89,13 @@ function rng(seed) {
 function build(source) {
   // The banner comment stays; everything up to the opening "(function" is the banner.
   const start = source.indexOf('(function pyrmiMain');
-  const banner = '/*! Pyrmi Security browser script v' + /version:\s*'([\d.]+)'/.exec(source)[1] + ' - MIT License - https://pyrmi.com - built from src/sdk/pyrmi.js */';
+  // The license line follows the version: 1.4.0 and earlier were published under MIT, and their bytes are pinned by
+  // SRI hashes on customers' pages, so they stay exactly as built. Later versions ship under Apache 2.0.
+  // (src/sdk/pyrmi.js's own header still says MIT for the same reason: the build is seeded from the whole source, so
+  // editing it would change 1.4.0's bytes. Change it with the next version bump.)
+  const ver = /version:\s*'([\d.]+)'/.exec(source)[1];
+  const lic = ver.split('.').map(Number).reduce((a, n) => a * 1000 + n, 0) > 1004000 ? 'Apache-2.0' : 'MIT License';
+  const banner = '/*! Pyrmi Security browser script v' + ver + ' - ' + lic + ' - https://pyrmi.com - built from src/sdk/pyrmi.js */';
   const fnEnd = source.lastIndexOf('})(window, document);');
   const fnSrc = source.slice(start + 1, fnEnd + 1); // "function pyrmiMain(w, d) { ... }"
   const sourceHash = fnv(fnSrc);

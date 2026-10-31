@@ -1,7 +1,7 @@
 # pyrmi-server
 
 Check a browser session for bots and tampering on your server before you trust what it sent. Part of
-[Pyrmi Security](https://pyrmi.com) (MIT).
+[Pyrmi Security](https://pyrmi.com) (Apache 2.0).
 
 ```bash
 npm install pyrmi-server

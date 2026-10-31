@@ -1,6 +1,6 @@
 # Pyrmi Security
 
-Open-source bot and tamper detection for websites. MIT licensed. Live at [pyrmi.com](https://pyrmi.com).
+Open-source bot and tamper detection for websites. Apache 2.0 licensed. Live at [pyrmi.com](https://pyrmi.com).
 
 - **Browser script** (`sdk/pyrmi.js`): one script tag. Starts a signed, single-use session on a real page load and
   reports signals (automation, scripted input, inhuman timing, replaced built-ins, clock tricks, probable devtools).
@@ -328,4 +328,4 @@ pass or fail. Nothing is sent anywhere.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). If you ship Pyrmi Security or a work based on it, keep the NOTICE file with it. Releases before the switch (pyrmi-server and browser script 1.4.0 and earlier) were published under MIT and stay available under it.
