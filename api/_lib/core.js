@@ -71,8 +71,11 @@ const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
 
+// Fixed-window counter: INCR, and set the TTL only on the first hit so the window actually expires.
+// (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever and lock the victim out of a limit.)
 async function bump(key, ttl, limit) {
-  const [n] = await kv.pipeline([['INCR', key], ['EXPIRE', key, ttl]]);
+  const n = num(await kv.cmd('INCR', key), 1);
+  if (n === 1) await kv.cmd('EXPIRE', key, ttl);
   return n > limit;
 }
 
@@ -95,7 +98,7 @@ async function projectForKey(sk, ip) {
 async function guardSite(token, ip) {
   if (String(process.env.PYRMI_SITE_GUARD || '').toLowerCase() === 'off') return null;
   const ipf = await C.fingerprint('ip', ip);
-  const v = await verify(await loadProject(SITE.pid), { token, player: 'net-' + ipf.slice(0, 8) });
+  const v = await verify(await loadProject(SITE.pid), { token, player: 'net-' + ipf.slice(0, 8) }, { ip });
   if (v.verdict === 'accept') return v;
   const e = httpError(403, 'blocked_by_pyrmi', 'Pyrmi flagged this request: ' + v.reasons.map((r) => r.text).join(' '));
   e.reasons = v.reasons.map((r) => r.code);
@@ -146,15 +149,15 @@ function cleanSettings(patch, base) {
   return s;
 }
 
-// Each session gets its own telemetry shape: random field names and a key the browser script XORs the payload with.
-// A bot that copied one session's beacon can't reuse that shape on the next one. Order matches FIELDS in the SDK.
+// Telemetry fields the browser script may report. These are ADVISORY: client telemetry is attacker-controlled,
+// so it can only ADD risk (flag automation, scripted input, tampering), never prove a request is human. The hard
+// floor is server-side and cannot be forged from the browser: the HMAC-signed session token, single-use replay
+// protection, expiry, the IP/UA bound into the token, minimum duration, score caps and the rate limits.
+// We used to also hand the page a per-session XOR "shape" key and treat a beacon that decoded cleanly as proof of
+// a real client. That was security theatre: the key shipped to the browser, so anyone could read it from the public
+// SDK and forge a clean beacon (risk 0). The key is no longer sent; beacons are plain JSON. Order matches the SDK.
 const FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
-function newShape() {
-  const names = new Set();
-  while (names.size < FIELDS.length + 1) names.add(String.fromCharCode(97 + Math.floor(Math.random() * 26)) + C.randomId(3).replace(/[^\w]/g, 'x').slice(0, 1 + Math.floor(Math.random() * 3)));
-  const list = [...names];
-  return { f: list.slice(0, FIELDS.length), n: list[FIELDS.length], k: C.randomId(12) };
-}
+// Legacy: decode a shaped+XOR beacon from a session created before the key was dropped. New sessions send plain JSON.
 function decodeShaped(body, shape) {
   const enc = body && body[shape.n];
   if (typeof enc !== 'string' || enc.length > 8192) return null;
@@ -278,7 +281,10 @@ function view(p) { const { owner, ...rest } = p; return rest; }
 async function deleteProject(project) {
   if (project.demo) throw httpError(403, 'demo_locked');
   const skh = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
-  await kv.pipeline([['DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid]]);
+  await kv.pipeline([
+    ['DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid, 'ps:plf:' + project.pid, 'ps:plr:' + project.pid],
+    ['DECR', 'ps:projects'], // free the capacity slot this project took, so delete+create can't exhaust PYRMI_MAX_PROJECTS
+  ]);
 }
 
 // ---- sessions & signals -----------------------------------------------------------------------------------------
@@ -289,17 +295,20 @@ async function startSession(project, ctx) {
   const ipf = await C.fingerprint('ip', ctx.ip), uaf = await C.fingerprint('ua', ctx.ua || '');
   const now = Date.now(), day = ymd(now);
   if (await bump('ps:rl:sess:' + ipf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
+  // Per-network share of the project's daily quota, so one source can't drain the whole project-wide limit
+  // (sessions start from a public key, which anyone can read). Kept generous for real traffic behind a shared NAT.
+  if (await bump('ps:qi:' + project.pid + ':' + ipf + ':' + day, 2 * DAY, intEnv('PYRMI_SESSIONS_PER_IP_PER_DAY', 2000))) throw httpError(429, 'quota', 'Too many sessions from this network for this project today.');
   if (await bump('ps:q:' + project.pid + ':' + day, 2 * DAY, intEnv('PYRMI_SESSIONS_PER_DAY', 20000))) throw httpError(429, 'quota', 'This project hit its daily session limit.');
   const sid = C.randomId(12), seed = C.randomUint32(), exp = now + s.sessionTtlSec * 1000;
   const token = await C.signToken({ v: 1, p: project.pid, s: sid, i: now, e: exp, seed, ih: ipf, uh: uaf });
-  const stat = 'ps:st:' + project.pid + ':' + day, shape = newShape();
+  const stat = 'ps:st:' + project.pid + ':' + day;
   await kv.pipeline([
-    ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'b', 0, 'x', JSON.stringify(shape)],
+    ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'b', 0],
     ['EXPIRE', 'ps:s:' + sid, s.sessionTtlSec + 3600],
     ['HINCRBY', stat, 'sessions', 1], ['EXPIRE', stat, 35 * DAY],
     ['HSET', 'ps:p:' + project.pid, 'ls', now], // "your page is connected" on the dashboard
   ]);
-  return { token, session: sid, seed, expiresAt: exp, x: shape };
+  return { token, session: sid, seed, expiresAt: exp };
 }
 
 async function recordSignals(body, ctx) {
@@ -312,12 +321,14 @@ async function recordSignals(body, ctx) {
   if (!sess.p) throw httpError(410, 'expired');
   if (num(sess.b, 0) >= MAX_BEACONS) return { ok: true, capped: true };
   let prev = {}; try { prev = JSON.parse(sess.sig || '{}'); } catch (_) { /* fresh */ }
-  let shape = null; try { shape = JSON.parse(sess.x || 'null'); } catch (_) { /* older session */ }
+  // Beacons are plain JSON under `signals`. Legacy sessions created before this change carry a shape key in `x`;
+  // decode those too so an in-flight session keeps working across the deploy.
+  let shape = null; try { shape = sess.x ? JSON.parse(sess.x) : null; } catch (_) { /* fresh */ }
   const raw = shape ? decodeShaped(body, shape) : body.signals;
-  if (!raw) {
-    // Telemetry that doesn't fit this session's shape was made by something other than the browser script.
-    await kv.cmd('HSET', key, 'sig', JSON.stringify(mergeSignals(prev, { ...cleanSignals({}), tp: ['telemetry'] })));
-    throw httpError(400, 'bad_signals', 'This telemetry does not match the session.');
+  if (!raw || typeof raw !== 'object') {
+    // Malformed telemetry is just dropped. We do NOT poison the session's verdict for it: a single bad or truncated
+    // beacon (a flaky network, a racing tab close) must not permanently flag an otherwise fine session (was F-10).
+    throw httpError(400, 'bad_signals', 'Telemetry could not be read.');
   }
   const sig = cleanSignals(raw);
   const merged = mergeSignals(prev, sig);
@@ -367,7 +378,7 @@ function assess(sess, settings, durationMs) {
 
 // ---- verdicts ---------------------------------------------------------------------------------------------------
 
-async function verify(project, body) {
+async function verify(project, body, ctx) {
   const now = Date.now(), s = project.settings;
   const reasons = [];
   const hard = (code, detail) => reasons.push({ code, weight: 100, detail });
@@ -380,9 +391,14 @@ async function verify(project, body) {
 
   if (hasScore && (!Number.isFinite(score) || score < 0)) hard('bad_score');
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
-  if (await bump('ps:rl:v:' + project.pid + ':' + player, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 30))) hard('rate_limited');
 
   t = await C.readToken(body.token);
+  // Rate-limit on something the caller can't freely multiply. The player name is caller-chosen, so keying only on it
+  // let an attacker reset the limit by spraying new names (was F-12). Key on the session id from the (signed,
+  // single-use) token when present, and fall back to the caller's network, so player is never the sole dimension.
+  const rlKey = (t && t.s) ? 's:' + t.s : 'n:' + (ctx && ctx.ip ? await C.fingerprint('ip', ctx.ip) : 'none');
+  if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 30))) hard('rate_limited');
+
   if (!t) hard('invalid_token');
   else if (t.p !== project.pid) hard('wrong_project');
   else if (now > t.e) { sid = t.s; hard('expired'); }
@@ -425,7 +441,11 @@ async function logVerdict(pid, ev) {
     ['HSET', 'ps:p:' + pid, 'lv', ev.t], // "your server is connected" on the dashboard
   ];
   for (const r of ev.reasons) cmds.push(['HINCRBY', stat, 'r:' + r.code, 1]);
-  if (flagged) cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
+  if (flagged) {
+    cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
+    // Cap the flagged-players set to the worst ~1000, so a flood of one-off names can't grow it without bound (F-08).
+    cmds.push(['ZREMRANGEBYRANK', 'ps:plf:' + pid, 0, -1001]);
+  }
   await kv.pipeline(cmds);
 }
 

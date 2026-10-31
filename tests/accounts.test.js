@@ -18,14 +18,7 @@ const call = async (method, p, body, headers) => {
   let json = null; try { json = JSON.parse(text); } catch (_) { /* redirect */ }
   return { status: r.status, body: json, headers: r.headers };
 };
-const FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
-function encode(sig, x) {
-  const out = {};
-  FIELDS.forEach((f, i) => { out[x.f[i]] = sig[f] === undefined ? null : sig[f]; });
-  const json = JSON.stringify(out), key = Buffer.from(x.k, 'base64url');
-  return Buffer.from([...json].map((c, i) => (c.charCodeAt(0) ^ key[i % key.length] ^ (i * 7)) & 255)).toString('base64url');
-}
-const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, [s.x.n]: encode({ pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals }, s.x) }), { 'Content-Type': 'text/plain' });
+const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals } }), { 'Content-Type': 'text/plain' });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function siteToken() {
   const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
