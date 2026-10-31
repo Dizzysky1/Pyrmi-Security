@@ -72,8 +72,10 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_PROJECT_CALLS_PER_MIN` | no | project reads, edits and key rotations per network per minute (default 30) |
 | `PYRMI_BAD_KEYS_PER_IP` | no | wrong secret keys per network per 15 minutes before it's locked out (default 20) |
 | `PYRMI_SITE_GUARD` | no | set to `off` to stop requiring a Pyrmi token on the new-project form (for self-hosting without the dashboard page) |
-| `RESEND_API_KEY` | for email sign-in | a [Resend](https://resend.com) API key with sending access. Without it the email code option is hidden. |
-| `PYRMI_EMAIL_FROM` | no | who sign-in codes come from (default `Pyrmi Security <login@pyrmi.com>`); its domain must be verified in Resend |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | for email sign-in (option 1) | a normal mailbox to send sign-in codes from, e.g. Namecheap Private Email: `mail.privateemail.com`, the full mailbox address, and its password. Takes priority over Resend. |
+| `SMTP_PORT` | no | `465` (TLS, the default) or `587` (STARTTLS, required) |
+| `RESEND_API_KEY` | for email sign-in (option 2) | a [Resend](https://resend.com) API key with sending access. With neither this nor `SMTP_*` set, the email code option is hidden. |
+| `PYRMI_EMAIL_FROM` | no | who sign-in codes come from, e.g. `Pyrmi Security <login@pyrmi.com>`. Over SMTP it defaults to `Pyrmi Security <SMTP_USER>` and should stay that mailbox or one of its aliases; with Resend it defaults to `Pyrmi Security <login@pyrmi.com>` and its domain must be verified there. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | for GitHub sign-in | a GitHub OAuth App. Without them the GitHub button is hidden. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for Google sign-in | a Google OAuth client (Web application). Without them the Google button is hidden. |
 | `PYRMI_PUBLIC_URL` | no | pins the address GitHub and Google send people back to, e.g. `https://pyrmi.com`. Defaults to the deployment's own host. |
@@ -85,6 +87,22 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 
 With none of the sign-in env vars set, the dashboard works with secret keys only. Each way in switches on by itself,
 and one verified email is one account whichever way someone signs in.
+
+### Email codes from your own mailbox (SMTP)
+
+Any mailbox that allows SMTP works. For Namecheap Private Email:
+
+1. Set `SMTP_HOST` to `mail.privateemail.com`, `SMTP_PORT` to `465`, `SMTP_USER` to the full mailbox address
+   (e.g. `login@pyrmi.com`) and `SMTP_PASS` to that mailbox's password, as a Sensitive variable in Vercel. Redeploy.
+2. Private Email already publishes SPF (`include:spf.privateemail.com`) and DKIM (`privateemail._domainkey`) when the
+   domain's mail is set up through Namecheap. A DMARC record (`TXT` on `_dmarc`, value `v=DMARC1; p=none;`) is optional
+   but helps Gmail and Yahoo trust the mail.
+3. Namecheap caps sending at 500 messages an hour per mailbox on paid plans (20 an hour on a trial) and 50 recipients
+   per message. Each sign-in code is one message to one person, and Pyrmi's own caps (5 codes per address per hour, 10
+   per network per 10 minutes) keep well under it.
+
+The password is only ever sent to the mail server after the connection is encrypted; on port 587 a server that
+doesn't offer STARTTLS is refused.
 
 ### Email codes (Resend)
 

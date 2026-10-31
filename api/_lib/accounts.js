@@ -19,6 +19,7 @@ const kv = require('./kv');
 const C = require('./crypto');
 const core = require('./core');
 const { httpError } = require('./http');
+const smtp = require('./smtp');
 
 const SESSION_COOKIE = '__Host-pyrmi_session';
 const STATE_COOKIE = '__Host-pyrmi_oauth';
@@ -31,7 +32,8 @@ const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number
 
 function googleConfigured() { return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
 function githubConfigured() { return !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET); }
-function emailConfigured() { return !!process.env.RESEND_API_KEY; }
+// Sign-in codes go out through a normal mailbox over SMTP when SMTP_* is set, otherwise through Resend.
+function emailConfigured() { return !!(smtp.config() || process.env.RESEND_API_KEY); }
 function providers() { return { email: emailConfigured(), github: githubConfigured(), google: googleConfigured() }; }
 
 // The address GitHub and Google send people back to. PYRMI_PUBLIC_URL pins it (it must match what's registered with
@@ -120,6 +122,17 @@ async function emailVerify(body) {
 }
 
 async function sendMail(msg) {
+  const failed = () => httpError(502, 'email_failed', 'We couldn\'t send the email just now. Try again in a minute.');
+  const cfg = smtp.config();
+  if (cfg) {
+    try {
+      await smtp.send({ from: process.env.PYRMI_EMAIL_FROM || undefined, ...msg }, cfg);
+    } catch (e) {
+      console.error('[pyrmi] smtp send failed', String(e && e.message || e).slice(0, 120));
+      throw failed();
+    }
+    return;
+  }
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' },
@@ -128,7 +141,7 @@ async function sendMail(msg) {
   });
   if (!r.ok) {
     console.error('[pyrmi] email send failed', r.status, (await r.text().catch(() => '')).slice(0, 300));
-    throw httpError(502, 'email_failed', 'We couldn\'t send the email just now. Try again in a minute.');
+    throw failed();
   }
 }
 
@@ -319,6 +332,6 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 module.exports = {
   providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
-  readIdToken, cleanEmail, currentUser, requireUser, checkCsrf, signOut,
+  readIdToken, cleanEmail, sendMail, currentUser, requireUser, checkCsrf, signOut,
   listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE,
 };
