@@ -1,6 +1,7 @@
 'use strict';
-// GET  /api/v1/me                 -> { user, sites } when signed in; 401 { providers } when not (which ways to sign in are switched on)
-// POST /api/v1/me?action=signout  -> ends the signed-in session (needs the X-Pyrmi-CSRF header)
+// GET  /api/v1/me                    -> { user, sites } when signed in; 401 { providers } when not (which ways to sign in are switched on)
+// POST /api/v1/me?action=signout     -> ends this signed-in session (needs the X-Pyrmi-CSRF header)
+// POST /api/v1/me?action=revoke-all  -> ends every session for the account, this one included (needs the X-Pyrmi-CSRF header)
 const accounts = require('../_lib/accounts');
 const core = require('../_lib/core');
 const { send, fail, clientIp, handle } = require('../_lib/http');
@@ -16,6 +17,13 @@ module.exports = handle(async (req, res) => {
   if (req.method === 'POST' && action === 'signout') {
     accounts.checkCsrf(req);
     return send(res, 200, { ok: true }, { 'Set-Cookie': await accounts.signOut(req) });
+  }
+  if (req.method === 'POST' && action === 'revoke-all') {
+    accounts.checkCsrf(req);
+    const u = await accounts.currentUser(req);
+    if (!u) return send(res, 401, { ok: false, error: 'signed_out' });
+    const revoked = await accounts.revokeAllSessions(u.uid); // ends every session, this one included (Q4/Q10)
+    return send(res, 200, { ok: true, revoked }, { 'Set-Cookie': await accounts.signOut(req) });
   }
   if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed');
   const user = await accounts.currentUser(req);

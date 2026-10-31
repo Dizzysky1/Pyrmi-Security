@@ -361,3 +361,18 @@ test('the /me IP limiter never runs for a request with no session cookie', async
     if (saved === undefined) delete process.env.PYRMI_ACCOUNT_CALLS_PER_MIN; else process.env.PYRMI_ACCOUNT_CALLS_PER_MIN = saved;
   }
 });
+
+// Q4/Q10: there was no per-user session index and no way to revoke all sessions — a stale or stolen cookie could
+// only be ended one key at a time or by rotating the signing secret. signIn now indexes each session under the user,
+// and POST /me?action=revoke-all ends them all at once.
+test('revoke-all ends every session for the account (Q4/Q10)', async () => {
+  const one = (await signIn('rev1', 'revoke@example.com')).cookie;
+  const two = (await signIn('rev1', 'revoke@example.com')).cookie; // same account, a second device
+  assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: one })).status, 200);
+  assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: two })).status, 200);
+  const r = await call('POST', '/api/v1/me?action=revoke-all', {}, as(two));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.revoked >= 2, 'both sessions should be revoked, got ' + JSON.stringify(r.body));
+  assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: one })).status, 401, 'the other device is signed out');
+  assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: two })).status, 401, 'the calling device is signed out');
+});
