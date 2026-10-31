@@ -1,5 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#07070c"/>
-  <path d="M16 4.5 L25.5 8.1 V15.6 C25.5 21.9 21.2 26 16 28 C10.8 26 6.5 21.9 6.5 15.6 V8.1 Z" fill="#ff2e55"/>
-  <path d="M11.6 16.3 L14.6 19.4 L20.6 12.4" fill="none" stroke="#07070c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- incoming light beam into the left face -->
+  <line x1="1.5" y1="11" x2="9" y2="14.6" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round"/>
+  <!-- refracted spectrum fanning out of the right face -->
+  <g stroke-width="1.5" stroke-linecap="round" fill="none">
+    <line x1="15" y1="15" x2="30.5" y2="9.5"  stroke="#e5484d"/>
+    <line x1="15" y1="15" x2="30.5" y2="12.1" stroke="#f76808"/>
+    <line x1="15" y1="15" x2="30.5" y2="14.7" stroke="#ffb224"/>
+    <line x1="15" y1="15" x2="30.5" y2="17.3" stroke="#30a46c"/>
+    <line x1="15" y1="15" x2="30.5" y2="19.9" stroke="#3b82f6"/>
+    <line x1="15" y1="15" x2="30.5" y2="22.5" stroke="#8b5cf6"/>
+  </g>
+  <!-- prism: triangle, left half darker, right half a lighter facet -->
+  <polygon points="12,4 5,26 12,26" fill="#3f3d6b"/>
+  <polygon points="12,4 12,26 19,26" fill="#5b5a8c"/>
+  <polygon points="12,4 5,26 19,26" fill="none" stroke="#1f2430" stroke-width="1" stroke-linejoin="round"/>
 </svg>
