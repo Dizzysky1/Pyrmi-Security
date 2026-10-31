@@ -1,0 +1,1 @@
+three.js r170 (npm three@0.170.0), MIT. Unmodified except that the addons import ../../three.module.min.js instead of the bare "three" specifier, so no import map is needed (the dashboard CSP blocks inline scripts).

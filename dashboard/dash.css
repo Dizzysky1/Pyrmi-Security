@@ -1,4 +1,4 @@
-.title{font-size:30px;margin:10px 0 10px;letter-spacing:-.5px}
+.title{font-family:var(--display);font-weight:700;font-size:30px;margin:34px 0 10px;letter-spacing:-.02em}
 .small-t{font-size:13px}
 form.card,form.panel{display:flex;flex-direction:column;gap:12px}
 label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--ink)}
@@ -13,8 +13,8 @@ label.check{flex-direction:row;align-items:center;gap:8px;color:var(--muted)}
 .dash-h{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 @media(max-width:760px){.tiles{grid-template-columns:1fr 1fr}}
-.tile{border:1px solid var(--line);border-radius:14px;padding:16px;background:rgba(13,13,23,.85);display:flex;flex-direction:column;gap:4px}
-.tile span{font-family:"Press Start 2P",monospace;font-size:9px;color:var(--muted)}
+.tile{border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:4px}
+.tile span{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;font-size:10px;color:var(--muted)}
 .tile b{font-size:30px;font-weight:700}
 .tile i{font-style:normal;color:var(--muted);font-size:12px}
 .tile.ok b{color:var(--ok)} .tile.warn b{color:var(--warn)} .tile.bad b{color:var(--bad)}
@@ -26,7 +26,7 @@ label.check{flex-direction:row;align-items:center;gap:8px;color:var(--muted)}
 .why{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
 .why li{font-size:13px}
 .why .bar{height:6px;border-radius:6px;background:rgba(255,255,255,.07);margin-top:5px;overflow:hidden}
-.why .bar i{display:block;height:100%;background:var(--v1)}
+.why .bar i{display:block;height:100%;background:var(--violet)}
 .why .row{display:flex;justify-content:space-between;gap:10px}
 .why .row b{font-weight:500}
 .tbl-wrap{overflow-x:auto}
@@ -37,7 +37,7 @@ label.check{flex-direction:row;align-items:center;gap:8px;color:var(--muted)}
 .tbl tbody tr.ev:hover{background:rgba(255,255,255,.03)}
 .tbl tr.detail td{background:rgba(5,5,10,.7);color:var(--muted)}
 .tbl tr.detail ul{margin:4px 0;padding-left:18px}
-.tbl .num{font-family:"JetBrains Mono",monospace;white-space:nowrap}
+.tbl .num{font-family:var(--mono);white-space:nowrap}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:560px){.form-grid{grid-template-columns:1fr}}
 .confirm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--warn)}
