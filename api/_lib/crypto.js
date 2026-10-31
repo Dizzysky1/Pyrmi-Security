@@ -50,4 +50,27 @@ async function readToken(token) {
   try { return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch (_) { return null; }
 }
 
-module.exports = { b64u, sha256, randomId, safeEqual, secret, fingerprint, signToken, readToken, randomUint32: () => crypto.randomBytes(4).readUInt32LE(0) };
+// Signed requests (round 11). Each session gets its own request key, handed to the browser script with the session and
+// never put in the token. The script uses it to sign the action the page sends (HMAC over the session id, a timestamp
+// and the action's fields), and the server recomputes it at /verify. A request rewritten on the wire (a proxy, CDP's
+// Fetch domain) or replayed with a lifted token can't carry a valid signature, because neither ever saw the key.
+// It's derived from PYRMI_SECRET and the session id, so nothing extra is stored. It is NOT proof of a person: code
+// running in the real page can ask the script to sign whatever it likes.
+async function requestKey(sid) {
+  return crypto.createHmac('sha256', await secret()).update('pyrmi.rk.v1.' + sid).digest('base64url');
+}
+// The same canonical form the browser script builds: JSON with object keys sorted at every level and undefined
+// values left out, so a server that parsed the JSON and a page that built the object agree byte for byte.
+function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x))).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+  }
+  const j = JSON.stringify(v);
+  return j === undefined ? 'null' : j;
+}
+function requestMac(rk, sid, ts, fieldsCanon) {
+  return crypto.createHmac('sha256', Buffer.from(String(rk), 'base64url')).update('pyrmi.req.v1\n' + sid + '\n' + ts + '\n' + fieldsCanon).digest('base64url');
+}
+
+module.exports = { requestKey, canon, requestMac, b64u, sha256, randomId, safeEqual, secret, fingerprint, signToken, readToken, randomUint32: () => crypto.randomBytes(4).readUInt32LE(0) };

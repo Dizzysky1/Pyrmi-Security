@@ -32,12 +32,12 @@ that scrapers hit. Ask the developer if it isn't clear. Protect those, not every
 Add once to each page that sends a protected request, before the page's own script:
 
 ```html
-<script src="https://pyrmi.com/sdk/1.3.0/pyrmi.js" integrity="sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
+<script src="https://pyrmi.com/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
 ```
 
 It defines `window.Pyrmi`.
 
-## 3. Browser: send a token with each protected request
+## 3. Browser: seal each protected request
 
 ```js
 // on page load (or when the protected flow begins)
@@ -46,17 +46,22 @@ try { pyrmi = await Pyrmi.start(); } catch (e) { pyrmi = null; } // offline: the
 
 // right before the protected request
 await Pyrmi.flush();
+const body = pyrmi ? await Pyrmi.seal(existingFields) : existingFields; // adds pyrmi: { token, ts, sig }
 await fetch('/api/signup', {                    // the site's existing endpoint
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ...existingFields, pyrmiToken: pyrmi && pyrmi.token }),
+  body: JSON.stringify(body),                   // send it exactly as sealed
 });
 pyrmi = await Pyrmi.start().catch(() => null);  // tokens are single use: get a fresh one for the next request
 ```
 
 Rules:
 - Each token works for one verify only. Start a new session after each protected request.
-- Send the token along with whatever the page already sends. Don't change the endpoint's other fields.
+- Seal the fields the endpoint already takes, as plain JSON, and send the sealed object unchanged: the signature covers
+  every field except `pyrmi`, so anything changed on the way (a proxy, a debugger rewriting the request) is a reject.
+  Values meant as numbers must be numbers (`42`, not `"42"`).
+- Older integrations that send `pyrmiToken: pyrmi.token` still work, but an unsigned action is never `trusted` on a
+  new project, and a project with `requireSignedRequests` on rejects it.
 - Do not try to block devtools, right-click or copy. Pyrmi detects and reports instead.
 - Apps with their own clock (a game, a timed quiz) may call `Pyrmi.mark(seconds)` as it runs.
 
@@ -73,7 +78,8 @@ const { Pyrmi } = require('pyrmi-server');            // or: import { Pyrmi } fr
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
 // inside the existing handler, before anything is written or sent:
-const v = await pyrmi.verify({ token: body.pyrmiToken, user: String(userIdOrEmail) });
+// sealed: the parsed JSON body the page sent; req: this request, so Pyrmi can check it came from the same browser
+const v = await pyrmi.verify({ sealed: req.body, req, user: String(userIdOrEmail) });
 if (v.verdict === 'reject') {
   return res.status(403).json({ error: 'blocked', reasons: v.reasons.map((r) => r.code) });
 }
@@ -89,11 +95,14 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
 ```
 
 `trusted(v)` is true only for an `accept` with a `corroborated` client, a real key press or click seen by the
-browser, and no reason other than the harmless ones (`wrapped_runtime`, `devtools_open`, `ip_changed`,
-`idle_input`). The server works it out, so it doesn't loosen when the site's `reviewAt` or `rejectAt` is raised.
+browser with some input counted on the page, an action sealed by the script and sent from the browser that started the
+session (on new projects: pass `sealed` and `req`), and no reason other than the harmless ones (`wrapped_runtime`,
+`devtools_open`, `ip_changed`, `idle_input`). The server works it out, so it doesn't loosen when the site's `reviewAt`
+or `rejectAt` is raised.
 
-Telemetry is advisory: a script that copies the real one closely enough can still pass, so keep your own limits too
-(`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
+Telemetry is advisory: a clean real browser fully driven by automation can still pass, sealing and all, so keep your
+own limits too (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
+Behind your own proxy, pass `trustProxyHops` to `new Pyrmi()` so the visitor's address is read correctly.
 
 For the most sensitive actions (sign-ups that unlock something, payouts), also add a Cloudflare Turnstile widget to
 that form and check its token on the server with the same call. The developer creates the widget in Cloudflare and
@@ -118,12 +127,15 @@ POST https://pyrmi.com/api/v1/verify
 Authorization: Bearer <PYRMI_SECRET_KEY>
 Content-Type: application/json
 
-{"token":"...","user":"alice@example.com"}
+{"token":"...","user":"alice@example.com",
+ "request":{"fields":{...the sealed body without pyrmi...},"ts":<pyrmi.ts>,"sig":"<pyrmi.sig>"},
+ "client":{"ua":"<User-Agent>","ch":"<Sec-CH-UA>","sfs":"<Sec-Fetch-Site>","ip":"<visitor address>"}}
 ```
 
 Response: `{"ok":true,"verdict":"accept"|"review"|"reject","risk":0-100,"client":"corroborated"|"unverified"|"none","reasons":[{"code":"...","text":"...","weight":..}]}`.
 For a sensitive action, require `trusted == true` (set by the server: a corroborated accept with a real key press or
-click and no reason beyond the harmless ones).
+click, input counted on the page, a valid seal and matching client on new projects, and no reason beyond the
+harmless ones).
 
 If the site has no server (a static site writing to Firebase or Supabase directly from the browser), say so to the
 developer: a write made from the browser cannot be protected. Suggest a small serverless function (Vercel, Netlify,
@@ -153,8 +165,9 @@ Finish by telling the developer:
 ## Reference
 
 - Reasons: `invalid_token`, `wrong_project`, `expired`, `token_reused`, `impossible_time`, `too_short`,
-  `score_over_max`, `score_too_fast`, `bad_score`, `replay_mismatch`, `rate_limited` (all reject);
-  `automation`, `no_client`, `unverified_client`, `synthetic_input`, `speed_hack`, `time_warp`, `tampered_runtime`, `inhuman_input`,
+  `score_over_max`, `score_too_fast`, `bad_score`, `replay_mismatch`, `rate_limited`, `bad_signature`,
+  `unsigned_request` (all reject);
+  `automation`, `no_client`, `unverified_client`, `relayed_session`, `synthetic_input`, `speed_hack`, `time_warp`, `tampered_runtime`, `inhuman_input`,
   `ua_changed`, `idle_input`, `devtools_open`, `ip_changed` (add risk).
 - Self-hosting: pass `endpoint: 'https://your-deploy.example/api/v1'` to `new Pyrmi()` and use
   `data-api="https://your-deploy.example/api/v1"` on the script tag.

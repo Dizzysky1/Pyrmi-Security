@@ -7,7 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   // The browser script to tell people to use: a fixed version with its integrity hash (scripts/build-sdk.js keeps this
   // line up to date). That file never changes, so a page that pins it can't be handed a different script.
-  var SDK_PATH = '/sdk/1.3.0/pyrmi.js', SDK_SRI = 'sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR';
+  var SDK_PATH = '/sdk/1.4.0/pyrmi.js', SDK_SRI = 'sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ';
   var sdkTag = function (origin, pk) { return '<script src="' + origin + SDK_PATH + '" integrity="' + SDK_SRI + '" crossorigin="anonymous" data-site="' + pk + '"></script>'; };
   var q = new URLSearchParams(location.search);
   var demo = q.has('demo') ? (q.get('demo') === 'site' ? 'site' : '1') : null;
@@ -180,8 +180,8 @@
   function guide(d) {
     var p = d.project, st = d.status, origin = location.origin;
     $('guide').hidden = false;
-    $('g1').textContent = sdkTag(origin, p.publicKey) + '\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); then send pyrmi.token along with it, and call Pyrmi.start() again after\n</script>';
-    $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\nconst v = await pyrmi.verify({ token: body.pyrmiToken, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });";
+    $('g1').textContent = sdkTag(origin, p.publicKey) + '\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); const body = await Pyrmi.seal({ ...yourFields });\n  //   POST body as JSON, unchanged, then call Pyrmi.start() again for the next one\n</script>';
+    $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\n// req.body: what the page sent from Pyrmi.seal(); req: this request (checks it's the same browser)\nconst v = await pyrmi.verify({ sealed: req.body, req, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });";
     $('g3').textContent = 'Read ' + origin + '/install.md and add Pyrmi Security to this site. My public key is ' + p.publicKey + ' and my secret key is in the PYRMI_SECRET_KEY environment variable (don\'t write it into any file). Protect the requests worth protecting (sign-ups, logins, votes, checkouts, scores) and tell me which files you changed.';
     $('g-page').className = st.page ? 'done' : ''; $('g-server').className = st.server ? 'done' : '';
     var c = $('g-state');
@@ -250,7 +250,7 @@
       if (document.activeElement.form !== f) {
         f.name.value = p.name; f.maxScore.value = s.maxScore == null ? '' : s.maxScore; f.maxScorePerSec.value = s.maxScorePerSec == null ? '' : s.maxScorePerSec;
         f.minDurationMs.value = s.minDurationMs; f.reviewAt.value = s.reviewAt; f.rejectAt.value = s.rejectAt;
-        f.origins.value = (s.origins || []).join('\n'); f.strictClock.checked = !!s.strictClock;
+        f.origins.value = (s.origins || []).join('\n'); f.strictClock.checked = !!s.strictClock; f.signedTrust.checked = !!s.signedTrust; f.requireSignedRequests.checked = !!s.requireSignedRequests;
       }
       $('i-snippet').textContent = sdkTag(location.origin, p.publicKey);
     }
@@ -274,7 +274,7 @@
     msg.className = 'err'; msg.textContent = 'saving…';
     api('PATCH', me ? 'sites?pid=' + pid : 'project', { name: f.name.value, settings: {
       maxScore: f.maxScore.value.trim(), maxScorePerSec: f.maxScorePerSec.value.trim(), minDurationMs: f.minDurationMs.value.trim(),
-      reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked } })
+      reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked, signedTrust: f.signedTrust.checked, requireSignedRequests: f.requireSignedRequests.checked } })
       .then(function (r) { if (!r.ok) { msg.textContent = r.message || r.error; return; } msg.className = 'err good'; msg.textContent = 'saved'; document.activeElement.blur(); load(); });
   });
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });

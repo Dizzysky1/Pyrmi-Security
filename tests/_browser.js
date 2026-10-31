@@ -4,6 +4,7 @@
 // server corroborates beacons against those (core.js corroborate()), so a test that leaves them out looks like a
 // hand-written client, which is the round-7 finding. Tests about that case send raw requests on purpose.
 const SDK = require('../api/_lib/sdk-build.json');
+const C = require('../api/_lib/crypto');
 
 const origins = new Map(); // session token -> the Origin it was started from
 const sessions = new Map(); // session token -> { bn, n }: the beacon nonce and the script's beacon count
@@ -37,4 +38,12 @@ function beacon(call, s, extra) {
   return call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, ...order(s), signals: signals(extra) }), h);
 }
 
-module.exports = { wrap, beacon, signals, order, SDK };
+// What Pyrmi.seal() does in the page: sign the action with the session's request key (rk, from the /session answer).
+// Returns the `request` part of a /verify call: { fields, ts, sig }.
+function sign(s, fields, ts) {
+  const sid = JSON.parse(Buffer.from(s.token.split('.')[0], 'base64url').toString()).s;
+  const at = ts === undefined ? Date.now() : ts;
+  return { fields: fields || {}, ts: at, sig: C.requestMac(s.rk, sid, at, C.canon(fields || {})) };
+}
+
+module.exports = { wrap, beacon, signals, order, sign, SDK };

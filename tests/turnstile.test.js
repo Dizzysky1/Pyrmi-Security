@@ -5,6 +5,8 @@
 // rotating and deleting each need a fresh token for that form, and a missing, reused or failed one is refused.
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// Tests start many sessions from one address in a few seconds; the per-site minting limit has its own test (round11).
+process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN = process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN || '100000';
 process.env.PYRMI_SITE_GUARD = 'off'; // the Pyrmi self-check has its own tests; this file is about Turnstile
 process.env.RESEND_API_KEY = 'test-resend';
 const test = require('node:test');

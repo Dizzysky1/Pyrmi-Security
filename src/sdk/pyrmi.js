@@ -4,7 +4,8 @@
  *
  *   const s = await Pyrmi.start();     // when the page or a session begins: { token, seed, ... }
  *   Pyrmi.mark(appSeconds);            // optional, for apps with their own clock (games, timers): spots speed hacks
- *   await Pyrmi.flush();               // before you send s.token with the action to YOUR server
+ *   await Pyrmi.flush();               // before you send the action to YOUR server
+ *   const body = await Pyrmi.seal({ score: 42 }); // the action, signed: POST it to your server as JSON, unchanged
  *
  * This script can't stop someone who controls their own browser, and it doesn't try to: anything it "blocks" can be
  * switched off from devtools. It watches for bots, tampering and devtools and reports them, and your server asks
@@ -29,7 +30,11 @@
   // fake planted before it loaded switched it off. It's checked properly further down, once a trusted toString exists.
   var prior = null;
   try { prior = gopd(w, 'Pyrmi') || null; } catch (_) { prior = { configurable: false }; }
-  var stringify = JSON.stringify, dateNow = Date.now;
+  var stringify = JSON.stringify, parse = JSON.parse, dateNow = Date.now, isArray = Array.isArray, objKeys = O.keys, fromCC = String.fromCharCode;
+  // For signing actions (seal/sign): Web Crypto's HMAC, taken here like everything else.
+  var wcrypto = w.crypto, subtle = wcrypto && wcrypto.subtle, U8 = w.Uint8Array, TE = w.TextEncoder;
+  var importKeyFn = subtle && subtle.importKey, signFn = subtle && subtle.sign, encodeFn = TE && TE.prototype.encode;
+  var atobFn = w.atob, btoaFn = w.btoa;
   var script = d.currentScript;
   var cfg = {
     site: script && script.getAttribute('data-site'),
@@ -140,7 +145,7 @@
   function ours(desc) {
     try {
       if (!desc || !('value' in desc) || desc.writable || desc.configurable) return false;
-      var v = desc.value, me = strOf(pyrmiMain), names = ['start', 'flush', 'mark', 'stop', 'token', 'report'];
+      var v = desc.value, me = strOf(pyrmiMain), names = ['start', 'flush', 'mark', 'stop', 'token', 'report', 'sign', 'seal'];
       if (!v || typeof v !== 'object' || !isFrozen(v) || !me) return false;
       for (var ni = 0; ni < names.length; ni++) {
         var dv = gopd(v, names[ni]), src = dv && typeof dv.value === 'function' ? strOf(dv.value) : null;
@@ -278,7 +283,7 @@
   try { run(listenD, d, 'visibilitychange', function () { if (d.hidden) inp.h++; }); } catch (_) { /* ignore */ }
 
   // ---- session + beacons ----
-  var session = null, gameTime = null, timer = null, firstBeacon = null, seq = 0;
+  var session = null, gameTime = null, timer = null, firstBeacon = null, seq = 0, skew = 0;
   // The page clock is read live on purpose: if something has warped performance.now, the server should see the warp
   // (speed_hack) as well as the replacement (tampered_runtime). Everything else here uses the references taken at load.
   function pageClock() { try { return perf ? Math.round(perf.now()) : null; } catch (_) { return null; } }
@@ -310,8 +315,59 @@
     return post('/signal', payload(), useBeacon).catch(function () { /* offline: the verdict will say so */ });
   }
 
+  // ---- signed actions ----
+  // The server hands each session a request key (rk) that only this script holds: it's not in the token, and start()
+  // doesn't return it. sign() uses it to sign the action the page is about to send, so the server can tell the action
+  // arrived exactly as the page built it: a value rewritten on the wire (a proxy, a debugger's Fetch interception) or a
+  // token lifted out of a request and replayed with other fields fails. It does not stop code running in this page from
+  // asking for a signature on whatever it likes; that is what the server's own limits are for.
+  // The signed form is JSON with sorted keys at every level (canon), the same one the server rebuilds from the JSON it
+  // received, and the timestamp is on the server's clock (the offset learned at start), so a wrong device clock is fine.
+  function canon(v) {
+    var i, out = [], keys;
+    if (isArray(v)) {
+      for (i = 0; i < v.length; i++) out.push(v[i] === undefined ? 'null' : canon(v[i]));
+      return '[' + out.join(',') + ']';
+    }
+    if (v && typeof v === 'object') {
+      keys = objKeys(v).sort();
+      for (i = 0; i < keys.length; i++) if (v[keys[i]] !== undefined) out.push(stringify(keys[i]) + ':' + canon(v[keys[i]]));
+      return '{' + out.join(',') + '}';
+    }
+    var j = stringify(v);
+    return j === undefined ? 'null' : j;
+  }
+  function fromB64u(s) {
+    var b = run(atobFn, w, s.replace(new RegExp('-', 'g'), '+').replace(new RegExp('_', 'g'), '/') + '===='.slice(0, (4 - s.length % 4) % 4));
+    var u = new U8(b.length);
+    for (var bi = 0; bi < b.length; bi++) u[bi] = b.charCodeAt(bi);
+    return u;
+  }
+  function toB64u(buf) {
+    var u = new U8(buf), str = '';
+    for (var ui = 0; ui < u.length; ui++) str += run(fromCC, String, u[ui]);
+    return run(btoaFn, w, str).replace(new RegExp('[+]', 'g'), '-').replace(new RegExp('/', 'g'), '_').replace(new RegExp('=+$'), '');
+  }
+  // The action as the server will see it: plain JSON (a Date becomes its string, undefined goes away).
+  function plainObject(fields) {
+    var plain = parse(stringify(fields === undefined ? {} : fields));
+    if (!plain || typeof plain !== 'object' || isArray(plain)) throw new Error('Pyrmi: sign an object, like { score: 42 }');
+    return plain;
+  }
+  function signPlain(plain) {
+    if (!session || !session.rk) return Promise.reject(new Error('Pyrmi: call start() before signing'));
+    if (!subtle || !importKeyFn || !signFn || !TE || !U8) return Promise.reject(new Error('Pyrmi: signing needs a secure (https) page'));
+    var s = session, ts = Math.round(wallNow() + skew);
+    var msg = 'pyrmi.req.v1\n' + s.session + '\n' + ts + '\n' + canon(plain);
+    return run(importKeyFn, subtle, 'raw', fromB64u(s.rk), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+      .then(function (key) { return run(signFn, subtle, 'HMAC', key, run(encodeFn, new TE(), msg)); })
+      .then(function (mac) { return { token: s.token, ts: ts, sig: toB64u(mac) }; });
+  }
+
+  // beacon protocol: 3 (what the beacons carry; scripts/build-sdk.js reads this. Bump it when the server starts
+  // needing something older builds don't send.)
   var api = {
-    version: '1.3.0',
+    version: '1.4.0',
     config: cfg,
     // Starts a new session (on page load, or when a protected flow begins). Resolves to { token, seed, session, expiresAt }.
     start: function (opts) {
@@ -323,6 +379,7 @@
         .then(function (r) { return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error('Pyrmi: ' + (j.message || j.error || r.status)); return j; }); })
         .then(function (j) {
           session = j; gameTime = null; seq = 0; resetInput();
+          skew = Number(j.issuedAt) > 0 ? Number(j.issuedAt) - wallNow() : 0;
           if (timer) run(clearIntervalFn, w, timer);
           if (firstBeacon) run(clearTimeoutFn, w, firstBeacon);
           firstBeacon = run(setTimeoutFn, w, function () { beacon(true); }, 1500);
@@ -337,6 +394,20 @@
     // Ends the session's beacons (e.g. back to the menu).
     stop: function () { if (timer) run(clearIntervalFn, w, timer); if (firstBeacon) run(clearTimeoutFn, w, firstBeacon); timer = firstBeacon = null; },
     token: function () { return session ? session.token : null; },
+    // Signs an action for this session: resolves to { token, ts, sig } over exactly these fields. Send all three with
+    // the fields, and have your server pass them to Pyrmi (pyrmi-server does it from a sealed body). Most pages want seal().
+    sign: function (fields) {
+      try { var plain = plainObject(fields); if ('pyrmi' in plain) throw new Error('Pyrmi: "pyrmi" is reserved for the signature'); return signPlain(plain); } catch (e) { return Promise.reject(e); }
+    },
+    // Seals an action: resolves to a copy of it with pyrmi: { token, ts, sig } added. POST that as JSON to your server
+    // as it is; if anything in it changes on the way, the verdict is reject (bad_signature).
+    seal: function (fields) {
+      try {
+        var plain = plainObject(fields);
+        delete plain.pyrmi;
+        return signPlain(plain).then(function (p) { plain.pyrmi = p; return plain; });
+      } catch (e) { return Promise.reject(e); }
+    },
     // What this script has noticed so far, for showing players what's being checked.
     report: function () { checkEnv(); var s = signals(); delete s.pt; return s; },
   };

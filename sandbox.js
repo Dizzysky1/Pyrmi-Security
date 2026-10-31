@@ -25,9 +25,11 @@
     $('v-reasons').innerHTML = lines.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('');
   }
 
-  function post(token, value) {
-    return fetch(api + '/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'omit',
-      body: JSON.stringify({ token: token, value: value, visitor: visitor }) })
+  // The action is sealed by the browser script (Pyrmi.seal), the way a site's page should send anything that matters:
+  // { value, visitor, pyrmi: { token, ts, sig } }. Change any of it after sealing and the signature stops matching.
+  function seal(value) { return Pyrmi.flush().then(function () { return Pyrmi.seal({ value: value, visitor: visitor }); }); }
+  function post(body) {
+    return fetch(api + '/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'omit', body: JSON.stringify(body) })
       .then(function (r) { return r.json(); });
   }
 
@@ -36,8 +38,8 @@
     var label = { accept: 'accepted', review: 'flagged', reject: 'rejected' }[v.verdict];
     var lines = v.reasons.map(function (r) { return r.text + (r.detail ? ' (' + r.detail + ')' : ''); });
     if (!lines.length) lines.push('No warning signs. Your server would go ahead.');
-    if (v.client) lines.push(v.verdict === 'accept' && v.client === 'corroborated'
-      ? 'Telemetry corroborated: trusted(v) is true, so a sensitive action (a prize, a payout) would go ahead too.'
+    if (v.client) lines.push(v.trusted === true
+      ? 'Telemetry corroborated and the action signed by this browser: trusted(v) is true, so a sensitive action (a prize, a payout) would go ahead too.'
       : 'trusted(v) is false: a sensitive action (a prize, a payout) would be refused.');
     lines.unshift(what);
     show(v.verdict, label, v.risk, lines);
@@ -48,32 +50,36 @@
   var ACTIONS = {
     honest: function () {
       if (!current) return Promise.resolve(show('info', 'offline', null, ['The browser script didn\'t load, so there\'s no session to send.']));
-      var s = current;
-      return Pyrmi.flush().then(function () { return post(s.token, value()); }).then(function (v) {
-        last = s.token; report('Sent like a normal page would.', v);
-      });
+      return seal(value()).then(function (b) { last = b; return post(b); }).then(function (v) { report('Sent like a normal page would.', v); });
     },
     replay: function () {
       if (!last) return Promise.resolve(show('info', 'nothing yet', null, ['Send one normally first, then replay it.']));
-      return post(last, value()).then(function (v) { report('Sent the exact same request again.', v); });
+      return post(last).then(function (v) { report('Sent the exact same request again.', v); });
     },
     edit: function () {
       if (!current) return Promise.resolve(show('info', 'offline', null, ['No session to edit.']));
       var parts = current.token.split('.'), body = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
       body.i -= 3600 * 1000; // pretend the session started an hour ago
       var forged = btoa(JSON.stringify(body)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') + '.' + parts[1];
-      return Pyrmi.flush().then(function () { return post(forged, value()); }).then(function (v) { report('Edited the session token to look an hour old.', v); });
+      return seal(value()).then(function (b) { b.pyrmi = { token: forged, ts: b.pyrmi.ts, sig: b.pyrmi.sig }; return post(b); })
+        .then(function (v) { report('Edited the session token to look an hour old.', v); });
     },
     big: function () {
       if (!current) return Promise.resolve(show('info', 'offline', null, ['No session to send with.']));
-      var s = current;
-      return Pyrmi.flush().then(function () { return post(s.token, 999999); }).then(function (v) { last = s.token; report('Sent 999999 where the limit is 1000.', v); });
+      return seal(999999).then(function (b) { last = b; return post(b); }).then(function (v) { report('Sent 999999 where the limit is 1000.', v); });
+    },
+    rewrite: function () {
+      // what a proxy or a debugger on the wire does: the page signs one value, and a different one goes out
+      if (!current) return Promise.resolve(show('info', 'offline', null, ['No session to send with.']));
+      var asked = value() === null ? 1 : value();
+      return seal(asked).then(function (b) { b.value = asked + 33; last = b; return post(b); })
+        .then(function (v) { report('The page signed ' + asked + ', then ' + (asked + 33) + ' was sent instead.', v); });
     },
     direct: function () {
       // what a scraper or a script does: grab a session straight from the API and use it at once, no page involved
       return fetch(api + '/session', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, credentials: 'omit', body: JSON.stringify({ site: SITE }) })
         .then(function (r) { return r.json(); })
-        .then(function (s) { if (!s.ok) throw new Error(s.message || s.error); return post(s.token, value()); })
+        .then(function (s) { if (!s.ok) throw new Error(s.message || s.error); return post({ value: value(), visitor: visitor, pyrmi: { token: s.token } }); })
         .then(function (v) { report('Called the API directly, with no page behind it.', v); });
     },
   };

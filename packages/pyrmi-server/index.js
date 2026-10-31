@@ -4,7 +4,8 @@
 //
 //   const { Pyrmi } = require('pyrmi-server');
 //   const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
-//   const v = await pyrmi.verify({ token, user });          // add score: n to check a number too
+//   const v = await pyrmi.verify({ sealed: req.body, req, user }); // the page sent Pyrmi.seal({ ... }) as JSON
+//   (or the older form: pyrmi.verify({ token, user }); add score: n to check a number too)
 //   if (v.verdict !== 'reject') doTheThing(...);             // everyday actions: let review through, flagged
 //   if (trusted(v)) payOut(...);                             // sensitive ones: only a corroborated accept
 //   const t = await pyrmi.verifyTurnstile(body.turnstileToken, { remoteip, action: 'payout' });
@@ -18,6 +19,7 @@ class Pyrmi {
     this.endpoint = String(opts.endpoint || process.env.PYRMI_ENDPOINT || 'https://pyrmi.com/api/v1').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs || 8000;
     this.failOpen = !!opts.failOpen; // if Pyrmi is unreachable: false = reject the action, true = accept it unverified
+    this.trustProxyHops = opts.trustProxyHops || 0; // proxies of yours in front of this server (for the caller's address)
     // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
     this.turnstileSecret = opts.turnstileSecret || process.env.TURNSTILE_SECRET_KEY || null;
     this.turnstileEndpoint = opts.turnstileEndpoint || 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
@@ -29,8 +31,26 @@ class Pyrmi {
   // user is an alias for player. score is optional: send it when the action carries a number you want capped.
   // simulate (optional): (replay) => ({ score, durationMs }) re-runs a deterministic app from its recorded inputs on
   // your server. If it gives a different score, the verdict is 'reject' with reason replay_mismatch.
+  //
+  // sealed (recommended): the parsed JSON body your page sent, made by Pyrmi.seal({ ... }) in the browser. Its pyrmi
+  // part carries the token and the signature, and Pyrmi checks the rest arrived exactly as the page signed it, so a
+  // value changed on the way (a proxy, a debugger rewriting the request) is a reject (bad_signature).
+  // req: your incoming request (Node, Express, Next.js API routes). Its User-Agent, Sec-CH-UA, Sec-Fetch-Site and the
+  // caller's address are sent along, and Pyrmi checks they match the browser that started the session, so a session
+  // handed to another client (a harvested token used by a script) is flagged (relayed_session). Or pass client: {...}.
+  // Behind your own proxies, set trustProxyHops so the address is read from the right X-Forwarded-For entry.
   async verify(input) {
-    const { token, score, durationMs, replay, simulate } = input || {};
+    const { score, durationMs, replay, simulate } = input || {};
+    const sealed = input && input.sealed && typeof input.sealed === 'object' ? input.sealed : null;
+    const seal = sealed && sealed.pyrmi && typeof sealed.pyrmi === 'object' ? sealed.pyrmi : null;
+    const token = input && input.token !== undefined ? input.token : seal ? seal.token : undefined;
+    let request;
+    if (seal && seal.sig !== undefined) {
+      const fields = {};
+      for (const k of Object.keys(sealed)) if (k !== 'pyrmi') fields[k] = sealed[k];
+      request = { fields, ts: seal.ts, sig: seal.sig };
+    }
+    const client = input && input.client ? input.client : input && input.req ? clientOf(input.req, this.trustProxyHops) : undefined;
     const player = input && input.player !== undefined ? input.player : input && input.user;
     let replayCheck = { check: 'none' };
     if (typeof simulate === 'function') {
@@ -46,7 +66,7 @@ class Pyrmi {
       const res = await fetch(this.endpoint + '/verify', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + this.secretKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, score, durationMs, player, replay: replayCheck }),
+        body: JSON.stringify({ token, score, durationMs, player, replay: replayCheck, request, client }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const body = await res.json().catch(() => ({}));
@@ -83,6 +103,16 @@ class Pyrmi {
   }
 }
 
+// What a browser's request says about the browser: forwarded to Pyrmi so it can tell whether the action comes from the
+// browser that started the session. Works with Node's IncomingMessage and anything shaped like it (Express, Next.js).
+function clientOf(req, hops) {
+  const h = (req && req.headers) || {};
+  const get = (k) => { const v = typeof h.get === 'function' ? h.get(k) : h[k]; return Array.isArray(v) ? v[0] : v; };
+  const xff = String(get('x-forwarded-for') || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const ip = (hops > 0 ? xff[Math.max(0, xff.length - hops)] : xff[0]) || (req.socket && req.socket.remoteAddress) || req.ip || '';
+  return { ua: String(get('user-agent') || ''), ch: String(get('sec-ch-ua') || ''), sfs: String(get('sec-fetch-site') || ''), ip: String(ip) };
+}
+
 // The gate for anything that matters (payouts, prizes, leaderboards, account changes). Pyrmi works it out on the
 // server as `trusted`: an accept whose telemetry it corroborated, from a page a person really pressed or clicked on,
 // with no reason beyond the harmless ones below. It doesn't move with your reviewAt/rejectAt, so tuning those to cut
@@ -100,5 +130,5 @@ function trusted(v, turnstile) {
   return (v.reasons || []).every((r) => r && TRUST_ALLOWS.has(r.code));
 }
 
-module.exports = { Pyrmi, trusted, TRUST_ALLOWS };
+module.exports = { Pyrmi, trusted, clientOf, TRUST_ALLOWS };
 module.exports.default = Pyrmi;

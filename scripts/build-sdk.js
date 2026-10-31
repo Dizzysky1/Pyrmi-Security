@@ -204,6 +204,12 @@ function snippets(version, integrity) {
 function main() {
   const source = fs.readFileSync(SRC, 'utf8');
   const version = /version:\s*'([\d.]+)'/.exec(source)[1];
+  // The beacon protocol the source speaks (a "beacon protocol: N" comment in it). Published builds that speak the
+  // current one stay fully supported after a newer build replaces them, because pages pin a version with SRI and can
+  // keep loading it for months; they're listed under `supported`. Bump the protocol when the server needs something
+  // older builds don't send, and they fall back to the short grace period below.
+  const protocol = Number((/beacon protocol: (\d+)/.exec(source) || [])[1]);
+  if (!protocol) throw new Error('build-sdk: src/sdk/pyrmi.js needs a "beacon protocol: N" comment');
   const b = build(source);
   const integrity = sri(b.file);
   // Each version is also served from its own path, /sdk/<version>/pyrmi.js, which is cached for a year and never
@@ -229,8 +235,14 @@ function main() {
     console.error('sdk/' + version + '/pyrmi.js is already published and never changes. Bump version in src/sdk/pyrmi.js first.');
     process.exit(1);
   }
+  // Earlier published versions on the same protocol: { fingerprint: version }. (Before this was recorded, every build
+  // spoke protocol 3, the one the meta file's missing field stands for.)
+  const sameProtocol = (meta.protocol || 3) === protocol;
+  const supported = sameProtocol ? { ...(meta.supported || {}) } : {};
+  if (sameProtocol && meta.hash && meta.hash !== b.hash && meta.version && meta.version !== version) supported[meta.hash] = meta.version;
+  delete supported[b.hash];
   // Keep a few earlier fingerprints so pages still holding the last build (CDN and browser caches) aren't flagged.
-  const previous = [meta.hash, ...(meta.previous || [])].filter((h) => h && h !== b.hash).slice(0, 5);
+  const previous = [meta.hash, ...(meta.previous || []), ...Object.keys(meta.supported || {})].filter((h) => h && h !== b.hash && !(h in supported)).slice(0, 5);
   // When each earlier build was replaced. The server keeps recognising one for a grace period after this (core.js
   // sdkStatus, PYRMI_SDK_GRACE_DAYS), so cached pages aren't flagged, and then stops: an old fingerprint is public too.
   const retired = {};
@@ -239,7 +251,7 @@ function main() {
   fs.mkdirSync(path.dirname(versioned), { recursive: true });
   fs.writeFileSync(versioned, b.file);
   for (const [p, text] of Object.entries(want)) fs.writeFileSync(p, text);
-  fs.writeFileSync(META, JSON.stringify({ version, hash: b.hash, sourceHash: b.sourceHash, path: '/sdk/' + version + '/pyrmi.js', integrity, previous, retired }, null, 2) + '\n');
+  fs.writeFileSync(META, JSON.stringify({ version, protocol, hash: b.hash, sourceHash: b.sourceHash, path: '/sdk/' + version + '/pyrmi.js', integrity, supported, previous, retired }, null, 2) + '\n');
   console.log('built sdk/pyrmi.js and sdk/' + version + '/pyrmi.js: ' + b.file.length + ' bytes (source ' + source.length + '), fingerprint ' + b.hash + ', ' + integrity);
 }
 
