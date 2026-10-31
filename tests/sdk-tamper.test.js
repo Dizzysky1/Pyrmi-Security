@@ -69,7 +69,19 @@ const SETUP = `(function () {
   globalThis.document = doc;
   globalThis.location = H.location;
   globalThis.URL = H.URL; globalThis.Blob = H.Blob; globalThis.atob = H.atob; globalThis.btoa = H.btoa;
-  globalThis.outerWidth = 0; globalThis.innerWidth = 0; globalThis.outerHeight = 0; globalThis.innerHeight = 0;
+  // window sizes: real accessors (as in a browser) when a test sets H.sizes, plain zeros otherwise
+  ['outerWidth', 'innerWidth', 'outerHeight', 'innerHeight'].forEach(function (k) {
+    if (H.sizes) Object.defineProperty(globalThis, k, { get: function () { return H.sizes[k]; }, set: function (v) {}, enumerable: true, configurable: true });
+    else globalThis[k] = 0;
+  });
+  // navigator.userActivation, the browser's own "a person has pressed or clicked" flag, when a test sets H.activation
+  if (H.activation) {
+    var UserActivation = function UserActivation() {};
+    Object.defineProperty(UserActivation.prototype, 'hasBeenActive', { get: function hasBeenActive() { return H.activation.active; }, enumerable: true, configurable: true });
+    globalThis.UserActivation = UserActivation;
+    var uact = Object.create(UserActivation.prototype);
+    Object.defineProperty(Navigator.prototype, 'userActivation', { get: function userActivation() { return uact; }, enumerable: true, configurable: true });
+  }
 })();`;
 
 // A page with the script on it. `prelude` runs before the script loads (code that got there first).
@@ -78,7 +90,9 @@ function page(file, opts) {
   const shims = opts.shims !== false, iframe = shims && opts.iframe !== false;
   const flags = { shims, iframe, webdriver: !!opts.webdriver, userAgent: 'Mozilla/5.0 Chrome/120', location: { href: (base || 'http://x') + '/', origin: base || 'http://x' },
     URL, Blob, atob, btoa, setTimeout, setInterval, clearTimeout, clearInterval,
-    fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': 'test-ua' } }), listen: () => {},
+    // a browser adds Origin and Sec-Fetch-Site to every request the page makes; the server corroborates beacons with them
+    fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': 'test-ua', Origin: base || 'http://x', 'Sec-Fetch-Site': 'same-origin' } }),
+    listen: opts.listen || (() => {}), sizes: opts.sizes || null, activation: opts.activation || null,
     script: { getAttribute: (n) => (n === 'data-site' ? 'pk_demo_sandbox' : null), src: (base || 'http://x') + '/sdk/pyrmi.js' } };
   const frameHost = { ...flags, frameWindow: null };
   const mainHost = { ...flags, frameWindow: () => { const c = vm.createContext({ __host: frameHost }); vm.runInContext(SETUP, c); return vm.runInContext('globalThis', c); } };
@@ -86,6 +100,7 @@ function page(file, opts) {
   vm.runInContext(SETUP, ctx);
   if (opts.prelude) vm.runInContext(opts.prelude, ctx);
   vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
+  if (opts.twice) vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
   const run = (code) => vm.runInContext(code, ctx);
   return { run, Pyrmi: run('window.Pyrmi'), tp: () => Array.from(run('window.Pyrmi.report().tp')), wr: () => Array.from(run('window.Pyrmi.report().wr || []')) };
 }
@@ -264,7 +279,7 @@ for (const file of FILES) {
     assert.ok(!benign.reasons.some((r) => r.code === 'tampered_runtime'), JSON.stringify(benign.reasons));
     const w = benign.reasons.find((r) => r.code === 'wrapped_runtime');
     assert.ok(w && w.weight <= 5, JSON.stringify(benign.reasons));
-    assert.equal(benign.verdict, 'accept');
+    assert.equal(benign.verdict, 'accept', JSON.stringify(benign.reasons));
     const attacked = await run(SENTRY, BIND, 'visitor-5e0002');
     const t = attacked.reasons.find((r) => r.code === 'tampered_runtime');
     assert.ok(t && t.weight === 30 && /performance\.now/.test(t.detail), JSON.stringify(attacked.reasons));
@@ -304,5 +319,102 @@ for (const file of FILES) {
     const t = hijacked.reasons.find((r) => r.code === 'tampered_runtime');
     assert.ok(t && /performance\.now/.test(t.detail), JSON.stringify(hijacked.reasons));
     assert.ok(hijacked.risk >= clean.risk + 30, 'risk ' + clean.risk + ' -> ' + hijacked.risk);
+  });
+}
+
+// ---- round 7: the three parked backlog items, and the second tester's write-up ----
+const SDKMETA = require('../api/_lib/sdk-build.json');
+for (const file of FILES) {
+  const which = path.relative(path.join(__dirname, '..'), file);
+  const expectHash = /src[\\/]sdk/.test(which) ? SDKMETA.sourceHash : SDKMETA.hash;
+
+  test(which + ': a fake window.Pyrmi planted before the script loads is replaced and reported', () => {
+    // The old double-load guard returned early whenever window.Pyrmi.version existed, so this switched the script off.
+    const p = page(file, { prelude: "window.Pyrmi = { version: '9.9.9', start: function () { return Promise.resolve({ token: 'fake' }); }, flush: function () {} };" });
+    assert.equal(p.run('window.Pyrmi.version'), '1.3.0');
+    assert.ok(p.tp().includes('window.Pyrmi'), JSON.stringify(p.tp()));
+    // ...also when the fake is a getter
+    const g = page(file, { prelude: "Object.defineProperty(window, 'Pyrmi', { get: function () { return { version: '1.3.0' }; }, configurable: true });" });
+    assert.ok(g.tp().includes('window.Pyrmi'), JSON.stringify(g.tp()));
+  });
+
+  test(which + ': the same script included twice keeps the first copy and flags nothing', () => {
+    const p = page(file, { twice: true });
+    assert.equal(p.run('window.Pyrmi'), p.Pyrmi);
+    assert.deepEqual(p.tp(), []);
+  });
+
+  test(which + ': a fake that can\'t be replaced (non-configurable) leaves the page without the script, without errors', () => {
+    const p = page(file, { prelude: "Object.defineProperty(window, 'Pyrmi', { value: Object.freeze({ version: '1.3.0', start: function () {} }) });" });
+    assert.equal(typeof p.run('window.Pyrmi.report'), 'undefined'); // still the fake: the server sees no telemetry (no_client)
+  });
+
+  test(which + ': spoofing the window sizes to hide docked devtools is caught, and the hint still reads the real sizes', () => {
+    const sizes = { outerWidth: 1400, innerWidth: 1000, outerHeight: 900, innerHeight: 860 }; // a 400 px docked panel
+    const p = page(file, { sizes });
+    assert.ok(p.run('Pyrmi.report().dt') > 0, 'devtools hint seen');
+    const q = page(file, { sizes });
+    q.run("Object.defineProperty(window, 'outerWidth', { get: function () { return window.innerWidth; }, configurable: true });");
+    assert.ok(q.run('Pyrmi.report().dt') > 0, 'the spoof must not hide the hint');
+    assert.ok(q.tp().includes('outerWidth'), JSON.stringify(q.tp()));
+  });
+
+  test(which + ': input hidden from the script (stopped before its listener) is caught through the browser\'s activation flag', async () => {
+    const listeners = [];
+    const activation = { active: false };
+    const p = page(file, { activation, listen: (t, type, fn) => listeners.push({ type, fn }) });
+    // The person clicks, but a capture listener that ran first stops the event: the browser marks the page activated,
+    // our listener never runs.
+    activation.active = true;
+    p.run('Pyrmi.report()');
+    await wait(200);
+    assert.ok(p.tp().includes('input.hidden'), JSON.stringify(p.tp()));
+    // The same click reaching our listener is fine.
+    const seen = [], act2 = { active: false };
+    const q = page(file, { activation: act2, listen: (t, type, fn) => seen.push({ type, fn }) });
+    act2.active = true;
+    for (const l of seen) if (l.type === 'pointerdown') l.fn({ isTrusted: true, type: 'pointerdown' });
+    q.run('Pyrmi.report()');
+    await wait(200);
+    assert.ok(!q.tp().includes('input.hidden'), JSON.stringify(q.tp()));
+    // A page that was already activated before the script loaded (script loaded after a click) isn't flagged.
+    const r = page(file, { activation: { active: true } });
+    r.run('Pyrmi.report()'); await wait(200);
+    assert.ok(!r.tp().includes('input.hidden'), JSON.stringify(r.tp()));
+  });
+
+  test(which + ': scripted keyup / pointerup / mouseup / touchend count as synthetic input', () => {
+    const listeners = [];
+    const p = page(file, { listen: (t, type, fn) => listeners.push({ type, fn }) });
+    for (const type of ['keyup', 'pointerup', 'mouseup', 'touchend']) {
+      const l = listeners.find((x) => x.type === type);
+      assert.ok(l, 'listens for ' + type);
+      l.fn({ isTrusted: false, type });
+    }
+    assert.equal(p.run('Pyrmi.report().ut'), 4);
+    // form events from password managers are not counted
+    assert.ok(!listeners.some((x) => x.type === 'input' || x.type === 'change'));
+  });
+
+  test(which + ': a page that wraps fetch (or loads Sentry / zone.js) before the script keeps the known fingerprint', () => {
+    // Reported against the pre-round-6 build, which hashed itself through the page's own toString.
+    for (const prelude of ['var f0 = window.fetch; window.fetch = function (u, o) { return f0(u, o); };', SENTRY, ZONE]) {
+      const p = page(file, { prelude });
+      assert.equal(p.run('Pyrmi.report().sh'), expectHash);
+    }
+  });
+
+  test(which + ': the script sends its start clock and ties beacons to the session (end to end: corroborated accept)', async () => {
+    const p = page(file);
+    const s = await p.Pyrmi.start();
+    await wait(1600);
+    await p.Pyrmi.flush();
+    p.Pyrmi.stop();
+    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
+      body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-7c01' }) });
+    const v = await r.json();
+    assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
+    assert.equal(v.client, 'corroborated');
+    assert.equal(v.risk, 0, JSON.stringify(v.reasons));
   });
 }

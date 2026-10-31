@@ -16,7 +16,6 @@
  */
 (function pyrmiMain(w, d) {
   'use strict';
-  if (w.Pyrmi && w.Pyrmi.version) return;
 
   // ---- trusted references, taken before any later page code can run ----
   // Everything this script calls for itself is captured here, once. run(fn, thisArg, a, b) calls fn through a bound
@@ -25,7 +24,11 @@
   var O = Object, FP = Function.prototype;
   var callFn = FP.call, bindFn = FP.bind, nativeToString = FP.toString;
   var run = bindFn.call(callFn, callFn);
-  var gopd = O.getOwnPropertyDescriptor, gpo = O.getPrototypeOf, freeze = O.freeze, defineProp = O.defineProperty;
+  var gopd = O.getOwnPropertyDescriptor, gpo = O.getPrototypeOf, freeze = O.freeze, isFrozen = O.isFrozen, defineProp = O.defineProperty;
+  // Whatever already sits at window.Pyrmi. The script used to skip itself whenever window.Pyrmi.version existed, so a
+  // fake planted before it loaded switched it off. It's checked properly further down, once a trusted toString exists.
+  var prior = null;
+  try { prior = gopd(w, 'Pyrmi') || null; } catch (_) { prior = { configurable: false }; }
   var stringify = JSON.stringify, dateNow = Date.now;
   var script = d.currentScript;
   var cfg = {
@@ -34,7 +37,7 @@
   };
   var nav = w.navigator || {};
   var perf = w.performance;
-  var perfNow = perf && perf.now, fetchFn = w.fetch, sendBeaconFn = nav.sendBeacon;
+  var perfNow = perf && perf.now, fetchFn = w.fetch;
   var setTimeoutFn = w.setTimeout, setIntervalFn = w.setInterval, clearTimeoutFn = w.clearTimeout, clearIntervalFn = w.clearInterval;
   var listenW = w.addEventListener, listenD = d.addEventListener;
   function clock() { return typeof perfNow === 'function' ? run(perfNow, perf) : run(dateNow, Date); }
@@ -62,8 +65,12 @@
     ['Object.descriptor', ['Object', 'getOwnPropertyDescriptor']], ['Object.getPrototypeOf', ['Object', 'getPrototypeOf']],
     ['document.createElement', ['document', 'createElement']], ['iframe.contentWindow', ['HTMLIFrameElement', 'prototype', 'contentWindow']],
     ['navigator.webdriver', ['navigator', 'webdriver']], ['navigator.userAgent', ['navigator', 'userAgent']], ['navigator.languages', ['navigator', 'languages']],
+    // The browser's own record of a real key press or click (can't be set by script), and the window sizes the devtools
+    // hint reads. Replacing these to hide input or devtools is tampering in its own right.
+    ['navigator.userActivation', ['navigator', 'userActivation']], ['UserActivation.hasBeenActive', ['UserActivation', 'prototype', 'hasBeenActive']],
+    ['outerWidth', ['outerWidth']], ['innerWidth', ['innerWidth']], ['outerHeight', ['outerHeight']], ['innerHeight', ['innerHeight']],
   ];
-  var WD = 17, UA = 18, LANGS = 19; // indexes into WATCH
+  var WD = 17, UA = 18, LANGS = 19, UACT = 20, UHBA = 21, OW = 22, IW = 23, OH = 24, IH = 25; // indexes into WATCH
   // Finds the object that really holds the property (the instance or something up its prototype chain) and how it's
   // defined there. A replacement shows up as a different function, a different place (an own property shadowing the
   // prototype's), or a different kind (a getter where a plain value belongs), even when its toString looks native.
@@ -125,6 +132,30 @@
   function strOf(f) {
     try { return run(toStr, f); } catch (_) { try { return run(nativeToString, f); } catch (e) { return null; } }
   }
+  // ---- a window.Pyrmi that was there before us ----
+  // Our own copy (the same script included twice) is a frozen, read-only, non-configurable object whose methods are
+  // text out of this very function. Anything else was planted: replace it if we can and report it. If it can't be
+  // replaced (defined non-configurable by code that ran first), the page talks to the fake and nothing reaches the
+  // server from us, which the server reads as no telemetry (or, if the fake makes some up, as unverified telemetry).
+  function ours(desc) {
+    try {
+      if (!desc || !('value' in desc) || desc.writable || desc.configurable) return false;
+      var v = desc.value, me = strOf(pyrmiMain), names = ['start', 'flush', 'mark', 'stop', 'token', 'report'];
+      if (!v || typeof v !== 'object' || !isFrozen(v) || !me) return false;
+      for (var ni = 0; ni < names.length; ni++) {
+        var dv = gopd(v, names[ni]), src = dv && typeof dv.value === 'function' ? strOf(dv.value) : null;
+        if (!src || src.length < 24 || me.indexOf(src) < 0) return false;
+      }
+      return true;
+    } catch (_) { return false; }
+  }
+  var planted = false;
+  if (prior) {
+    if (ours(prior)) return; // already running
+    if (!prior.configurable) return; // can't take the name back; see above
+    planted = true;
+  }
+
   var loaded = [];
   for (var li = 0; li < WATCH.length; li++) { try { loaded.push(locate(w, WATCH[li][1])); } catch (_) { loaded.push(null); } }
   // Reads a navigator property through the getter captured at load, not whatever a later script put in its place.
@@ -133,6 +164,26 @@
     if (!l) return undefined;
     try { return l.acc ? (l.fn ? run(l.fn, nav) : undefined) : nav[WATCH[i][1][1]]; } catch (_) { return undefined; }
   }
+  // Window sizes through the getters captured at load, so a later spoof of outerWidth/innerWidth doesn't change the reading.
+  function winRead(i) {
+    var l = loaded[i];
+    if (!l) return 0;
+    try { return Number(l.acc ? (l.fn ? run(l.fn, w) : 0) : w[WATCH[i][1][0]]) || 0; } catch (_) { return 0; }
+  }
+  // navigator.userActivation.hasBeenActive through the load-time getters: true once the person has really pressed a key
+  // or clicked, whatever any script does with events. null where the browser doesn't have it.
+  function activation() {
+    var l = loaded[UACT], g = loaded[UHBA], o;
+    if (!l) return null;
+    try {
+      o = l.acc ? (l.fn ? run(l.fn, nav) : null) : nav.userActivation;
+      if (!o) return null;
+      if (g && g.acc && g.fn) return run(g.fn, o) === true;
+      return o.hasBeenActive === true;
+    } catch (_) { return null; }
+  }
+  var activeAtLoad = activation();
+
   function tampered(i) {
     var e = WATCH[i], now = locate(w, e[1]), was = loaded[i], b = fresh ? fresh.base[i] : null;
     if (!now) return !!was; // deleted since load
@@ -164,6 +215,15 @@
       for (var k in marks) if (k in w) addOnce(env.au, marks[k]);
       if (d.documentElement && (d.documentElement.getAttribute('webdriver') || d.documentElement.getAttribute('selenium'))) addOnce(env.au, 'selenium');
     } catch (_) { /* never break the page */ }
+    if (planted) addOnce(env.tp, 'window.Pyrmi');
+    // Input hidden from us: the browser says the person pressed or clicked since we loaded, but none of it reached our
+    // listeners (a capture listener that ran first and stopped it). Checked again a moment later, so a beacon sent from
+    // inside the very first event's dispatch, before our listener's turn, isn't mistaken for it.
+    var act = activation();
+    if (act === true && activeAtLoad === false && inputSeen === 0) {
+      if (!hidePending) { hidePending = clock() || 1; try { run(setTimeoutFn, w, checkEnv, 150); } catch (_) { /* next beacon */ } }
+      else if (clock() - hidePending > 100) addOnce(env.tp, 'input.hidden');
+    }
     // Our own checks never rely on the page's toString, so a replaced one (Sentry and zone.js both patch it) is only "wrapped".
     if (toStrReplaced) addOnce(env.wr, 'Function.toString');
     for (var i = 0; i < WATCH.length; i++) {
@@ -173,17 +233,18 @@
     }
     // devtools: a docked panel shrinks the page well below the window. A rough hint, so it only adds a little risk.
     try {
-      var gw = w.outerWidth - w.innerWidth, gh = w.outerHeight - w.innerHeight;
-      if (w.outerWidth && (gw > 200 || gh > 260) && !/Mobile|Android/.test(String(navRead(UA) || ''))) env.dt++;
+      var gw = winRead(OW) - winRead(IW), gh = winRead(OH) - winRead(IH);
+      if (winRead(OW) && (gw > 200 || gh > 260) && !/Mobile|Android/.test(String(navRead(UA) || ''))) env.dt++;
     } catch (_) { /* ignore */ }
   }
 
   // ---- input watching (per session) ----
-  var inp;
+  var inp, inputSeen = 0, hidePending = 0; // inputSeen: real input events we've seen since load (never reset)
   function resetInput() { inp = { ut: 0, ih: 0, k: 0, p: 0, h: 0, lastKey: 0, gaps: [], win: [] }; }
   resetInput();
   function onInput(e) {
     if (!e.isTrusted) { inp.ut++; return; }
+    inputSeen++;
     var now = clock();
     if (e.type === 'keydown') {
       if (e.repeat) return;
@@ -208,28 +269,36 @@
   ['keydown', 'pointerdown', 'mousedown', 'touchstart', 'click'].forEach(function (t) {
     try { run(listenW, w, t, onInput, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
   });
+  // The other halves of presses and clicks: scripted ones count as synthetic too (a bot that only fakes keyup or
+  // pointerup used to go unseen). Form events (input, change) are left alone: password managers fire those by script.
+  function onOther(e) { if (!e.isTrusted) inp.ut++; else inputSeen++; }
+  ['keyup', 'keypress', 'pointerup', 'mouseup', 'touchend', 'dblclick', 'contextmenu', 'wheel'].forEach(function (t) {
+    try { run(listenW, w, t, onOther, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
+  });
   try { run(listenD, d, 'visibilitychange', function () { if (d.hidden) inp.h++; }); } catch (_) { /* ignore */ }
 
   // ---- session + beacons ----
-  var session = null, gameTime = null, timer = null, firstBeacon = null;
+  var session = null, gameTime = null, timer = null, firstBeacon = null, seq = 0;
   // The page clock is read live on purpose: if something has warped performance.now, the server should see the warp
   // (speed_hack) as well as the replacement (tampered_runtime). Everything else here uses the references taken at load.
   function pageClock() { try { return perf ? Math.round(perf.now()) : null; } catch (_) { return null; } }
   function signals() {
     return { wd: env.wd, hl: env.hl, au: env.au, tp: env.tp, wr: env.wr, dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
-      pt: pageClock(), gt: gameTime, sh: selfHash };
+      pt: pageClock(), gt: gameTime, sh: selfHash, ac: activation() };
   }
   // Telemetry is sent in the clear under `signals`. It's advisory only: the server treats it as hints that can raise
   // risk, never as proof, because any client can send whatever it likes. (We used to XOR it with a per-session key,
   // but that key was handed to the browser, so it protected nothing and only made the wire format look clever.)
+  // bn and n tie each beacon to this session and put them in order, so a beacon copied from another session, or sent
+  // twice, is refused. They're not a secret (this script holds them), so they don't make a beacon trustworthy.
   function payload() {
-    return { token: session.token, signals: signals() };
+    seq++;
+    return { token: session.token, bn: session.bn, n: seq, signals: signals() };
   }
   function post(path, body, beacon) {
+    // Always fetch (keepalive), never sendBeacon: sendBeacon goes out in no-cors mode, where a site's Referrer-Policy can
+    // turn the Origin header into "null" while /session (cors) carried the real one, and the server compares the two.
     var json = stringify(body);
-    if (beacon && typeof sendBeaconFn === 'function') {
-      try { if (run(sendBeaconFn, nav, cfg.api + path, new Blob([json], { type: 'text/plain' }))) return Promise.resolve({ ok: true }); } catch (_) { /* fall through */ }
-    }
     return run(fetchFn, w, cfg.api + path, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: json, keepalive: json.length < 60000, credentials: 'omit' })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'bad_response' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'http_' + r.status; return j; }); });
   }
@@ -242,7 +311,7 @@
   }
 
   var api = {
-    version: '1.2.0',
+    version: '1.3.0',
     config: cfg,
     // Starts a new session (on page load, or when a protected flow begins). Resolves to { token, seed, session, expiresAt }.
     start: function (opts) {
@@ -250,10 +319,10 @@
       var site = opts.site || cfg.site;
       if (!site) return Promise.reject(new Error('Pyrmi: add data-site="pk_..." to the script tag'));
       checkEnv();
-      return run(fetchFn, w, cfg.api + '/session', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: stringify({ site: site }), credentials: 'omit' })
+      return run(fetchFn, w, cfg.api + '/session', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: stringify({ site: site, pt: Math.floor(clock()) }), credentials: 'omit' })
         .then(function (r) { return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error('Pyrmi: ' + (j.message || j.error || r.status)); return j; }); })
         .then(function (j) {
-          session = j; gameTime = null; resetInput();
+          session = j; gameTime = null; seq = 0; resetInput();
           if (timer) run(clearIntervalFn, w, timer);
           if (firstBeacon) run(clearTimeoutFn, w, firstBeacon);
           firstBeacon = run(setTimeoutFn, w, function () { beacon(true); }, 1500);

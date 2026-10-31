@@ -133,9 +133,9 @@ doesn't offer STARTTLS is refused.
 | POST | `/api/v1/project` | a clean Pyrmi token from the dashboard page (rate limited) | `{name, origins?, pyrmiToken}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
 | GET / PATCH | `/api/v1/project` | `Bearer sk_` | project info / `{name?, settings}` |
 | POST | `/api/v1/project?action=rotate` | `Bearer sk_` | new secret key, old one stops working |
-| POST | `/api/v1/session` | public key in body, origin checked | `{site}` → `{token, session, seed, expiresAt}` |
-| POST | `/api/v1/signal` | session token | `{token, signals}` (plain JSON, text/plain ok for sendBeacon) |
-| POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, reasons}` |
+| POST | `/api/v1/session` | public key in body, origin checked | `{site, pt?}` (pt: the page clock) → `{token, session, seed, expiresAt, bn}` |
+| POST | `/api/v1/signal` | session token | `{token, bn, n, signals}` (plain JSON, text/plain so there's no preflight; `bn` from the session, `n` counts up) |
+| POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, client, reasons}` |
 | GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
 | POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
 | POST | `/api/v1/auth/email?action=start` | CSRF header + Pyrmi token | `{email, pyrmiToken}` → emails a 6-digit code; the same answer for every address |
@@ -163,7 +163,8 @@ doesn't offer STARTTLS is refused.
   Their tokens are used once and never kept.
 - Every change made with the session cookie needs the `X-Pyrmi-CSRF` header and a same-site origin.
 - Each account sees only its own sites: anyone else's answers 404, the same as one that doesn't exist.
-- The browser script is served as a minified build that fingerprints itself (an edited copy shows as `tampered_runtime`).
+- The browser script is served as a minified build that fingerprints itself (an edited copy, or a beacon with no
+  fingerprint, shows as `tampered_runtime`). Its telemetry is corroborated against what the server sees (see below).
 
 ### What the browser telemetry can and can't do
 
@@ -176,6 +177,24 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   bad signals is not a guarantee — a determined attacker can present a "clean" session.
   (An earlier build XOR-encoded each session's beacons with a per-session key. That key was handed to the browser, so
   it protected nothing and is gone; pretending it did was the problem, not the encoding.)
+- **Telemetry is checked against what the server saw itself, so made-up beacons don't read as clean.** Round 7
+  showed ~15 lines of hand-written JSON earning the sandbox's 999 at risk 0. Now each beacon is compared with things
+  the server observes on its own: the page that started the session and sent the beacon (`Origin`, and the
+  `Sec-Fetch-Site` header Chrome and Firefox always add), the page's clock at session start against the server's
+  clock, counters that only grow, the full field set and the script's fingerprint, and a per-session beacon nonce and
+  count (so a beacon copied from another session, or sent twice, is refused). Anything that doesn't hold up adds
+  `unverified_client` (+40, review by default), a beacon without the fingerprint or the fields counts as
+  `tampered_runtime` too, and the verdict says `client: "corroborated" | "unverified" | "none"`. This is cost, not
+  proof: a script outside a browser can still forge those headers, and a person in their own browser can send what
+  the real script would, nonce and all. It stops the lazy forgery; it doesn't make telemetry trustworthy.
+- **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
+  built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
+  7 days after they're replaced (`PYRMI_SDK_GRACE_DAYS`) so cached pages aren't flagged, then count as
+  `tampered_runtime` (`pyrmi.js:outdated`). The readable source's hash is only known outside production.
+- **Speeding up your own code needs no hook.** A cheat that runs the game's own simulation faster, and leaves the
+  clocks and timers alone, changes nothing the script watches; `Pyrmi.mark()` reports only what your app tells it.
+  For games the only anti-tamper that doesn't rely on the client is server-side: re-run the inputs (the replay /
+  simulate hook in `pyrmi-server`) or make the server authoritative.
 - **The hard floor is server-side and can't be forged from the browser:** the HMAC-signed session token, single-use
   replay protection, expiry, `minDurationMs` (measured from when the token was issued, so a claimed `durationMs`
   can't satisfy it), `maxScore`/`maxScorePerSec`, and the per-network / per-project rate limits and quotas. These do
@@ -206,6 +225,18 @@ used to pass as clean. Instead:
   one when the page's was replaced, and calls everything through references taken at load, so a later hook on
   `.call` or `.toString` can't answer for it. The script's own clocks, timers, `fetch` and listeners also use those
   references, and `window.Pyrmi` is frozen, so a later script can't quietly stop its beacons or swap `flush()`.
+- **A fake `window.Pyrmi` planted first** (round 7). The script used to skip itself if `window.Pyrmi.version` existed.
+  It now recognises only its own instance (frozen, read-only, methods that are text from the script itself), replaces
+  anything else it can and reports `window.Pyrmi` as tampering. A fake defined non-configurable can't be replaced; then
+  the page gets no telemetry from the script, which the server sees as `no_client` or unverified telemetry.
+- **Input hidden from the script** (round 7). A capture listener that runs first can stop events before the script's
+  listener sees them. The script also reads the browser's own `navigator.userActivation` (set by a real key press or
+  click, whatever scripts do with the event): activated since load, but no input ever reached the script, is
+  `input.hidden` (tampering). Scripted `keyup`/`pointerup`/`mouseup`/`touchend`/`wheel` now count as synthetic too
+  (form `input`/`change` don't: password managers fire those by script).
+- **The devtools hint reads the window sizes through getters taken at load** and watches them (round 7), so spoofing
+  `outerWidth`/`innerWidth` to hide a docked panel is reported as tampering instead of hiding it. It's still only a
+  hint (+10): undocked devtools change nothing it can see.
 
 This raises the bar; it doesn't change the threat model above. Code that runs before the script and also fakes the
 iframe, or an edited copy of the script, can still report a clean runtime. Load the script first in `<head>`, and keep

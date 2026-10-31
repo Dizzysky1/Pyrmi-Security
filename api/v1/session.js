@@ -11,6 +11,6 @@ module.exports = handle(async (req, res) => {
   const project = await core.projectByPublicKey(body.site);
   if (!project) { cors(req, res, null); return fail(res, 404, 'unknown_site', 'No project has that public key.'); }
   if (!cors(req, res, project.settings.origins)) return fail(res, 403, 'origin_not_allowed');
-  const out = await core.startSession(project, { ip: clientIp(req), ua: req.headers['user-agent'], origin: String(req.headers.origin || '') });
+  const out = await core.startSession(project, { ip: clientIp(req), ua: req.headers['user-agent'], origin: String(req.headers.origin || '') }, body);
   send(res, 200, { ok: true, ...out });
 });

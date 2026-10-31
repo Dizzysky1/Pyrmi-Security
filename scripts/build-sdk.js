@@ -192,8 +192,12 @@ function main() {
   }
   // Keep a few earlier fingerprints so pages still holding the last build (CDN and browser caches) aren't flagged.
   const previous = [meta.hash, ...(meta.previous || [])].filter((h) => h && h !== b.hash).slice(0, 5);
+  // When each earlier build was replaced. The server keeps recognising one for a grace period after this (core.js
+  // sdkStatus, PYRMI_SDK_GRACE_DAYS), so cached pages aren't flagged, and then stops: an old fingerprint is public too.
+  const retired = {};
+  for (const h of previous) retired[h] = (meta.retired && meta.retired[h]) || Date.now();
   fs.writeFileSync(OUT, b.file);
-  fs.writeFileSync(META, JSON.stringify({ version, hash: b.hash, sourceHash: b.sourceHash, previous }, null, 2) + '\n');
+  fs.writeFileSync(META, JSON.stringify({ version, hash: b.hash, sourceHash: b.sourceHash, previous, retired }, null, 2) + '\n');
   console.log('built sdk/pyrmi.js: ' + b.file.length + ' bytes (source ' + source.length + '), fingerprint ' + b.hash);
 }
 
