@@ -83,9 +83,20 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_EMAIL_CODES_PER_IP` | no | sign-in codes sent per network per 10 minutes (default 10) |
 | `PYRMI_EMAIL_CODES_PER_ADDRESS` | no | sign-in codes sent to one address per hour (default 5) |
 | `PYRMI_ACCOUNT_CALLS_PER_MIN` | no | account calls per network per minute (default 60) |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | recommended in production | a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) widget's keys. With both set, sign-in codes, new projects and sites, and claiming, rotating or deleting a site each need a human check. Off while either is missing. |
+| `TURNSTILE_HOSTNAMES` | no | comma-separated page hostnames a Turnstile token may come from, e.g. `pyrmi.com,www.pyrmi.com`. Defaults to the host the request was sent to. |
 
 With none of the sign-in env vars set, the dashboard works with secret keys only. Each way in switches on by itself,
 and one verified email is one account whichever way someone signs in.
+
+### Human check on the dashboard (Cloudflare Turnstile)
+
+Browser telemetry can't stop a script that copies the real one exactly, so the dashboard's own forms also use
+Turnstile, a separate check run by Cloudflare. Create a widget in Cloudflare (Turnstile → Add widget, hostname your
+domain, mode Managed), then set its keys as `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` for Production and
+redeploy. The server checks every token with Cloudflare's siteverify: it must have passed, be for that form's action
+(`signin`, `new-project`, `new-site`, `claim`, `rotate`, `delete`) and come from your hostname, and each token is
+accepted once. It fails closed: if Cloudflare can't be reached the request is refused with `turnstile_unavailable`.
 
 ### Email codes from your own mailbox (SMTP)
 
@@ -202,7 +213,8 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   sets only for an `accept` whose `client` is `corroborated`, whose browser saw a real key press or click (`ac: true`),
   and whose every reason is harmless (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
   with your thresholds: raising `reviewAt` to 50 or 80 turns a tampered runtime or webdriver session into an accept,
-  but never into a trusted one. A `review` never counts. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
+  but never into a trusted one. A `review` never counts. The strongest setup is all three: `trusted(v)`, a Turnstile
+  check on the same request (`verifyTurnstile`, then `trusted(v, t)`), and server-side replay where the app allows it. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
 - **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
   built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
   1 day after they're replaced (`PYRMI_SDK_GRACE_DAYS`; the CDN caches the script for 5 minutes) so cached pages

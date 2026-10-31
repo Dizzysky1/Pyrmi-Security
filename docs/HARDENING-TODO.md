@@ -57,6 +57,11 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   runtime, webdriver or input-hiding session became an accept and so passed `trusted(v)`. The server now sets
   `trusted` itself from an allow-list of harmless reasons, a corroborated accept and `ac: true`, independent of
   thresholds; `pyrmi-server` uses it and falls back to the same allow-list. Tests: `tests/trusted.test.js`.
+- [x] **A human check that doesn't depend on browser telemetry** (master list). Cloudflare Turnstile on sign-in codes,
+  new projects and sites, claim, rotate and delete, off until `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` are set.
+  Server-side siteverify with the form's action, the page hostname, single use (Cloudflare's own plus a token hash
+  kept 10 minutes) and fail closed; `pyrmi-server` offers `verifyTurnstile` and `trusted(v, t)`. `cdata` isn't used:
+  the action, hostname and single use already bind a token to one form on one site. Tests: `tests/turnstile.test.js`.
 - [ ] **A full mimic still corroborates.** A script that starts its own session and sends exactly what the real one
   would, page clock included, is an accept. Inherent; documented. The sample and `pyrmi-server`'s `trusted(v)` gate
   sensitive actions on a corroborated accept, and `simulate` is the check that doesn't depend on the client.

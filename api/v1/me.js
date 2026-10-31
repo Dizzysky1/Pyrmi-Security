@@ -1,9 +1,11 @@
 'use strict';
-// GET  /api/v1/me                    -> { user, sites } when signed in; 401 { providers } when not (which ways to sign in are switched on)
+// GET  /api/v1/me                    -> { user, sites, turnstile } when signed in; 401 { providers, turnstile } when not
+//                                       (which ways to sign in are on, and the Turnstile site key, or null while it's off)
 // POST /api/v1/me?action=signout     -> ends this signed-in session (needs the X-Pyrmi-CSRF header)
 // POST /api/v1/me?action=revoke-all  -> ends every session for the account, this one included (needs the X-Pyrmi-CSRF header)
 const accounts = require('../_lib/accounts');
 const core = require('../_lib/core');
+const turnstile = require('../_lib/turnstile');
 const { send, fail, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
@@ -27,6 +29,6 @@ module.exports = handle(async (req, res) => {
   }
   if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed');
   const user = await accounts.currentUser(req);
-  if (!user) return send(res, 401, { ok: false, error: 'signed_out', providers: accounts.providers() });
-  send(res, 200, { ok: true, user: { email: user.email, name: user.name }, sites: await accounts.listSites(user.uid) });
+  if (!user) return send(res, 401, { ok: false, error: 'signed_out', providers: accounts.providers(), turnstile: turnstile.siteKey() });
+  send(res, 200, { ok: true, user: { email: user.email, name: user.name }, sites: await accounts.listSites(user.uid), turnstile: turnstile.siteKey() });
 });

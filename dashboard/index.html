@@ -39,6 +39,7 @@
       </div>
       <form class="email-in" id="email-form" hidden>
         <label>Or with your email<input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></label>
+        <div class="ts" id="ts-signin" hidden></div>
         <button class="btn primary" type="submit">email me a code</button>
       </form>
       <form class="email-in" id="code-form" hidden>
@@ -56,6 +57,7 @@
         <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
         <label>Allowed pages <span class="muted">(optional, one per line)</span>
           <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
+        <div class="ts" id="ts-create" hidden></div>
         <button class="btn primary" type="submit">create project</button>
         <p class="err" id="create-err" role="alert"></p>
       </form>
@@ -86,6 +88,7 @@
         <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
         <label>Allowed pages <span class="muted">(optional, one per line)</span>
           <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
+        <div class="ts" id="ts-add" hidden></div>
         <button class="btn primary" type="submit">add site</button>
         <p class="err" id="add-err" role="alert"></p>
       </form>
@@ -93,6 +96,7 @@
         <h3>Bring in an existing project</h3>
         <p class="muted small-t">Made a project with keys only? Its secret key moves it into this account.</p>
         <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
+        <div class="ts" id="ts-claim" hidden></div>
         <button class="btn" type="submit">add to my account</button>
         <p class="err" id="claim-err" role="alert"></p>
       </form>
@@ -192,6 +196,8 @@
           <span>Your server will fail to verify until you update it.</span>
           <button class="btn primary" type="button" id="rotate-yes">yes, rotate</button>
           <button class="btn" type="button" id="rotate-no">cancel</button>
+          <div class="ts" id="ts-rotate" hidden></div>
+          <span class="err" id="rotate-err" role="alert"></span>
         </div>
         <div id="rotate-out" hidden class="keyrow"><span>new key</span><code id="r-sk"></code><button class="copy" data-copy="r-sk">copy</button></div>
       </div>

@@ -1,10 +1,12 @@
 'use strict';
 // POST  /api/v1/project                      { name, origins?, pyrmiToken }  -> new project with keys (secret key shown once)
-//       pyrmi.com protects this form with Pyrmi itself: pyrmiToken comes from the dashboard page (core.SITE).
+//       pyrmi.com protects this form with Pyrmi itself: pyrmiToken comes from the dashboard page (core.SITE), and once
+//       Turnstile is set up, turnstileToken from its human check. (Calls with a secret key are server to server: no check.)
 // GET   /api/v1/project   Bearer sk_...                          -> project info + settings
 // PATCH /api/v1/project   Bearer sk_...      { name?, settings }  -> updated project
 // POST  /api/v1/project?action=rotate  Bearer sk_...            -> new secret key (old one stops working)
 const core = require('../_lib/core');
+const turnstile = require('../_lib/turnstile');
 const { send, fail, readJson, bearer, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
@@ -16,6 +18,7 @@ module.exports = handle(async (req, res) => {
   const ip = clientIp(req);
   if (req.method === 'POST' && url.searchParams.get('action') !== 'rotate') {
     const body = await readJson(req, 4096);
+    await turnstile.check(body.turnstileToken, ip, 'new-project', req.headers.host);
     await core.guardSite(body.pyrmiToken, ip);
     const p = await core.createProject(body, ip);
     return send(res, 201, { ok: true, project: p });

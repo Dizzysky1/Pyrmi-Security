@@ -64,3 +64,4 @@ label.check{flex-direction:row;align-items:center;gap:8px;color:var(--muted)}
 .steps-list li.done > b::after{content:"  connected";font-family:var(--mono);font-size:11px;color:var(--ok);letter-spacing:.08em;text-transform:uppercase}
 .steps-list .code{margin-top:8px}
 .guide .acts{margin-top:14px;align-items:center}
+.ts{min-height:0;margin:2px 0}.ts:empty{display:none}

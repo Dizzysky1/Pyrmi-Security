@@ -55,12 +55,37 @@ export interface PyrmiOptions {
   timeoutMs?: number;
   /** When Pyrmi can't be reached: false (default) rejects the action, true accepts it unverified. */
   failOpen?: boolean;
+  /** Your Cloudflare Turnstile widget's secret key, for verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
+  turnstileSecret?: string;
+  /** Override Cloudflare's siteverify URL (tests). */
+  turnstileEndpoint?: string;
+}
+
+export interface TurnstileResult {
+  success: boolean;
+  errorCodes: string[];
+  hostname?: string;
+  action?: string;
+}
+
+export interface TurnstileOptions {
+  /** The visitor's IP address. */
+  remoteip?: string;
+  /** The data-action your widget was given. A token made for another action fails. */
+  action?: string;
+  /** Your site's hostname. A token made on another host fails. */
+  hostname?: string;
 }
 
 export declare class Pyrmi {
   constructor(opts?: PyrmiOptions);
   verify(input: VerifyInput): Promise<VerifyResult>;
+  /** Checks a Turnstile token with Cloudflare. Fails closed (success: false) on any doubt. */
+  verifyTurnstile(token: string | null | undefined, opts?: TurnstileOptions): Promise<TurnstileResult>;
 }
-/** The server's `trusted` flag, safely (false for a failOpen stand-in). Use it to gate sensitive actions. */
-export declare function trusted(v: VerifyResult | null | undefined): boolean;
+/**
+ * The server's `trusted` flag, safely (false for a failOpen stand-in). Use it to gate sensitive actions. Pass a
+ * verifyTurnstile() result as the second argument to require Turnstile to have passed too.
+ */
+export declare function trusted(v: VerifyResult | null | undefined, turnstile?: TurnstileResult | null): boolean;
 export default Pyrmi;
