@@ -34,7 +34,7 @@ calls and scrapers, and whether the page clock kept pace with real time).
 | `index.html`, `site.css`, `site.js` | the Pyrmi Security homepage |
 | `sandbox.js` | the homepage sandbox: real honest and cheating requests against the demo project |
 | `src/sdk/pyrmi.js` | the browser script, readable source |
-| `sdk/pyrmi.js` | the scrambled build pyrmi.com serves (`node scripts/build-sdk.js`; the tests fail if it's out of date) |
+| `sdk/pyrmi.js` | the minified build pyrmi.com serves (`node scripts/build-sdk.js`; the tests fail if it's out of date) |
 | `bg/singularity.js`, `vendor/three-r170/` | the animated background (three.js r170, MIT, vendored unmodified apart from import paths) |
 | `packages/pyrmi-server/` | the npm package (`pyrmi-server`), no dependencies |
 | `api/v1/*.js` | Vercel Node functions: `session`, `signal`, `verify`, `project`, `dashboard`, `demo` |
@@ -134,8 +134,8 @@ doesn't offer STARTTLS is refused.
 | POST | `/api/v1/project` | a clean Pyrmi token from the dashboard page (rate limited) | `{name, origins?, pyrmiToken}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
 | GET / PATCH | `/api/v1/project` | `Bearer sk_` | project info / `{name?, settings}` |
 | POST | `/api/v1/project?action=rotate` | `Bearer sk_` | new secret key, old one stops working |
-| POST | `/api/v1/session` | public key in body, origin checked | `{site}` → `{token, session, seed, expiresAt, x}` (`x` is this session's telemetry shape) |
-| POST | `/api/v1/signal` | session token | `{token, <x.n>: encoded signals}` (text/plain ok, for sendBeacon) |
+| POST | `/api/v1/session` | public key in body, origin checked | `{site}` → `{token, session, seed, expiresAt}` |
+| POST | `/api/v1/signal` | session token | `{token, signals}` (plain JSON, text/plain ok for sendBeacon) |
 | POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, reasons}` |
 | GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
 | POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
@@ -164,8 +164,26 @@ doesn't offer STARTTLS is refused.
   Their tokens are used once and never kept.
 - Every change made with the session cookie needs the `X-Pyrmi-CSRF` header and a same-site origin.
 - Each account sees only its own sites: anyone else's answers 404, the same as one that doesn't exist.
-- The browser script is served as a scrambled build that fingerprints itself, and each session has its own telemetry
-  shape and key. These slow down bot authors; the server-side verdict is still the real protection.
+- The browser script is served as a minified build that fingerprints itself (an edited copy shows as `tampered_runtime`).
+
+### What the browser telemetry can and can't do
+
+Be honest about the threat model, because it decides where you can rely on Pyrmi:
+
+- **Client telemetry is advisory, not proof.** The beacons from the browser script (`webdriver`, headless hints,
+  scripted input, devtools, clock skew, …) are sent in the clear and can only *raise* risk. They catch lazy bots,
+  automation frameworks and obvious tampering. They can **never prove** a request came from a real person: anything the
+  script sends, an attacker running a real browser (or replaying the documented beacon) can send too. So the absence of
+  bad signals is not a guarantee — a determined attacker can present a "clean" session.
+  (An earlier build XOR-encoded each session's beacons with a per-session key. That key was handed to the browser, so
+  it protected nothing and is gone; pretending it did was the problem, not the encoding.)
+- **The hard floor is server-side and can't be forged from the browser:** the HMAC-signed session token, single-use
+  replay protection, expiry, the IP/UA bound into the token, `minDurationMs`, `maxScore`/`maxScorePerSec`, and the
+  per-network / per-project rate limits and quotas. These do not depend on the client cooperating.
+- **So:** use `maxScore`/`maxScorePerSec`/`minDurationMs` and your own server rules for anything that matters (scores,
+  payouts, sign-ups), and treat the telemetry-driven `risk`/`reasons` as a signal to flag or review, not as the sole
+  gate. pyrmi.com guards its own forms this way: the Pyrmi accept is one layer, and the per-network rate limits are the
+  real cap on abuse.
 
 ## License
 

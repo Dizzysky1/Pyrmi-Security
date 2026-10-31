@@ -15,15 +15,9 @@ const call = async (method, p, body, headers) => {
   const r = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', ...(headers || {}) }, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });
   return { status: r.status, body: await r.json() };
 };
-// What the browser script sends: the signals under this session's own field names, XOR-encoded with its key.
-const FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
-function encode(sig, x) {
-  const out = {};
-  FIELDS.forEach((f, i) => { out[x.f[i]] = sig[f] === undefined ? null : sig[f]; });
-  const json = JSON.stringify(out), key = Buffer.from(x.k, 'base64url');
-  return Buffer.from([...json].map((c, i) => (c.charCodeAt(0) ^ key[i % key.length] ^ (i * 7)) & 255)).toString('base64url');
-}
-const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, [s.x.n]: encode({ pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals }, s.x) }), { 'Content-Type': 'text/plain' });
+// What the browser script sends: plain-JSON signals under `signals`. They're advisory (the server treats them as
+// hints, never proof), so there's nothing to encode and no per-session key.
+const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals } }), { 'Content-Type': 'text/plain' });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // pyrmi.com's own new-project form is protected by Pyrmi: get a token the way the dashboard page does.
 async function siteToken() {
@@ -193,16 +187,17 @@ test('site: creating a project without a clean Pyrmi token is refused', async ()
   assert.ok(d.body.days[d.body.days.length - 1].reject >= 3);
 });
 
-test('site: telemetry in the wrong shape is refused and flags the session', async () => {
+test('a session is not shipped a telemetry key, and a malformed beacon does not poison it', async () => {
   const s = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  const other = (await call('POST', '/api/v1/session', { site: pk }, { Origin: 'https://game.example' })).body;
-  assert.notDeepEqual(s.x.f, other.x.f);
-  const raw = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3 } }), { 'Content-Type': 'text/plain' });
-  assert.equal(raw.status, 400);
-  const copied = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, [other.x.n]: encode({ k: 5, p: 3 }, other.x) }), { 'Content-Type': 'text/plain' });
-  assert.equal(copied.status, 400);
+  // The per-session shape key used to ship to the client (and so protected nothing); it is gone now.
+  assert.equal(s.x, undefined);
+  // Garbage telemetry is dropped with a 400...
+  const garbage = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: 'not-an-object' }), { 'Content-Type': 'text/plain' });
+  assert.equal(garbage.status, 400);
+  // ...but it must NOT permanently flag the session (was F-10: one bad beacon tainted the whole session).
+  await beacon(s, {});
   const v = await call('POST', '/api/v1/verify', { token: s.token, player: 'copycat' }, { Authorization: 'Bearer ' + sk });
-  assert.ok(v.body.reasons.some((r) => r.code === 'tampered_runtime' && /telemetry/.test(r.detail)), JSON.stringify(v.body.reasons));
+  assert.ok(!v.body.reasons.some((r) => r.code === 'tampered_runtime'), JSON.stringify(v.body.reasons));
 });
 
 test('site: an edited copy of the browser script is flagged', async () => {
