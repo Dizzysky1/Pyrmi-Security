@@ -72,6 +72,42 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_PROJECT_CALLS_PER_MIN` | no | project reads, edits and key rotations per network per minute (default 30) |
 | `PYRMI_BAD_KEYS_PER_IP` | no | wrong secret keys per network per 15 minutes before it's locked out (default 20) |
 | `PYRMI_SITE_GUARD` | no | set to `off` to stop requiring a Pyrmi token on the new-project form (for self-hosting without the dashboard page) |
+| `RESEND_API_KEY` | for email sign-in | a [Resend](https://resend.com) API key with sending access. Without it the email code option is hidden. |
+| `PYRMI_EMAIL_FROM` | no | who sign-in codes come from (default `Pyrmi Security <login@pyrmi.com>`); its domain must be verified in Resend |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | for GitHub sign-in | a GitHub OAuth App. Without them the GitHub button is hidden. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for Google sign-in | a Google OAuth client (Web application). Without them the Google button is hidden. |
+| `PYRMI_PUBLIC_URL` | no | pins the address GitHub and Google send people back to, e.g. `https://pyrmi.com`. Defaults to the deployment's own host. |
+| `PYRMI_SITES_PER_USER` | no | sites per account (default 10) |
+| `PYRMI_SIGNINS_PER_IP` | no | GitHub or Google sign-ins, and email code checks, per network per 10 minutes (default 30) |
+| `PYRMI_EMAIL_CODES_PER_IP` | no | sign-in codes sent per network per 10 minutes (default 10) |
+| `PYRMI_EMAIL_CODES_PER_ADDRESS` | no | sign-in codes sent to one address per hour (default 5) |
+| `PYRMI_ACCOUNT_CALLS_PER_MIN` | no | account calls per network per minute (default 60) |
+
+With none of the sign-in env vars set, the dashboard works with secret keys only. Each way in switches on by itself,
+and one verified email is one account whichever way someone signs in.
+
+### Email codes (Resend)
+
+1. Make a free account at resend.com, add the domain `pyrmi.com` under Domains, and add the DNS records it shows
+   (a DKIM `TXT` record, and an `MX` and `TXT` record on its `send` subdomain) wherever the domain's DNS is hosted.
+   These sit beside any existing mail records, so a mailbox already on the domain keeps working.
+2. Once Resend shows the domain as verified, create an API key with sending access and set it as `RESEND_API_KEY`
+   in Vercel, then redeploy.
+
+### Sign in with GitHub
+
+1. On GitHub, open Settings → Developer settings → OAuth Apps → New OAuth App. Homepage URL `https://pyrmi.com`,
+   authorization callback URL `https://pyrmi.com/api/v1/auth/github`.
+2. Copy the client ID, generate a client secret, and set both as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in
+   Vercel, then redeploy. A GitHub OAuth App has one callback URL, so to try it on a preview, make a second app for it.
+
+### Sign in with Google
+
+1. In Google Cloud Console, open Google Auth Platform (APIs & Services → OAuth consent screen). Pick External, fill in
+   the app name and support email, and add the scopes `openid`, `email` and `profile` (none of them need Google's review).
+2. Under Clients, create a Web application client with the authorized redirect URI `https://pyrmi.com/api/v1/auth/google`.
+   Add a preview address too (`https://<preview-host>/api/v1/auth/google`) to try it there.
+3. In Vercel, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and redeploy.
 
 ## API
 
@@ -85,6 +121,15 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, reasons}` |
 | GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
 | POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
+| POST | `/api/v1/auth/email?action=start` | CSRF header + Pyrmi token | `{email, pyrmiToken}` → emails a 6-digit code; the same answer for every address |
+| POST | `/api/v1/auth/email?action=verify` | CSRF header | `{email, code}` → sets the session cookie |
+| GET | `/api/v1/auth/github`, `/api/v1/auth/google` | none | starts that sign-in, then handles the redirect back and sets the session cookie |
+| GET | `/api/v1/me` | session cookie | `{user, sites}` with each site's connection status, or 401 `{providers}` saying which ways in are on |
+| POST | `/api/v1/me?action=signout` | session cookie + CSRF header | ends the session |
+| POST | `/api/v1/sites` | session cookie + CSRF header + Pyrmi token | `{name, origins?, pyrmiToken}` → a new site in this account |
+| POST | `/api/v1/sites?action=claim` | session cookie + CSRF header | `{secretKey}` moves a key-only project into this account |
+| GET / PATCH / DELETE | `/api/v1/sites?pid=` | session cookie (+ CSRF header to change) | one of your sites: dashboard data, `{name?, settings}`, or delete |
+| POST | `/api/v1/sites?pid=&action=rotate` | session cookie + CSRF header | new secret key for one of your sites |
 
 ## Security notes
 
@@ -94,6 +139,13 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 - The dashboard page runs under a strict Content-Security-Policy and escapes all user-supplied text.
 - Every endpoint is rate limited per network, per user or per project, and wrong secret keys are capped per network.
 - pyrmi.com uses Pyrmi on itself: the new-project form needs a clean accept from the built-in `pyrmi-site` project.
+- Signed-in sessions are a random cookie (`__Host-`, HttpOnly, Secure, SameSite=Lax) stored only as a SHA-256 hash.
+  Email codes are single use, last 10 minutes, are stored only as a keyed hash, die after 5 wrong tries and are capped
+  per address and per network; asking for one needs a clean Pyrmi token and never reveals whether an account exists.
+  GitHub and Google sign-in use PKCE and a signed state cookie tied to the provider, and need a verified email.
+  Their tokens are used once and never kept.
+- Every change made with the session cookie needs the `X-Pyrmi-CSRF` header and a same-site origin.
+- Each account sees only its own sites: anyone else's answers 404, the same as one that doesn't exist.
 - The browser script is served as a scrambled build that fingerprints itself, and each session has its own telemetry
   shape and key. These slow down bot authors; the server-side verdict is still the real protection.
 
