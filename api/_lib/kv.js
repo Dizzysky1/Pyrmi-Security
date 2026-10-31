@@ -125,6 +125,12 @@ const mem = {
         const part = all.slice(s, end + 1);
         return String(c[4] || '').toUpperCase() === 'WITHSCORES' ? part.flatMap(([m, sc]) => [m, String(sc)]) : part.map((x) => x[0]);
       }
+      case 'ZRANGE': {
+        const z = this.get(k); if (!z) return [];
+        const s = Number(c[2]), e = Number(c[3]); const all = this.zsorted(z); const end = e < 0 ? all.length + e : e;
+        const part = all.slice(s, end + 1);
+        return String(c[4] || '').toUpperCase() === 'WITHSCORES' ? part.flatMap(([m, sc]) => [m, String(sc)]) : part.map((x) => x[0]);
+      }
       case 'ZREMRANGEBYRANK': {
         const z = this.get(k); if (!z) return 0; const all = this.zsorted(z); const s = Number(c[2]), e = Number(c[3]);
         const end = e < 0 ? all.length + e : e; let n = 0; for (const [m] of all.slice(s, end + 1)) { z.delete(m); n++; } return n;

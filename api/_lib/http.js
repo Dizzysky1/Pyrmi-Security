@@ -73,8 +73,10 @@ function handle(fn) {
   return async (req, res) => {
     try { await fn(req, res); } catch (e) {
       if (e && e.status) {
-        if (e.reasons) return send(res, e.status, { ok: false, error: e.code, message: e.message, reasons: e.reasons });
-        return fail(res, e.status, e.code || 'error', e.message);
+        // Tell a rate-limited caller when to come back, so well-behaved clients back off instead of hammering (F-23).
+        const h = e.status === 429 ? { 'Retry-After': String(e.retryAfter && e.retryAfter > 0 ? Math.ceil(e.retryAfter) : 60) } : undefined;
+        if (e.reasons) return send(res, e.status, { ok: false, error: e.code, message: e.message, reasons: e.reasons }, h);
+        return fail(res, e.status, e.code || 'error', e.message, h);
       }
       if (e && String(e.message).startsWith('kv_not_configured')) return fail(res, 503, 'storage_not_configured', 'Pyrmi storage is not set up on this server yet.');
       console.error('[pyrmi]', e);

@@ -68,3 +68,89 @@ test('a create rejected for being over capacity leaves the project counter uncha
     await core.deleteProject(await core.loadProject(p0.pid)); // clean up the filler
   }
 });
+
+// F-07: origin_required was cosmetic — with no allowed origins a project accepted a session from any Origin header,
+// so its public key could be drained from anywhere. With PYRMI_REQUIRE_ORIGINS on, a project must register an origin
+// and sessions are bound to it (missing OR unmatched Origin is rejected). Existing origin-less projects are only
+// locked out when the flag is deliberately turned on, which is the migration step.
+test('with origin enforcement on, a project must register an origin and sessions are bound to it (F-07)', async () => {
+  const savedReq = process.env.PYRMI_REQUIRE_ORIGINS, savedPre = process.env.PYRMI_KV_PREFIX;
+  process.env.PYRMI_REQUIRE_ORIGINS = '1';
+  process.env.PYRMI_KV_PREFIX = 'live:';
+  try {
+    const before = Number((await kv.cmd('GET', 'ps:projects')) || 0);
+    await assert.rejects(() => core.createProject({ name: 'No origins' }, '198.51.100.80', 'owner-o'),
+      (e) => e.status === 400 && e.code === 'origins_required');
+    assert.equal(Number(await kv.cmd('GET', 'ps:projects')), before, 'a rejected create must not touch the capacity counter');
+    const p = await core.createProject({ name: 'Bound', origins: ['https://app.example'] }, '198.51.100.81', 'owner-o');
+    const proj = await core.loadProject(p.pid);
+    const s = await core.startSession(proj, { ip: '203.0.113.1', ua: 'x', origin: 'https://app.example' });
+    assert.ok(s.token, 'a matching Origin starts a session');
+    await assert.rejects(() => core.startSession(proj, { ip: '203.0.113.2', ua: 'x', origin: 'https://evil.example' }),
+      (e) => e.status === 403 && e.code === 'origin_not_allowed', 'an unmatched Origin is rejected');
+    await assert.rejects(() => core.startSession(proj, { ip: '203.0.113.3', ua: 'x', origin: '' }),
+      (e) => e.status === 403, 'a missing Origin is rejected');
+    // An existing origin-less project can no longer mint sessions once enforcement is on.
+    const legacy = { pid: 'p_legacy', name: 'Legacy', publicKey: 'pk_legacy', demo: false, settings: { ...DEFAULTS_ORIGINS() } };
+    await assert.rejects(() => core.startSession(legacy, { ip: '203.0.113.4', ua: 'x', origin: 'https://whatever.example' }),
+      (e) => e.status === 403 && e.code === 'origin_required', 'an origin-less project is refused under enforcement');
+  } finally {
+    if (savedReq === undefined) delete process.env.PYRMI_REQUIRE_ORIGINS; else process.env.PYRMI_REQUIRE_ORIGINS = savedReq;
+    if (savedPre === undefined) delete process.env.PYRMI_KV_PREFIX; else process.env.PYRMI_KV_PREFIX = savedPre;
+  }
+});
+function DEFAULTS_ORIGINS() { return { origins: [], reviewAt: 40, rejectAt: 70, minDurationMs: 1200, sessionTtlSec: 3600, maxScore: null, maxScorePerSec: null, strictClock: false }; }
+
+// F-19: the public /demo endpoint lets anyone pick the visitor label, and a genuine demo session made logVerdict
+// write a 30-day per-player hash for each — unbounded growth in the shared store. The demo must keep no per-player
+// hashes, and a real project's per-player hashes must be capped the same way its recent-players index is.
+test('the demo keeps no per-player hashes and real projects cap them (F-19)', async () => {
+  const savedPre = process.env.PYRMI_KV_PREFIX;
+  process.env.PYRMI_KV_PREFIX = 'live:';
+  try {
+    const demo = await core.loadProject(core.DEMO.pid);
+    for (let i = 0; i < 8; i++) {
+      const s = await core.startSession(demo, { ip: '203.0.113.' + (120 + i), ua: 'x', origin: '' });
+      await core.verify(demo, { token: s.token, score: 1, player: 'visitor-' + (2000 + i).toString(16) }, { ip: '203.0.113.' + (120 + i) });
+    }
+    const plKeys = [...kv._mem.data.keys()].filter((k) => k.includes(':ps:pl:' + core.DEMO.pid + ':'));
+    assert.equal(plKeys.length, 0, 'the demo must not persist any per-player hash, got ' + plKeys.length);
+    assert.ok(Number(await kv.cmd('ZCARD', 'ps:plr:' + core.DEMO.pid)) > 0, 'the bounded recent-players index is still kept');
+
+    // Real project: seed the index and hashes just past the cap, then one genuine verdict trims both.
+    const p = await core.createProject({ name: 'Capped', origins: ['https://real.example'] }, '198.51.100.90', 'owner-c');
+    const pid = p.pid, seed = [];
+    for (let i = 0; i < 1001; i++) seed.push(['ZADD', 'ps:plr:' + pid, i + 1, 'old' + i], ['HSET', 'ps:pl:' + pid + ':old' + i, 'x', '1']);
+    await kv.pipeline(seed);
+    const proj = await core.loadProject(pid);
+    const s = await core.startSession(proj, { ip: '203.0.113.200', ua: 'x', origin: 'https://real.example' });
+    await core.verify(proj, { token: s.token, score: 1, player: 'fresh' }, { ip: '203.0.113.200' });
+    assert.equal(Number(await kv.cmd('ZCARD', 'ps:plr:' + pid)), 1000, 'the recent-players index is held at the cap');
+    assert.equal(Number(await kv.cmd('EXISTS', 'ps:pl:' + pid + ':old0')), 0, 'the evicted player\'s hash is deleted, not orphaned');
+    assert.equal(Number(await kv.cmd('EXISTS', 'ps:pl:' + pid + ':fresh')), 1, 'the newest player\'s hash is kept');
+  } finally {
+    if (savedPre === undefined) delete process.env.PYRMI_KV_PREFIX; else process.env.PYRMI_KV_PREFIX = savedPre;
+  }
+});
+
+// Delete leftovers: "delete site" is sold as deletion, but per-visitor (ps:pl) and daily-stat (ps:st) keys used to
+// survive the delete. Deleting a project must take its visitor and stats data with it.
+test('deleting a project also removes its per-player and daily-stat keys (delete leftovers)', async () => {
+  const savedPre = process.env.PYRMI_KV_PREFIX;
+  process.env.PYRMI_KV_PREFIX = 'live:';
+  try {
+    const p = await core.createProject({ name: 'Purge me', origins: ['https://purge.example'] }, '198.51.100.95', 'owner-p');
+    const proj = await core.loadProject(p.pid);
+    const s = await core.startSession(proj, { ip: '203.0.113.210', ua: 'x', origin: 'https://purge.example' });
+    await core.verify(proj, { token: s.token, score: 1, player: 'alice' }, { ip: '203.0.113.210' });
+    assert.equal(Number(await kv.cmd('EXISTS', 'ps:pl:' + p.pid + ':alice')), 1, 'a per-player hash exists before delete');
+    const stKeysBefore = [...kv._mem.data.keys()].filter((k) => k.includes(':ps:st:' + p.pid + ':')).length;
+    assert.ok(stKeysBefore > 0, 'a daily-stat key exists before delete');
+    await core.deleteProject(await core.loadProject(p.pid));
+    assert.equal(Number(await kv.cmd('EXISTS', 'ps:pl:' + p.pid + ':alice')), 0, 'the per-player hash is gone after delete');
+    assert.equal([...kv._mem.data.keys()].filter((k) => k.includes(':ps:pl:' + p.pid + ':')).length, 0, 'no per-player hash survives');
+    assert.equal([...kv._mem.data.keys()].filter((k) => k.includes(':ps:st:' + p.pid + ':')).length, 0, 'no daily-stat key survives');
+  } finally {
+    if (savedPre === undefined) delete process.env.PYRMI_KV_PREFIX; else process.env.PYRMI_KV_PREFIX = savedPre;
+  }
+});
