@@ -4,7 +4,7 @@
 //   -> { verdict: "accept"|"review"|"reject", risk: 0-100, reasons: [...] }
 // Called by your own server (see packages/pyrmi-server) before it trusts an action from the browser.
 const core = require('../_lib/core');
-const { send, fail, readJson, bearer, fromBrowser, handle } = require('../_lib/http');
+const { send, fail, readJson, bearer, fromBrowser, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
   if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
@@ -14,5 +14,5 @@ module.exports = handle(async (req, res) => {
   const project = await core.projectBySecretKey(bearer(req));
   if (!project) return fail(res, 401, 'bad_secret_key', 'Missing or wrong secret key.');
   const body = await readJson(req, 16384);
-  send(res, 200, await core.verify(project, body));
+  send(res, 200, await core.verify(project, body, { ip: clientIp(req) }));
 });
