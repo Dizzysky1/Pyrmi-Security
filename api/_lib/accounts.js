@@ -26,12 +26,14 @@ const STATE_COOKIE = '__Host-pyrmi_oauth';
 // A real session id is base64url of 32 random bytes (crypto.randomId(32)) -> exactly 43 url-safe chars. Matching
 // the shape lets us reject a junk cookie before any KV lookup, so a flood of forged cookies can't drive Redis reads (F-20).
 const SID_RE = /^[A-Za-z0-9_-]{43}$/;
-const SESSION_TTL = 7 * 86400;
 const MAX_SITES = 10;
 const CODE_TTL = 600;
 const CODE_TRIES = 5;
 
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
+// Signed-in session lifetime. Env-tunable so it can be lowered without a deploy; the default is kept at 7 days
+// because shortening it signs everyone out sooner (a product/UX call). Recommend setting PYRMI_SESSION_TTL_DAYS lower.
+const sessionTtlSec = () => intEnv('PYRMI_SESSION_TTL_DAYS', 7) * 86400;
 
 function googleConfigured() { return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
 function githubConfigured() { return !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET); }
@@ -79,9 +81,15 @@ async function signIn(email, name, via) {
   const clean = String(name || email).replace(/[\u0000-\u001f<>]/g, '').slice(0, 80);
   await kv.cmd('HSET', 'ps:u:' + uid, 'email', email.slice(0, 254), 'name', clean, 'last', Date.now(), 'via', via);
   await kv.cmd('HSETNX', 'ps:u:' + uid, 'created', Date.now());
-  const sid = C.randomId(32);
-  await kv.cmd('SET', 'ps:auth:' + C.sha256(sid), uid, 'EX', SESSION_TTL);
-  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, SESSION_TTL), cookie(STATE_COOKIE, '', 0)] };
+  const sid = C.randomId(32), sidh = C.sha256(sid), ttl = sessionTtlSec();
+  await kv.cmd('SET', 'ps:auth:' + sidh, uid, 'EX', ttl);
+  // Index this session under the user so every session can be revoked at once. Before this there was no per-user
+  // index and no revoke-all: a stolen or stale cookie could only be ended by deleting that one key or rotating the
+  // whole signing secret. The index is a ZSET (member = session hash), bounded by its own TTL and cleared on
+  // revoke-all. (Q4/Q10)
+  await kv.cmd('ZADD', 'ps:usess:' + uid, Date.now(), sidh);
+  await kv.cmd('EXPIRE', 'ps:usess:' + uid, ttl + 86400);
+  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0)] };
 }
 
 // ---- email codes ------------------------------------------------------------------------------------------------
@@ -301,8 +309,23 @@ function checkCsrf(req) {
 
 async function signOut(req) {
   const sid = readCookies(req)[SESSION_COOKIE];
-  if (sid) await kv.cmd('DEL', 'ps:auth:' + C.sha256(sid));
+  if (sid) {
+    const sidh = C.sha256(sid);
+    const uid = await kv.cmd('GET', 'ps:auth:' + sidh);
+    await kv.cmd('DEL', 'ps:auth:' + sidh);
+    if (uid) await kv.cmd('ZREM', 'ps:usess:' + uid, sidh); // keep the per-user index in step (Q4/Q10)
+  }
   return cookie(SESSION_COOKIE, '', 0);
+}
+
+// Revoke every signed-in session for a user at once: delete each indexed ps:auth entry, then clear the index.
+// Backs POST /api/v1/me?action=revoke-all, so a user — or a response to a suspected compromise — can sign out
+// everywhere without rotating the signing secret. Returns how many sessions were ended. (Q4/Q10)
+async function revokeAllSessions(uid) {
+  const members = (await kv.cmd('ZRANGE', 'ps:usess:' + uid, 0, -1)) || [];
+  if (members.length) await kv.cmd('DEL', ...members.map((h) => 'ps:auth:' + h));
+  await kv.cmd('DEL', 'ps:usess:' + uid);
+  return members.length;
 }
 
 // ---- sites --------------------------------------------------------------------------------------------------------
@@ -342,7 +365,17 @@ async function claimSite(uid, sk) {
   if (!p || p.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
   if (p.owner && p.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
   if (num(await kv.cmd('ZCARD', 'ps:us:' + uid)) >= intEnv('PYRMI_SITES_PER_USER', MAX_SITES)) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
-  await kv.pipeline([['HSET', 'ps:p:' + p.pid, 'owner', uid], ['ZADD', 'ps:us:' + uid, Date.now(), p.pid]]);
+  // Take ownership atomically. The old read-check-then-HSET let two concurrent claims both pass the owner check and
+  // both write owner, so the last writer won and the loser's site silently vanished — the loser got a 200 but then
+  // ownedSite 404, leaving a dangling index entry and no audit. HSETNX sets owner only while the project is still
+  // unowned, so exactly one racing claim wins; only that winner adds the per-user index entry. (M10)
+  const won = num(await kv.cmd('HSETNX', 'ps:p:' + p.pid, 'owner', uid), 0);
+  if (!won) {
+    const current = await core.loadProject(p.pid);
+    if (current && current.owner === uid) return { pid: p.pid, name: p.name, publicKey: p.publicKey }; // already ours (idempotent)
+    throw httpError(409, 'owned', 'That project already belongs to another account.');
+  }
+  await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
   return { pid: p.pid, name: p.name, publicKey: p.publicKey };
 }
 
@@ -361,6 +394,6 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 module.exports = {
   providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
-  readIdToken, cleanEmail, sendMail, currentUser, requireUser, sessionSid, checkCsrf, signOut,
+  readIdToken, cleanEmail, sendMail, currentUser, requireUser, sessionSid, checkCsrf, signOut, revokeAllSessions,
   listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE,
 };

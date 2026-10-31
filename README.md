@@ -40,8 +40,7 @@ calls and scrapers, and whether the page clock kept pace with real time).
 | `api/v1/*.js` | Vercel Node functions: `session`, `signal`, `verify`, `project`, `dashboard`, `demo` |
 | `api/_lib/` | shared server code: `core.js` (all the logic), `kv.js` (Upstash REST client + in-memory mode), `crypto.js`, `http.js` |
 | `dashboard/`, `docs/`, `install.md`, `llms.txt` | dashboard, human docs, install guide for coding agents |
-| `scripts/dev.js`, `scripts/build-sdk.js`, `tests/` | local dev server, browser script build, end-to-end tests |
-| `api/*.py` | an older endpoint on pyrmi.com, untouched |
+| `scripts/dev.js`, `scripts/build-sdk.js`, `scripts/check-no-python.js`, `tests/` | local dev server, browser script build, the no-Python build guard, end-to-end tests |
 
 ## Run it locally
 
