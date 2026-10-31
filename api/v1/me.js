@@ -6,7 +6,12 @@ const core = require('../_lib/core');
 const { send, fail, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
-  await core.limitIp(clientIp(req), 'me', 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
+  // Only spend the per-network limiter on a request that will actually touch KV: one carrying a well-formed session
+  // cookie. A missing or malformed cookie makes sessionSid null and currentUser returns without a lookup, and a
+  // signed-out /me just reads env (providers()), so it costs nothing. Running the limiter unconditionally let an
+  // anonymous flood from a shared or spoofed network burn this bucket and lock that network's signed-in users out of
+  // the dashboard's "am I signed in?" check — the same lockout sites.js already avoids for its pre-auth bucket (F-11/F-20).
+  if (accounts.sessionSid(req)) await core.limitIp(clientIp(req), 'me', 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
   const action = new URL(req.url, 'http://x').searchParams.get('action');
   if (req.method === 'POST' && action === 'signout') {
     accounts.checkCsrf(req);
