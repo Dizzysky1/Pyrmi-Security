@@ -91,6 +91,7 @@
     ['automation', function (r) { return r.wd || r.hl || r.au.length ? (r.au.join(', ') || (r.wd ? 'webdriver' : 'headless')) : ''; }],
     ['devtools', function (r) { return r.dt ? 'probably open' : ''; }],
     ['replaced built-ins', function (r) { return r.tp.length ? r.tp.join(', ') : ''; }],
+    ['wrapped built-ins', function (r) { return r.wr && r.wr.length ? r.wr.join(', ') : ''; }],
     ['scripted input', function (r) { return r.ut ? r.ut + ' events' : ''; }],
     ['inhuman input', function (r) { return r.ih ? r.ih + ' bursts' : ''; }],
   ];

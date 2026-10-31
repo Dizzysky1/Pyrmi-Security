@@ -186,6 +186,40 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   gate. pyrmi.com guards its own forms this way: the Pyrmi accept is one layer, and the per-network rate limits are the
   real cap on abuse.
 
+### How the replaced built-ins check works
+
+The browser script watches `performance.now`, `Date.now`, timers, `fetch`, `XMLHttpRequest.send`,
+`addEventListener`, `Math.random`, `Function.prototype.toString`/`call`/`apply`/`bind`, `Object.getOwnPropertyDescriptor`
+and `getPrototypeOf`, `document.createElement`, the iframe `contentWindow` getter and the `navigator` `webdriver`,
+`userAgent` and `languages` getters. It does **not** decide "still native?" by looking for `[native code]` in
+`toString`: a function wrapped in `.bind()` or a `Proxy` prints that too, so `performance.now = (() => 0).bind(window)`
+used to pass as clean. Instead:
+
+- **Identity since load.** It keeps a reference to each built-in (and where it lives) the moment it loads, and flags
+  anything that's a different function, in a different place, or a getter where a value was, on every re-check.
+- **A clean copy to compare with.** At load it opens a hidden same-origin iframe, records how that realm's own
+  untouched built-ins print and where they live, and removes it. A built-in on the page that prints differently (a
+  real native prints with its own name, `function now() { [native code] }`; bound functions and Proxies don't) or that
+  sits somewhere else (an own property shadowing the prototype's) is flagged, even if it was replaced before the
+  script loaded. Without an iframe it falls back to that exact native-with-its-name form.
+- **No trusting `toString`.** It checks `Function.prototype.toString` itself against the clean copy and uses the clean
+  one when the page's was replaced, and calls everything through references taken at load, so a later hook on
+  `.call` or `.toString` can't answer for it. The script's own clocks, timers, `fetch` and listeners also use those
+  references, and `window.Pyrmi` is frozen, so a later script can't quietly stop its beacons or swap `flush()`.
+
+This raises the bar; it doesn't change the threat model above. Code that runs before the script and also fakes the
+iframe, or an edited copy of the script, can still report a clean runtime. Load the script first in `<head>`, and keep
+relying on the server-side floor.
+
+Error trackers and frameworks (Sentry, zone.js/Angular, Datadog, New Relic) wrap timers, `requestAnimationFrame`,
+`fetch`, `XMLHttpRequest.send`, `addEventListener` and `Function.prototype.toString` on ordinary sites. A change to one
+of those is reported separately as `wrapped_runtime` (+5), not `tampered_runtime` (+30). None of those tools touch the
+clocks, `Math.random`, `call`/`apply`/`bind`, the descriptor lookups or the `navigator` getters, so replacing any of
+those stays `tampered_runtime`, whatever markers (`__sentry_original__`, `__zone_symbol__`) a replacement carries.
+
+To see what a browser reports, open `/sdk/selftest.html` in it: it runs every trick above in a fresh frame and shows
+pass or fail. Nothing is sent anywhere.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
