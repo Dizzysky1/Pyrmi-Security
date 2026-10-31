@@ -91,7 +91,7 @@ function page(file, opts) {
   const flags = { shims, iframe, webdriver: !!opts.webdriver, userAgent: 'Mozilla/5.0 Chrome/120', location: { href: (base || 'http://x') + '/', origin: base || 'http://x' },
     URL, Blob, atob, btoa, setTimeout, setInterval, clearTimeout, clearInterval,
     // a browser adds Origin and Sec-Fetch-Site to every request the page makes; the server corroborates beacons with them
-    fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': 'test-ua', Origin: base || 'http://x', 'Sec-Fetch-Site': 'same-origin' } }),
+    fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': opts.ua || 'test-ua', Origin: base || 'http://x', 'Sec-Fetch-Site': 'same-origin' } }),
     listen: opts.listen || (() => {}), sizes: opts.sizes || null, activation: opts.activation || null,
     script: { getAttribute: (n) => (n === 'data-site' ? 'pk_demo_sandbox' : null), src: (base || 'http://x') + '/sdk/pyrmi.js' } };
   const frameHost = { ...flags, frameWindow: null };
@@ -263,7 +263,7 @@ for (const file of FILES) {
     }
   });
 
-  test(which + ': at the server, a Sentry-wrapped page stays a low-risk accept and the bypass still costs +30', async () => {
+  test(which + ': at the server, a Sentry-wrapped page stays a low-risk accept and the bypass still costs +40', async () => {
     const run = async (prelude, hijack, visitor) => {
       const p = page(file, { prelude });
       const s = await p.Pyrmi.start();
@@ -282,7 +282,7 @@ for (const file of FILES) {
     assert.equal(benign.verdict, 'accept', JSON.stringify(benign.reasons));
     const attacked = await run(SENTRY, BIND, 'visitor-5e0002');
     const t = attacked.reasons.find((r) => r.code === 'tampered_runtime');
-    assert.ok(t && t.weight === 30 && /performance\.now/.test(t.detail), JSON.stringify(attacked.reasons));
+    assert.ok(t && t.weight === 40 && /performance\.now/.test(t.detail), JSON.stringify(attacked.reasons));
   });
 
   // sdk/selftest.html runs these same tricks in a real browser (open it in Safari or Firefox to check those engines).
@@ -412,6 +412,23 @@ for (const file of FILES) {
     p.Pyrmi.stop();
     const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
       body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-7c01' }) });
+    const v = await r.json();
+    assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
+    assert.equal(v.client, 'corroborated');
+    assert.equal(v.risk, 0, JSON.stringify(v.reasons));
+  });
+
+  // Round 8: on a browser that has navigator.userActivation the server now expects a true/false answer. The real
+  // script gives one, so a real Chrome visit that hasn't clicked yet must still be a clean, corroborated accept.
+  test(which + ': end to end in a Chrome with userActivation (not yet activated): still a corroborated accept at risk 0', async () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0 Safari/537.36';
+    const p = page(file, { ua, activation: { active: false } });
+    const s = await p.Pyrmi.start();
+    await wait(1600);
+    await p.Pyrmi.flush();
+    p.Pyrmi.stop();
+    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+      body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-8c01' }) });
     const v = await r.json();
     assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
     assert.equal(v.client, 'corroborated');

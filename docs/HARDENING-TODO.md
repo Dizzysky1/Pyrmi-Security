@@ -20,7 +20,7 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   so open `/sdk/selftest.html` in Safari and Firefox once more after it ships.
 - [x] **Expected wrappers** (round 6). Changes to timers, rAF, `fetch`, XHR `send`, `addEventListener` and `toString`
   (what Sentry, zone.js/Angular, Datadog and New Relic wrap) are now `wrapped_runtime` (+5), not `tampered_runtime`
-  (+30). Recognition is by which built-in, never by library markers, which an attacker could copy.
+  (+40 since round 8). Recognition is by which built-in, never by library markers, which an attacker could copy.
 - [ ] **Speed hacks through the wrapped group.** Scaling `setTimeout`/`setInterval` delays or rAF timestamps now costs
   only +5 unless the clocks are touched too. Sites with their own game clock should call `Pyrmi.mark()` so `time_warp`
   can catch it; a per-site "strict" setting could put the timers back at full weight.
@@ -41,15 +41,24 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 - [ ] **Self-fingerprint and all telemetry are client-sent.** An edited copy of the script can send the expected `sh`
   and an empty `tp`. Inherent to client telemetry; it stays advisory (see README, "What the browser telemetry can and
   can't do"). Round 7 made the cheap versions cost something: a missing `sh` or field set is `tampered_runtime`, old
-  build hashes expire after `PYRMI_SDK_GRACE_DAYS`, the source hash isn't accepted in production, and every beacon
+  build hashes expire after `PYRMI_SDK_GRACE_DAYS` (1 day since round 8), the source hash isn't accepted in production, and every beacon
   is corroborated server-side (`unverified_client`, `client` on the verdict).
 - [ ] **Per-session HMAC nonce (considered, not done).** A key the script must HMAC each beacon with would sit in the
   browser like the old XOR key, so it adds no secrecy. Round 7 uses a plain per-session nonce plus a beacon count
   instead, which does the useful part (a beacon copied from another session or sent twice is refused) without
   pretending to be more.
-- [ ] **A tampered runtime alone is still an accept at the default settings** (+30, review at 40). Fine for wrapped
-  built-ins on ordinary sites; arguable for an edited copy of the script on its own. Product call: weight `pyrmi.js`
-  (edited) higher, or a per-site "strict" setting.
+- [x] **A tampered runtime alone was an accept at the default settings** (round 8). `tampered_runtime` is now +40, so
+  on its own it is a review; an edited or outdated copy of the script also fails corroboration, so it is a reject.
+  Wrapped built-ins (Sentry, Angular) stay `wrapped_runtime` at +5.
+- [x] **Corroboration had shortcuts** (round 8 re-test). `pt: null`, a previous build's fingerprint and a missing `ac`
+  each skipped a check and came back `corroborated`. Fixed: numeric `pt` and an `ac` are required from the current
+  build, only the current build can be corroborated, and the grace period for old builds is 1 day.
+- [ ] **A full mimic still corroborates.** A script that starts its own session and sends exactly what the real one
+  would, page clock included, is an accept. Inherent; documented. The sample and `pyrmi-server`'s `trusted(v)` gate
+  sensitive actions on a corroborated accept, and `simulate` is the check that doesn't depend on the client.
+- [ ] **A per-site setting to make `unverified_client` reject** (considered). Raising it to 70 for everyone would
+  reject real visitors on a single slip (a laptop that slept mid-session). A site that wants that can gate on
+  `client` today; a dashboard toggle could do it server-side.
 
 ## Loader and delivery
 

@@ -75,6 +75,17 @@ if (v.verdict === 'reject') {
 // v.verdict is 'accept' or 'review'. Go ahead; optionally store flagged = (v.verdict === 'review').
 ```
 
+For a sensitive action (a payout, a prize, a leaderboard entry, an account change), require more than "not
+rejected": only a corroborated accept.
+
+```js
+const { Pyrmi, trusted } = require('pyrmi-server');
+if (!trusted(v)) return res.status(403).json({ error: 'not_verified' }); // accept AND client === 'corroborated'
+```
+
+Telemetry is advisory: a script that copies the real one closely enough can still pass, so keep your own limits too
+(`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
+
 If the request carries a number worth capping (points, a quantity, a score), also pass `score: thatNumber` and
 `durationMs` if known, and tell the developer to set the max value on the dashboard.
 
@@ -88,7 +99,8 @@ Content-Type: application/json
 {"token":"...","user":"alice@example.com"}
 ```
 
-Response: `{"ok":true,"verdict":"accept"|"review"|"reject","risk":0-100,"reasons":[{"code":"...","text":"...","weight":..}]}`.
+Response: `{"ok":true,"verdict":"accept"|"review"|"reject","risk":0-100,"client":"corroborated"|"unverified"|"none","reasons":[{"code":"...","text":"...","weight":..}]}`.
+For a sensitive action, require `verdict == "accept"` and `client == "corroborated"`.
 
 If the site has no server (a static site writing to Firebase or Supabase directly from the browser), say so to the
 developer: a write made from the browser cannot be protected. Suggest a small serverless function (Vercel, Netlify,

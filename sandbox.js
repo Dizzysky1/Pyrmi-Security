@@ -36,6 +36,9 @@
     var label = { accept: 'accepted', review: 'flagged', reject: 'rejected' }[v.verdict];
     var lines = v.reasons.map(function (r) { return r.text + (r.detail ? ' (' + r.detail + ')' : ''); });
     if (!lines.length) lines.push('No warning signs. Your server would go ahead.');
+    if (v.client) lines.push(v.verdict === 'accept' && v.client === 'corroborated'
+      ? 'Telemetry corroborated: trusted(v) is true, so a sensitive action (a prize, a payout) would go ahead too.'
+      : 'trusted(v) is false: a sensitive action (a prize, a payout) would be refused.');
     lines.unshift(what);
     show(v.verdict, label, v.risk, lines);
   }

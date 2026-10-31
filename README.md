@@ -187,10 +187,24 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   `tampered_runtime` too, and the verdict says `client: "corroborated" | "unverified" | "none"`. This is cost, not
   proof: a script outside a browser can still forge those headers, and a person in their own browser can send what
   the real script would, nonce and all. It stops the lazy forgery; it doesn't make telemetry trustworthy.
+- **Round 8 closed the shortcuts a re-test found around that.** A script that sent the full field set still came back
+  accept, risk 0, `corroborated` three ways: `pt: null` skipped the clock check, a previous build's fingerprint skipped
+  the clock, activation and nonce checks, and leaving out `ac` skipped the activation check. Now the current build's
+  shape requires a numeric `pt` and an `ac` (null is only accepted from browsers without `navigator.userActivation`),
+  only the current build can ever be `corroborated` (an older one is `unverified_client`, `sdk_version`), and
+  `tampered_runtime` weighs 40, so on its own it is a review and an edited or outdated copy of the script is a reject.
+- **What still passes, and always will:** a script that copies everything the real one sends, starting its own
+  session and sending a page clock that keeps time, comes back `accept` and `corroborated`, and so does a real browser
+  running an edited copy. Telemetry can't tell those from a person. A re-tester put a deliberate forgery at 30 to 60
+  minutes of reading this repo. That is the honest ceiling for client telemetry: a speed bump, not a boundary.
+- **Gate sensitive actions on more than "not rejected".** For payouts, prizes, leaderboards and account changes, use
+  `trusted(v)` from `pyrmi-server` (an `accept` whose `client` is `corroborated`; a `review` never counts), together
+  with your own server-side limits. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
 - **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
   built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
-  7 days after they're replaced (`PYRMI_SDK_GRACE_DAYS`) so cached pages aren't flagged, then count as
-  `tampered_runtime` (`pyrmi.js:outdated`). The readable source's hash is only known outside production.
+  1 day after they're replaced (`PYRMI_SDK_GRACE_DAYS`; the CDN caches the script for 5 minutes) so cached pages
+  aren't called tampered, but they are never `corroborated`; after that they count as `tampered_runtime`
+  (`pyrmi.js:outdated`) too. The readable source's hash is only known outside production.
 - **Speeding up your own code needs no hook.** A cheat that runs the game's own simulation faster, and leaves the
   clocks and timers alone, changes nothing the script watches; `Pyrmi.mark()` reports only what your app tells it.
   For games the only anti-tamper that doesn't rely on the client is server-side: re-run the inputs (the replay /
@@ -202,7 +216,8 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   beacons, as the soft `ip_changed`/`ua_changed` signals: your server calls verify, not the visitor.)
 - **So:** use `maxScore`/`maxScorePerSec`/`minDurationMs` and your own server rules for anything that matters (scores,
   payouts, sign-ups), and treat the telemetry-driven `risk`/`reasons` as a signal to flag or review, not as the sole
-  gate. pyrmi.com guards its own forms this way: the Pyrmi accept is one layer, and the per-network rate limits are the
+  gate. For a deterministic game, server-side replay (`simulate`) is the one anti-tamper check that doesn't depend on
+  the client telling the truth; for bots, a CAPTCHA (Turnstile, hCaptcha) plus rate limits. pyrmi.com guards its own forms this way: the Pyrmi accept is one layer, and the per-network rate limits are the
   real cap on abuse.
 
 ### How the replaced built-ins check works
@@ -244,7 +259,7 @@ relying on the server-side floor.
 
 Error trackers and frameworks (Sentry, zone.js/Angular, Datadog, New Relic) wrap timers, `requestAnimationFrame`,
 `fetch`, `XMLHttpRequest.send`, `addEventListener` and `Function.prototype.toString` on ordinary sites. A change to one
-of those is reported separately as `wrapped_runtime` (+5), not `tampered_runtime` (+30). None of those tools touch the
+of those is reported separately as `wrapped_runtime` (+5), not `tampered_runtime` (+40). None of those tools touch the
 clocks, `Math.random`, `call`/`apply`/`bind`, the descriptor lookups or the `navigator` getters, so replacing any of
 those stays `tampered_runtime`, whatever markers (`__sentry_original__`, `__zone_symbol__`) a replacement carries.
 
