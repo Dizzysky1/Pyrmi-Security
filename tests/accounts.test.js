@@ -1,12 +1,12 @@
 'use strict';
-// Sign in with Google and per-account sites, against a fake Google token endpoint:  node --test tests/*.test.js
+// Signing in (email codes, GitHub, Google) and per-account sites, against fake providers:  node --test tests/*.test.js
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const { serve } = require('../scripts/dev.js');
-const google = require('../api/v1/google.js');
+const auth = require('../api/v1/auth/[provider].js');
 
 let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
@@ -40,26 +40,29 @@ const cookieOf = (res, name) => {
 const idToken = (claims) => 'x.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.sig';
 
 async function signIn(sub, email, extra) {
-  const start = await call('GET', '/api/v1/google');
+  const start = await call('GET', '/api/v1/auth/google');
   assert.equal(start.status, 302);
   const loc = new URL(start.headers.get('location'));
   assert.equal(loc.host, 'accounts.google.com');
   assert.equal(loc.searchParams.get('code_challenge_method'), 'S256');
   const stateCookie = cookieOf(start, '__Host-pyrmi_oauth');
-  google.exchange = async (form) => {
+  auth.hooks = { exchange: async (form) => {
     assert.ok(form.code_verifier && form.client_secret === 'test-google-secret');
     return { id_token: idToken({ iss: 'https://accounts.google.com', aud: 'test-google-id', sub, email, email_verified: true, name: 'Person ' + sub, exp: Date.now() / 1000 + 300, ...extra }) };
-  };
-  const back = await call('GET', '/api/v1/google?code=abc&state=' + loc.searchParams.get('state'), undefined, { Cookie: stateCookie });
+  } };
+  const back = await call('GET', '/api/v1/auth/google?code=abc&state=' + loc.searchParams.get('state'), undefined, { Cookie: stateCookie });
   return { res: back, cookie: cookieOf(back, '__Host-pyrmi_session') };
 }
 const as = (cookie, extra) => ({ Cookie: cookie, 'X-Pyrmi-CSRF': '1', ...(extra || {}) });
 
-test('without Google set up, sign-in says so', async () => {
+test('with nothing set up, every way in says so', async () => {
   const me = await call('GET', '/api/v1/me');
   assert.equal(me.status, 401);
-  assert.equal(me.body.google, false);
-  assert.equal((await call('GET', '/api/v1/google')).status, 503);
+  assert.deepEqual(me.body.providers, { email: false, github: false, google: false });
+  assert.equal((await call('GET', '/api/v1/auth/google')).status, 503);
+  assert.equal((await call('GET', '/api/v1/auth/github')).status, 503);
+  assert.equal((await call('POST', '/api/v1/auth/email?action=start', { email: 'a@example.com' }, { 'X-Pyrmi-CSRF': '1' })).status, 503);
+  assert.equal((await call('GET', '/api/v1/auth/nope')).status, 404);
 });
 
 let alice, bob, sitePid, siteSk, sitePk;
@@ -67,7 +70,7 @@ let alice, bob, sitePid, siteSk, sitePk;
 test('Google sign-in: state, PKCE and a verified email are required', async () => {
   process.env.GOOGLE_CLIENT_ID = 'test-google-id';
   process.env.GOOGLE_CLIENT_SECRET = 'test-google-secret';
-  const forged = await call('GET', '/api/v1/google?code=abc&state=nope');
+  const forged = await call('GET', '/api/v1/auth/google?code=abc&state=nope');
   assert.equal(forged.status, 302);
   assert.match(forged.headers.get('location'), /signin=bad_state/);
   const unverified = await signIn('333', 'eve@example.com', { email_verified: false });
@@ -155,4 +158,82 @@ test('signing out ends the session for good', async () => {
   assert.equal(out.status, 200);
   assert.match(out.headers.getSetCookie()[0], /Max-Age=0/);
   assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: alice })).status, 401);
+});
+
+// ---- email codes ----
+
+const sent = [];
+const askCode = async (email, headers) => call('POST', '/api/v1/auth/email?action=start', { email, pyrmiToken: await siteToken() }, { 'X-Pyrmi-CSRF': '1', ...(headers || {}) });
+const lastCode = () => /\b(\d{6})\b/.exec(sent[sent.length - 1].text)[1];
+
+test('email sign-in: a one-time code, hashed, single use, and no clue whether the address has an account', async () => {
+  process.env.RESEND_API_KEY = 're_test';
+  auth.mailer = async (m) => { sent.push(m); };
+  assert.equal((await call('GET', '/api/v1/me')).body.providers.email, true);
+  // needs the CSRF header and a clean Pyrmi token
+  assert.equal((await call('POST', '/api/v1/auth/email?action=start', { email: 'carol@example.com', pyrmiToken: await siteToken() })).status, 403);
+  assert.equal((await call('POST', '/api/v1/auth/email?action=start', { email: 'carol@example.com' }, { 'X-Pyrmi-CSRF': '1' })).body.error, 'blocked_by_pyrmi');
+  assert.equal((await askCode('not an email')).status, 400);
+  // a new address and a known one get the same answer
+  const fresh = await askCode('Carol@Example.com ');
+  const known = await askCode('bob@example.com');
+  assert.deepEqual(fresh.body, known.body);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].to, 'carol@example.com');
+  const bobCode = lastCode();
+  // the code is stored only as a hash
+  const kv = require('../api/_lib/kv');
+  const stored = await kv.cmd('HGET', 'ps:ec:' + require('../api/_lib/crypto').sha256('bob@example.com'), 'h');
+  assert.ok(stored && !stored.includes(bobCode));
+  // one address is one account: bob's code signs in to the account he made with Google
+  const wrong = await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode === '000000' ? '111111' : '000000' }, { 'X-Pyrmi-CSRF': '1' });
+  assert.equal(wrong.status, 400);
+  const ok = await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode }, { 'X-Pyrmi-CSRF': '1' });
+  assert.equal(ok.status, 200);
+  const c = cookieOf(ok, '__Host-pyrmi_session');
+  assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: c })).body.sites[0].name, 'Old project');
+  // and it can't be used twice
+  assert.equal((await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode }, { 'X-Pyrmi-CSRF': '1' })).status, 400);
+});
+
+test('email codes die after 5 wrong tries and are capped per address', async () => {
+  await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.9' });
+  const code = lastCode(), bad = code === '999999' ? '888888' : '999999';
+  for (let i = 0; i < 5; i++) assert.equal((await call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code: bad }, { 'X-Pyrmi-CSRF': '1' })).body.error, 'bad_code');
+  const locked = await call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code }, { 'X-Pyrmi-CSRF': '1' });
+  assert.equal(locked.body.error, 'too_many_tries');
+  for (let i = 0; i < 4; i++) await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.' + (20 + i) });
+  assert.equal((await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.40' })).status, 429);
+});
+
+// ---- GitHub ----
+
+test('GitHub sign-in uses the primary verified email and lands in the same account', async () => {
+  process.env.GITHUB_CLIENT_ID = 'test-gh-id';
+  process.env.GITHUB_CLIENT_SECRET = 'test-gh-secret';
+  const start = await call('GET', '/api/v1/auth/github');
+  assert.equal(start.status, 302);
+  const loc = new URL(start.headers.get('location'));
+  assert.equal(loc.host, 'github.com');
+  assert.match(loc.searchParams.get('redirect_uri'), /\/api\/v1\/auth\/github$/);
+  const state = cookieOf(start, '__Host-pyrmi_oauth');
+  let emails = [{ email: 'bob@other.example', primary: true, verified: false }, { email: 'bob@example.com', primary: false, verified: true }];
+  auth.hooks = { github: {
+    exchange: async (form) => { assert.equal(form.client_secret, 'test-gh-secret'); assert.ok(form.code_verifier); return { access_token: 'gho_test' }; },
+    get: async (p) => (p === '/user/emails' ? emails : { login: 'bobcodes' }),
+  } };
+  const back1 = await call('GET', '/api/v1/auth/github?code=x&state=' + loc.searchParams.get('state'), undefined, { Cookie: state });
+  assert.match(back1.headers.get('location'), /signin=no_verified_email/);
+  // a Google state cookie can't finish a GitHub sign-in
+  const g = await call('GET', '/api/v1/auth/google');
+  const gs = new URL(g.headers.get('location')).searchParams.get('state');
+  const cross = await call('GET', '/api/v1/auth/github?code=x&state=' + gs, undefined, { Cookie: cookieOf(g, '__Host-pyrmi_oauth') });
+  assert.match(cross.headers.get('location'), /signin=bad_state/);
+  emails = [{ email: 'Bob@Example.com', primary: true, verified: true }];
+  const start2 = await call('GET', '/api/v1/auth/github');
+  const back = await call('GET', '/api/v1/auth/github?code=x&state=' + new URL(start2.headers.get('location')).searchParams.get('state'), undefined, { Cookie: cookieOf(start2, '__Host-pyrmi_oauth') });
+  assert.equal(back.headers.get('location'), '/dashboard/');
+  const me = await call('GET', '/api/v1/me', undefined, { Cookie: cookieOf(back, '__Host-pyrmi_session') });
+  assert.equal(me.body.user.email, 'bob@example.com');
+  assert.equal(me.body.sites[0].name, 'Old project');
 });
