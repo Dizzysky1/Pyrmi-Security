@@ -33,12 +33,14 @@ calls and scrapers, and whether the page clock kept pace with real time).
 | --- | --- |
 | `index.html`, `site.css`, `site.js` | the Pyrmi Security homepage |
 | `sandbox.js` | the homepage sandbox: real honest and cheating requests against the demo project |
-| `sdk/pyrmi.js` | the browser script |
+| `src/sdk/pyrmi.js` | the browser script, readable source |
+| `sdk/pyrmi.js` | the scrambled build pyrmi.com serves (`node scripts/build-sdk.js`; the tests fail if it's out of date) |
+| `bg/singularity.js`, `vendor/three-r170/` | the animated background (three.js r170, MIT, vendored unmodified apart from import paths) |
 | `packages/pyrmi-server/` | the npm package (`pyrmi-server`), no dependencies |
 | `api/v1/*.js` | Vercel Node functions: `session`, `signal`, `verify`, `project`, `dashboard`, `demo` |
 | `api/_lib/` | shared server code: `core.js` (all the logic), `kv.js` (Upstash REST client + in-memory mode), `crypto.js`, `http.js` |
 | `dashboard/`, `docs/`, `install.md`, `llms.txt` | dashboard, human docs, install guide for coding agents |
-| `scripts/dev.js`, `tests/` | local dev server and end-to-end tests |
+| `scripts/dev.js`, `scripts/build-sdk.js`, `tests/` | local dev server, browser script build, end-to-end tests |
 | `api/*.py` | an older endpoint on pyrmi.com, untouched |
 
 ## Run it locally
@@ -65,18 +67,23 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_SESSIONS_PER_DAY` | no | sessions per project per day (default 20000), protects the free Redis quota |
 | `PYRMI_SESSIONS_PER_IP` | no | sessions per network per 10 minutes (default 150) |
 | `PYRMI_VERIFIES_PER_MIN` | no | verifies per user per minute (default 30) |
+| `PYRMI_SIGNALS_PER_IP` | no | telemetry beacons per network per 10 minutes (default 1500) |
+| `PYRMI_DASHBOARD_PER_MIN` | no | dashboard reads per network per minute (default 60) |
+| `PYRMI_PROJECT_CALLS_PER_MIN` | no | project reads, edits and key rotations per network per minute (default 30) |
+| `PYRMI_BAD_KEYS_PER_IP` | no | wrong secret keys per network per 15 minutes before it's locked out (default 20) |
+| `PYRMI_SITE_GUARD` | no | set to `off` to stop requiring a Pyrmi token on the new-project form (for self-hosting without the dashboard page) |
 
 ## API
 
 | method | path | auth | body / result |
 | --- | --- | --- | --- |
-| POST | `/api/v1/project` | none (rate limited) | `{name, origins?}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
+| POST | `/api/v1/project` | a clean Pyrmi token from the dashboard page (rate limited) | `{name, origins?, pyrmiToken}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
 | GET / PATCH | `/api/v1/project` | `Bearer sk_` | project info / `{name?, settings}` |
 | POST | `/api/v1/project?action=rotate` | `Bearer sk_` | new secret key, old one stops working |
-| POST | `/api/v1/session` | public key in body, origin checked | `{site}` → `{token, session, seed, expiresAt}` |
-| POST | `/api/v1/signal` | session token | `{token, signals}` (text/plain ok, for sendBeacon) |
+| POST | `/api/v1/session` | public key in body, origin checked | `{site}` → `{token, session, seed, expiresAt, x}` (`x` is this session's telemetry shape) |
+| POST | `/api/v1/signal` | session token | `{token, <x.n>: encoded signals}` (text/plain ok, for sendBeacon) |
 | POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, reasons}` |
-| GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1`) | 14 days of stats, last 100 verdicts, flagged users |
+| GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
 | POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
 
 ## Security notes
@@ -85,7 +92,10 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 - `/verify` refuses requests that look like they come from a browser, so a secret key pasted into a page fails loudly.
 - Client signals are treated as untrusted: only known fields are kept, with types and sizes forced.
 - The dashboard page runs under a strict Content-Security-Policy and escapes all user-supplied text.
-- Every write path is rate limited per network, per user or per project.
+- Every endpoint is rate limited per network, per user or per project, and wrong secret keys are capped per network.
+- pyrmi.com uses Pyrmi on itself: the new-project form needs a clean accept from the built-in `pyrmi-site` project.
+- The browser script is served as a scrambled build that fingerprints itself, and each session has its own telemetry
+  shape and key. These slow down bot authors; the server-side verdict is still the real protection.
 
 ## License
 

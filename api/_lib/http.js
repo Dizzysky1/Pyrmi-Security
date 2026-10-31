@@ -72,7 +72,10 @@ function cors(req, res, allowed) {
 function handle(fn) {
   return async (req, res) => {
     try { await fn(req, res); } catch (e) {
-      if (e && e.status) return fail(res, e.status, e.code || 'error', e.message);
+      if (e && e.status) {
+        if (e.reasons) return send(res, e.status, { ok: false, error: e.code, message: e.message, reasons: e.reasons });
+        return fail(res, e.status, e.code || 'error', e.message);
+      }
       if (e && String(e.message).startsWith('kv_not_configured')) return fail(res, 503, 'storage_not_configured', 'Pyrmi storage is not set up on this server yet.');
       console.error('[pyrmi]', e);
       fail(res, 500, 'server_error', 'Something went wrong on our side.');
