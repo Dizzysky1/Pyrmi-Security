@@ -1,7 +1,8 @@
 /* The pyrmi.com background: a particle singularity (accretion disk, matter spiralling in, polar jets) behind the page.
    Every particle's path is worked out in the vertex shader from time alone, so there's no simulation pass and the
    cost stays low. It pauses when the tab is hidden, drops quality on slow devices, draws one still frame for
-   reduced motion, and leaves the CSS fallback in place when WebGL isn't there. */
+   reduced motion, and leaves the CSS fallback in place when WebGL isn't there. On the landing page's first visit of
+   a session (intro.js sets the start time) the whole thing pulls itself together out of scattered light. */
 import * as THREE from '../vendor/three-r170/three.module.min.js';
 import { EffectComposer } from '../vendor/three-r170/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from '../vendor/three-r170/addons/postprocessing/RenderPass.js';
@@ -56,12 +57,12 @@ function start() {
 
   const pMat = new THREE.ShaderMaterial({
     uniforms: {
-      uTime: { value: 0 }, uSize: { value: mobile ? 64 : 50 }, uPR: { value: PR }, uIntensity: { value: mobile ? 0.55 : 0.32 },
+      uTime: { value: 0 }, uIntro: { value: 1 }, uSize: { value: mobile ? 64 : 50 }, uPR: { value: PR }, uIntensity: { value: mobile ? 0.55 : 0.32 },
       uColA: { value: new THREE.Color('#ff2e55') }, uColB: { value: new THREE.Color('#8a5cff') }, uHot: { value: new THREE.Color('#fff1f4') },
     },
     vertexShader: /* glsl */`
       attribute vec3 aA, aB; attribute vec2 aG;
-      uniform float uTime, uSize, uPR, uIntensity;
+      uniform float uTime, uIntro, uSize, uPR, uIntensity;
       uniform vec3 uColA, uColB, uHot;
       varying vec3 vColor;
       #define TAU 6.28318530718
@@ -93,6 +94,18 @@ function start() {
           heat=1.0-k;
           fade=smoothstep(1.0,0.7,k);
         }
+        // intro: each particle falls in from far out on a swirling path, inner ones a little later
+        float ki=clamp((uIntro-aA.y*0.35-aB.x*0.1)/0.55,0.0,1.0);
+        float e=1.0-pow(1.0-ki,3.0);
+        if(ki<1.0){
+          vec3 dir=normalize(vec3(aG.x,aG.y*0.6,aB.z*2.0-1.0)+vec3(1e-3));
+          vec3 far=dir*(70.0+aB.x*90.0);
+          float sw=(1.0-e)*3.5; float cs=cos(sw), sn=sin(sw);
+          vec3 q=mix(far,p,e);
+          p=vec3(q.x*cs-q.z*sn, q.y, q.x*sn+q.z*cs);
+          heat=max(heat,(1.0-e)*0.6);
+          fade*=smoothstep(0.0,0.25,ki);
+        }
         vec4 mv=modelViewMatrix*vec4(p,1.0);
         gl_Position=projectionMatrix*mv;
         gl_PointSize=uSize*uPR*(0.35+aB.z*aB.z*1.4)*fade/max(-mv.z,0.1);
@@ -122,12 +135,12 @@ function start() {
   }));
   scene.add(core);
   const ringMat = new THREE.ShaderMaterial({
-    uniforms: { uRim: { value: rim }, uTime: { value: 0 } },
+    uniforms: { uRim: { value: rim }, uTime: { value: 0 }, uGlow: { value: 1 } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv*2.0-1.0; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `uniform vec3 uRim; uniform float uTime; varying vec2 vUv;
+    fragmentShader: `uniform vec3 uRim; uniform float uTime, uGlow; varying vec2 vUv;
       void main(){ float r=length(vUv), a=atan(vUv.y,vUv.x); float fl=0.85+0.15*sin(a*3.0+uTime*2.0);
         float ring=exp(-pow((r-0.55)/0.018,2.0))*2.0*fl + exp(-pow((r-0.55)/0.11,2.0))*0.3 + exp(-pow((r-0.55)/0.3,2.0))*0.07;
-        gl_FragColor=vec4(uRim*ring,1.0); }`,
+        gl_FragColor=vec4(uRim*ring*uGlow,1.0); }`,
     blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
   });
   const ring = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), ringMat);
@@ -197,13 +210,27 @@ function start() {
   const readScroll = () => { scrollK = Math.min(1, scrollY / Math.max(innerHeight, 1)); };
   addEventListener('scroll', readScroll, { passive: true }); readScroll();
 
+  // ---- intro timing, shared with motion.js through window.__pyrmiIntroAt ----------------------------------------
+  let introAt = !reduce && !quiet && window.__pyrmiIntroAt != null ? window.__pyrmiIntroAt : null;
+  const INTRO_DELAY = 550, INTRO_LEN = 2300;
+  addEventListener('pyrmi:intro-skip', () => { if (introAt != null) introAt = Math.min(introAt, performance.now() - INTRO_DELAY - INTRO_LEN * 0.82); });
+  const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+
   let t = reduce ? 14 : 0, last = performance.now(), raf = 0, frames = 0, slow = 0, level = 0;
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 1 / 20); last = now;
     if (!reduce) t += dt;
     ptr.x += (ptr.tx - ptr.x) * 0.04; ptr.y += (ptr.ty - ptr.y) * 0.04;
-    const orbit = t * 0.035 + ptr.x * 0.5;
-    const dist = (quiet ? 40 : 34) + scrollK * 6;
+    const orbit = t * 0.035 + ptr.x * 0.5 + (introAt != null ? -0.9 * (1 - easeOut(Math.min(1, Math.max(0, (now - introAt - INTRO_DELAY) / INTRO_LEN)))) : 0);
+    let intro = 1;
+    if (introAt != null) {
+      intro = Math.min(1, Math.max(0, (now - introAt - INTRO_DELAY) / INTRO_LEN));
+      if (intro >= 1) introAt = null;
+    }
+    pMat.uniforms.uIntro.value = intro;
+    // the horizon lights up as the matter arrives, with a flash at the end
+    ringMat.uniforms.uGlow.value = intro < 1 ? Math.pow(intro, 2) + 1.6 * Math.exp(-Math.pow((intro - 0.88) / 0.07, 2)) : 1;
+    const dist = (quiet ? 40 : 34) + scrollK * 6 + (1 - easeOut(intro)) * 26;
     const height = 8 + scrollK * 9 - ptr.y * 5;
     camera.position.set(Math.sin(orbit) * dist, height, Math.cos(orbit) * dist);
     camera.lookAt(0, 0, 0);
