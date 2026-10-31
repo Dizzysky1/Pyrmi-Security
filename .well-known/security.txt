@@ -1,0 +1,6 @@
+# Pyrmi Security — how to report a security issue in this site or service.
+Contact: https://github.com/Dizzysky1/Pyrmi-Security/security/advisories/new
+Expires: 2027-10-31T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://pyrmi.com/.well-known/security.txt
+Policy: https://github.com/Dizzysky1/Pyrmi-Security/security/policy

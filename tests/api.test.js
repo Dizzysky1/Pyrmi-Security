@@ -262,3 +262,33 @@ test('the sandbox endpoint uses the shared limiter and passes IP context to veri
   assert.ok(!/\bEXPIRE\b/.test(src), 'demo should not hand-roll an INCR+EXPIRE limiter (F-17)');
   assert.ok(/,\s*\{\s*ip\s*\}\)/.test(src), 'demo should pass { ip } ctx to verify (F-18)');
 });
+
+// F-21: HSTS includeSubDomains hard-fails any subdomain without a *.pyrmi.com cert (mail./autodiscover. serve a
+// Private Email cert), with no click-through once seen — and autodiscover is fetched over HTTPS by mail clients.
+// Keep max-age on apex+www but drop includeSubDomains (and keep preload off).
+test('HSTS keeps max-age but drops includeSubDomains so non-TLS-clean subdomains stay reachable (F-21)', () => {
+  const vj = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../vercel.json'), 'utf8'));
+  const hsts = vj.headers.flatMap((h) => h.headers).find((h) => h.key === 'Strict-Transport-Security');
+  assert.ok(hsts, 'an HSTS header is configured');
+  assert.ok(/max-age=\d+/.test(hsts.value), 'HSTS keeps a max-age');
+  assert.ok(!/includeSubDomains/i.test(hsts.value), 'HSTS must not include subdomains (F-21)');
+  assert.ok(!/preload/i.test(hsts.value), 'HSTS preload stays off');
+});
+
+// F-23: a rate-limited response should tell the caller when to retry, and the site should publish a security.txt.
+test('a 429 carries a Retry-After header (F-23)', async () => {
+  const ip = '203.0.113.231'; // own limiter bucket, so other tests don't change the count
+  let status = 0, retry = null;
+  for (let i = 0; i < 40 && status !== 429; i++) {
+    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip }, body: JSON.stringify({ token: 'x', visitor: 'visitor-ret01' }) });
+    status = r.status; retry = r.headers.get('retry-after');
+  }
+  assert.equal(status, 429, 'the demo limiter should eventually 429');
+  assert.ok(retry && Number(retry) > 0, 'a 429 must carry a positive Retry-After, got ' + retry);
+});
+
+test('a security.txt is published with a contact and an expiry (F-23)', () => {
+  const txt = require('fs').readFileSync(require('path').join(__dirname, '../.well-known/security.txt'), 'utf8');
+  assert.ok(/^Contact:\s*\S+/mi.test(txt), 'security.txt names a Contact');
+  assert.ok(/^Expires:\s*\S+/mi.test(txt), 'security.txt has an Expires field (RFC 9116)');
+});
