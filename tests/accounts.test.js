@@ -376,3 +376,31 @@ test('revoke-all ends every session for the account (Q4/Q10)', async () => {
   assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: one })).status, 401, 'the other device is signed out');
   assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: two })).status, 401, 'the calling device is signed out');
 });
+
+// M10: claimSite read p.owner, checked, then HSET owner + ZADD with no CAS, so two concurrent claims of an unowned
+// project could both pass the check and both write owner — last writer wins, and the loser got a 200 but then found
+// the site gone (dangling index entry, no audit). The single-threaded in-memory harness serialises two HTTP claims,
+// so the race can't be reproduced by firing concurrent requests; instead inject the exact window deterministically —
+// set an owner between claimSite's check and its write, and confirm the claim refuses to clobber it (HSETNX returns
+// 0 -> 409). Old code wrote the owner unconditionally via a pipeline HSET, so this interceptor never fires and the
+// claim wrongly succeeds, which makes the assert.rejects below fail on the old code.
+test('claimSite will not overwrite an owner that appears mid-claim (M10)', async () => {
+  const core = require('../api/_lib/core');
+  const created = await call('POST', '/api/v1/project', { name: 'CAS race', origins: ['https://cas.example'], pyrmiToken: await siteToken() });
+  const skc = created.body.project.secretKey, pidc = created.body.project.pid;
+  const origCmd = kv.cmd;
+  let injected = false;
+  kv.cmd = function (...args) {
+    if (!injected && args[0] === 'HSETNX' && args[1] === 'ps:p:' + pidc && args[2] === 'owner') {
+      injected = true; // a racer takes ownership first, in the window between this claim's check and its write
+      return origCmd.call(kv, 'HSET', 'ps:p:' + pidc, 'owner', 'u_racer').then(() => origCmd.call(kv, ...args));
+    }
+    return origCmd.call(kv, ...args);
+  };
+  try {
+    await assert.rejects(() => accounts.claimSite('u_me', skc), (e) => e.status === 409, 'claimSite must not clobber an owner that appeared mid-claim');
+    assert.ok(injected, 'the ownership write went through HSETNX (the atomic path)');
+    const p = await core.loadProject(pidc);
+    assert.equal(p.owner, 'u_racer', 'the racer keeps ownership; the claim did not overwrite it');
+  } finally { kv.cmd = origCmd; }
+});
