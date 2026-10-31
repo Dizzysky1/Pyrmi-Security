@@ -25,17 +25,23 @@ const LEGACY_DEFAULTS = {
   strictClock: false,    // also flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)
   requireOrigins: false, // refuse to start sessions while no allowed origin is registered
   requireScoreLimit: false, // reject an action that sends a value while neither maxScore nor maxScorePerSec is set
+  signedTrust: false,    // trusted also needs a signed request (Pyrmi.seal) and the browser's context forwarded at /verify
+  requireSignedRequests: false, // reject any action that isn't signed by the browser script (opt in once your page seals)
 };
 // What a new project gets. Secure by default: no session from a page that isn't registered, no action sooner than
 // 1.5 s after the page started its session, and no value taken without a limit on it (retest of b127c08: a new
 // project used to be instant and open, so a bare script could mint sessions and send any score at once).
 // requireOrigins and requireScoreLimit can be turned off on purpose later; the dashboard warns while they are.
-const DEFAULTS = { ...LEGACY_DEFAULTS, minDurationMs: 1500, requireOrigins: true, requireScoreLimit: true };
+// signedTrust (round 11): a new project's trusted(v) also needs the action signed in the page and the browser's own
+// context (user agent, client hints, address) forwarded at /verify, so a session relayed to another client, or a
+// request rewritten on the wire, is never trusted. Unsigned actions still get an ordinary verdict.
+const DEFAULTS = { ...LEGACY_DEFAULTS, minDurationMs: 1500, requireOrigins: true, requireScoreLimit: true, signedTrust: true };
 
 // The sandbox on pyrmi.com. Its settings live in code so nobody can loosen them through the API.
 const DEMO = {
   pid: 'sandbox', publicKey: 'pk_demo_sandbox', name: 'Pyrmi sandbox (pyrmi.com live demo)',
-  settings: { maxScore: 1000, maxScorePerSec: null, minDurationMs: 1500, strictClock: false, sessionTtlSec: 1800, requireOrigins: false, requireScoreLimit: false },
+  settings: { maxScore: 1000, maxScorePerSec: null, minDurationMs: 1500, strictClock: false, sessionTtlSec: 1800, requireOrigins: false, requireScoreLimit: false,
+    signedTrust: true }, // the sandbox page seals every action; an unsigned one still gets a verdict, never trusted
 };
 // pyrmi.com protecting itself: the dashboard's "new project" form sends a token from this project, and the API
 // refuses the request unless Pyrmi accepts it. Its verdicts are public at /dashboard/?demo=site.
@@ -48,7 +54,7 @@ const BUILTIN = { [DEMO.pid]: DEMO, [SITE.pid]: SITE };
 // Soft signals add risk; hard reasons reject outright.
 const WEIGHTS = {
   automation: 70, no_client: 40, synthetic_input: 40, speed_hack: 35, time_warp: 35,
-  unverified_client: 40, tampered_runtime: 40, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10, wrapped_runtime: 5,
+  unverified_client: 40, tampered_runtime: 40, relayed_session: 45, inhuman_input: 25, ua_changed: 20, idle_input: 15, devtools_open: 10, ip_changed: 10, wrapped_runtime: 5,
 };
 const REASONS = {
   invalid_token: 'The session token was missing, forged or edited.',
@@ -62,6 +68,9 @@ const REASONS = {
   bad_score: 'The value sent is not a valid number.',
   no_score_limit: 'A value was sent, but this site has no maximum set for it (maxScore or maxScorePerSec), so it can\'t be checked.',
   replay_mismatch: 'Replaying the recorded inputs gave a different result.',
+  bad_signature: 'The action was changed after the page signed it, or the signature is stale (rewritten on the wire or replayed).',
+  unsigned_request: 'This site only takes actions signed by the Pyrmi script, and this one was not signed.',
+  relayed_session: 'The action came from a different client than the browser that started the session (a relayed or harvested session).',
   rate_limited: 'Too many actions from this user in a short time.',
   automation: 'The browser looks automated (webdriver, headless or a bot framework).',
   no_client: 'No telemetry ever came from a real page (direct API call).',
@@ -78,7 +87,7 @@ const REASONS = {
   ip_changed: 'The network address changed partway through the session.',
 };
 const HARD = new Set(['invalid_token', 'wrong_project', 'expired', 'token_reused', 'impossible_time', 'too_short',
-  'score_over_max', 'score_too_fast', 'bad_score', 'no_score_limit', 'replay_mismatch', 'rate_limited']);
+  'score_over_max', 'score_too_fast', 'bad_score', 'no_score_limit', 'replay_mismatch', 'rate_limited', 'bad_signature', 'unsigned_request']);
 
 const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -209,7 +218,7 @@ function cleanSettings(patch, base) {
   optNum('reviewAt', 1, 100); optNum('rejectAt', 1, 100); optNum('minDurationMs', 0, 864e5); optNum('sessionTtlSec', 60, 86400);
   for (const k of ['reviewAt', 'rejectAt', 'minDurationMs', 'sessionTtlSec']) if (s[k] === null) s[k] = DEFAULTS[k];
   if (s.reviewAt > s.rejectAt) throw httpError(400, 'bad_setting', 'reviewAt must not be above rejectAt');
-  for (const k of ['strictClock', 'requireOrigins', 'requireScoreLimit']) if (k in p) s[k] = p[k] === true || p[k] === 'true';
+  for (const k of ['strictClock', 'requireOrigins', 'requireScoreLimit', 'signedTrust', 'requireSignedRequests']) if (k in p) s[k] = p[k] === true || p[k] === 'true';
   if ('origins' in p) s.origins = cleanOrigins(p.origins);
   // Clearing the last origin of a project that must have one would quietly stop every session; say so instead.
   if (('origins' in p || 'requireOrigins' in p) && mustHaveOrigins(s) && !s.origins.length) throw httpError(400, 'origins_required', ORIGINS_REQUIRED);
@@ -253,6 +262,9 @@ const inProduction = () => process.env.VERCEL_ENV === 'production';
 function sdkStatus(sh, now) {
   if (typeof sh !== 'string' || !sh) return 'missing';
   if (sh === SDK.hash || (sh === SDK.sourceHash && !inProduction())) return 'current';
+  // An earlier published version on the same beacon protocol (a page pinned to /sdk/1.3.0/ with SRI): judged the same
+  // as the current one. It just can't sign actions if it's older than seal(), so it's never trusted where that's needed.
+  if (SDK.supported && Object.prototype.hasOwnProperty.call(SDK.supported, sh)) return 'current';
   if ((SDK.previous || []).includes(sh)) {
     const retired = Number((SDK.retired || {})[sh]);
     return Number.isFinite(retired) && now - retired <= SDK_GRACE_MS() ? 'previous' : 'outdated';
@@ -360,8 +372,17 @@ function mergeSignals(a, b) {
 // allow-list, so a reason added later is untrusted until someone decides otherwise. Allowed: wrapped built-ins (error
 // trackers do that), a devtools hint, a network change (phones switch Wi-Fi to mobile data), a quiet long session.
 const TRUST_ALLOWS = new Set(['wrapped_runtime', 'devtools_open', 'ip_changed', 'idle_input']);
-function isTrusted(verdict, client, reasons, activated) {
-  return verdict === 'accept' && client === 'corroborated' && activated === true && reasons.every((r) => TRUST_ALLOWS.has(r.code));
+// Round 11: it also needs some real input counted on the page (keys plus pointer presses, from the beacons), not just
+// the browser's activation flag, which a single scripted-but-trusted click sets. And on a project with signedTrust, the
+// action must be signed by the script (Pyrmi.seal) and the verify must carry the browser's own context, which has to
+// match the browser that started the session (a relay from another client is relayed_session, never trusted).
+const trustedMinInputs = () => intEnv('PYRMI_TRUSTED_MIN_INPUTS', 3);
+function isTrusted(verdict, client, reasons, activated, extra) {
+  const x = extra || {};
+  if (!(verdict === 'accept' && client === 'corroborated' && activated === true && reasons.every((r) => TRUST_ALLOWS.has(r.code)))) return false;
+  if (x.inputs !== undefined && x.inputs < trustedMinInputs()) return false;
+  if (x.signedTrust && !(x.signed === 'ok' && x.bound === true)) return false;
+  return true;
 }
 
 // ---- projects ---------------------------------------------------------------------------------------------------
@@ -550,20 +571,28 @@ async function startSession(project, ctx, body) {
   const nf = await netFingerprint(ctx.ip);
   const now = Date.now(), day = ymd(now);
   if (await bump('ps:rl:sess:' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
+  // Per site too (round 11): a session factory harvesting tokens for one site from one network is cut off within a
+  // minute, well below the network-wide limit that many sites share. A player rarely starts more than a few a minute.
+  if (await bump('ps:rl:sessp:' + project.pid + ':' + nf, 60, intEnv('PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN', 30))) throw httpError(429, 'rate_limited', 'Too many sessions for this site from this network. Try again in a minute.');
   await takeQuota(project, nf, day);
   const sid = C.randomId(12), seed = C.randomUint32(), exp = now + s.sessionTtlSec * 1000, bn = C.randomId(9);
+  // The browser's own context at the start, so /verify can tell whether the action comes from the same browser: the
+  // user agent (uh, in the token too), its client hints (Sec-CH-UA, sent by Chromium browsers) and its network.
+  const chf = ctx.ch ? await C.fingerprint('ch', String(ctx.ch).slice(0, 300)) : '';
   const token = await C.signToken({ v: 1, p: project.pid, s: sid, i: now, e: exp, seed, ih: ipf, uh: uaf });
   // What the server saw at the start, for corroborating the beacons later: the page that asked (Origin) and the page's
   // own clock at that moment (pt), which the browser script sends with the request.
   const pt0 = body && Number.isFinite(Number(body.pt)) && body.pt !== null && body.pt !== '' && Number(body.pt) >= 0 && Number(body.pt) < 1e13 ? Math.floor(Number(body.pt)) : '';
   const stat = 'ps:st:' + project.pid + ':' + day;
   await kv.pipeline([
-    ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'b', 0, 'sv', 2, 'o', String(ctx.origin || '').slice(0, 200), 'pt0', pt0, 'bn', bn],
+    ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'nh', nf, 'ch', chf, 'b', 0, 'sv', 2, 'o', String(ctx.origin || '').slice(0, 200), 'pt0', pt0, 'bn', bn],
     ['EXPIRE', 'ps:s:' + sid, s.sessionTtlSec + 3600],
     ['HINCRBY', stat, 'sessions', 1], ['EXPIRE', stat, 35 * DAY],
     ['HSET', 'ps:p:' + project.pid, 'ls', now], // "your page is connected" on the dashboard
   ]);
-  return { token, session: sid, seed, expiresAt: exp, bn };
+  // rk: this session's request key, for signing the action (Pyrmi.seal). It's in this response only, never in the token,
+  // so a token lifted off the wire or out of a request can't be used to sign a rewritten one.
+  return { token, session: sid, seed, expiresAt: exp, issuedAt: now, bn, rk: await C.requestKey(sid) };
 }
 
 async function recordSignals(body, ctx) {
@@ -663,6 +692,41 @@ function assess(sess, settings, durationMs) {
 
 // ---- verdicts ---------------------------------------------------------------------------------------------------
 
+// A signed action (round 11): request = { fields, ts, sig }, where fields is the action the page sealed (everything it
+// sent except the `pyrmi` part), ts the page's timestamp on the server's clock and sig the HMAC the script made with this
+// session's request key. Returns { state: 'none' | 'ok' | 'bad', detail }.
+const SIGNED_MAX_FIELDS = 8192;
+async function checkSigned(request, t, now) {
+  if (request === undefined || request === null) return { state: 'none' };
+  if (typeof request !== 'object' || !request.fields || typeof request.fields !== 'object' || Array.isArray(request.fields)) return { state: 'bad', detail: 'malformed' };
+  const ts = Number(request.ts), sig = String(request.sig || '');
+  if (!Number.isInteger(ts) || !/^[\w-]{43}$/.test(sig)) return { state: 'bad', detail: 'malformed' };
+  const fields = C.canon(request.fields);
+  if (fields.length > SIGNED_MAX_FIELDS) return { state: 'bad', detail: 'too large' };
+  const want = C.requestMac(await C.requestKey(t.s), t.s, ts, fields);
+  if (!C.safeEqual(sig, want)) return { state: 'bad', detail: 'does not match the action' };
+  // Fresh: signed after the session started and not long before this check. The page stamps it with the server's
+  // clock (the offset it learned at session start), so a wrong device clock doesn't matter.
+  if (ts < t.i - 5000 || ts > now + 5000) return { state: 'bad', detail: 'timestamp outside the session' };
+  if (now - ts > intEnv('PYRMI_SIGNED_MAX_AGE_SEC', 120) * 1000) return { state: 'bad', detail: 'stale' };
+  return { state: 'ok' };
+}
+
+// The client that sent the action, as your server saw it, against the browser that started the session (round 11).
+// client = { ua, ip, ch, sfs }: its User-Agent, address, Sec-CH-UA and Sec-Fetch-Site headers (pyrmi-server forwards
+// them from the request). A different browser, or a request with no browser fetch metadata from a UA that always sends
+// it, means the session was handed to another client: a harvested token used by a script. Same UA and same network
+// pass: a relay that copies both is out of reach for this check (see the README).
+async function relayed(client, sess, ua) {
+  if (!client || typeof client !== 'object' || !ua) return { bound: false };
+  const why = [];
+  if (sess.uh && (await C.fingerprint('ua', ua)) !== sess.uh) why.push('different browser');
+  if (sess.ch && typeof client.ch === 'string' && client.ch && (await C.fingerprint('ch', client.ch.slice(0, 300))) !== sess.ch) why.push('different client hints');
+  if ('sfs' in client && !client.sfs && SENDS_FETCH_METADATA.test(ua)) why.push('not sent by a browser');
+  const network = !!(client.ip && sess.nh && (await netFingerprint(String(client.ip))) !== sess.nh);
+  return { bound: true, detail: why.join(', '), network };
+}
+
 async function verify(project, body, ctx) {
   const now = Date.now(), s = project.settings;
   const reasons = [];
@@ -672,9 +736,12 @@ async function verify(project, body, ctx) {
   const score = hasScore ? Number(body.score) : null;
   const durationMs = body.durationMs === undefined || body.durationMs === null ? null : Number(body.durationMs);
   const player = cleanPlayer(body.player !== undefined ? body.player : body.user);
-  let sid = null, t = null, genuine = false, activated = false;
+  let sid = null, t = null, genuine = false, activated = false, inputs = 0, signed = 'none', bound = false;
+  const ua0 = body.client && typeof body.client === 'object' ? String(body.client.ua || '') : '';
 
-  if (hasScore && (!Number.isFinite(score) || score < 0)) hard('bad_score');
+  // A value must be a JSON number. Strings, arrays and booleans used to be coerced ("1e3" and [1000] to 1000, true to
+  // 1); none could get past maxScore, but a value that isn't the number the page meant shouldn't count as one (round 11).
+  if (hasScore && (typeof body.score !== 'number' || !Number.isFinite(score) || score < 0)) hard('bad_score', typeof body.score === 'number' ? undefined : 'not a number: ' + (Array.isArray(body.score) ? 'array' : typeof body.score));
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
 
   t = await readSession(body.token);
@@ -685,6 +752,8 @@ async function verify(project, body, ctx) {
   const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await netFingerprint(ctx.ip) : 'none');
   if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 60))) hard('rate_limited');
 
+  // A project that takes only signed actions refuses an unsigned one whatever else it carries.
+  if (s.requireSignedRequests && !(body.request && typeof body.request === 'object')) hard('unsigned_request');
   if (!t) hard('invalid_token');
   else if (t.p !== project.pid) hard('wrong_project');
   else if (now > t.e) {
@@ -722,9 +791,16 @@ async function verify(project, body, ctx) {
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
     if (rp && rp.check === 'mismatch') hard('replay_mismatch', String(rp.detail || '').slice(0, 120));
+    const sg = await checkSigned(body.request, t, now);
+    signed = sg.state;
+    if (signed === 'bad') hard('bad_signature', sg.detail);
     if (genuineSess) {
       reasons.push(...assess(sess, s, durationMs)); genuine = true;
-      try { activated = JSON.parse(sess.sig || '{}').ac === true; } catch (_) { activated = false; }
+      try { const sg = JSON.parse(sess.sig || '{}'); activated = sg.ac === true; inputs = num(sg.k, 0) + num(sg.p, 0); } catch (_) { activated = false; }
+      const rel = await relayed(body.client, sess, ua0);
+      bound = rel.bound;
+      if (rel.detail) reasons.push({ code: 'relayed_session', weight: WEIGHTS.relayed_session, detail: rel.detail });
+      if (rel.network && !reasons.some((r) => r.code === 'ip_changed')) reasons.push({ code: 'ip_changed', weight: WEIGHTS.ip_changed, detail: 'at verify' });
     }
     else reasons.push({ code: 'no_client', weight: WEIGHTS.no_client, detail: 'session record missing' });
   }
@@ -739,8 +815,8 @@ async function verify(project, body, ctx) {
   const client = !genuine ? 'none' : reasons.some((r) => r.code === 'no_client') ? 'none' : reasons.some((r) => r.code === 'unverified_client') ? 'unverified' : 'corroborated';
   // trusted also needs the browser's own word that a person pressed a key or clicked (ac === true from the current
   // script), whatever the user agent says: a script claiming an old Safari could otherwise send ac: null.
-  const trusted = isTrusted(verdict, client, reasons, activated);
-  return { ok: true, verdict, risk, client, trusted, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
+  const trusted = isTrusted(verdict, client, reasons, activated, { inputs, signedTrust: s.signedTrust, signed, bound });
+  return { ok: true, verdict, risk, client, trusted, signed, bound, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
 async function logVerdict(pid, ev, genuine) {
@@ -835,7 +911,7 @@ async function dashboard(project) {
 
 module.exports = {
   TRUST_ALLOWS, isTrusted,
-  DEFAULTS, LEGACY_DEFAULTS, DEMO, SITE, WEIGHTS, REASONS, HARD,
+  DEFAULTS, LEGACY_DEFAULTS, checkSigned, relayed, trustedMinInputs, DEMO, SITE, WEIGHTS, REASONS, HARD,
   createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
   startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
 };

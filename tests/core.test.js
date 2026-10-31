@@ -2,6 +2,8 @@
 // Unit tests for the storage-backed core helpers, against the in-memory store.
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// Tests start many sessions from one address in a few seconds; the per-site minting limit has its own test (round11).
+process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN = process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN || '100000';
 const test = require('node:test');
 const assert = require('node:assert');
 const kv = require('../api/_lib/kv');

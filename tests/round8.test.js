@@ -7,6 +7,8 @@
 // real browser running an edited copy). Client telemetry can't rule that out; README "Threat model" says so.
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// Tests start many sessions from one address in a few seconds; the per-site minting limit has its own test (round11).
+process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN = process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN || '100000';
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
@@ -39,7 +41,9 @@ async function run(beacon, opts) {
   await wait(1600);
   const r = await post('/signal', { token: s.token, ...beacon(s) }, h);
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  return (await post('/demo', { token: s.token, value: 999, visitor: 'visitor-8e57' }, h)).body;
+  // sealed the way the page's script does it (round 11), so these tests stay about the beacons
+  const sealed = B.sign(s, { value: 999, visitor: 'visitor-8e57' });
+  return (await post('/demo', { ...sealed.fields, pyrmi: { token: s.token, ts: sealed.ts, sig: sealed.sig } }, h)).body;
 }
 const full = (extra) => B.signals({ pt: 2600, ...(extra || {}) });
 

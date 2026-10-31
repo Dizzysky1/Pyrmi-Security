@@ -1,9 +1,13 @@
 {
-  "version": "1.3.0",
-  "hash": "a854eb80",
-  "sourceHash": "1ec24b94",
-  "path": "/sdk/1.3.0/pyrmi.js",
-  "integrity": "sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR",
+  "version": "1.4.0",
+  "protocol": 3,
+  "hash": "0a0d2f04",
+  "sourceHash": "c79579c0",
+  "path": "/sdk/1.4.0/pyrmi.js",
+  "integrity": "sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ",
+  "supported": {
+    "a854eb80": "1.3.0"
+  },
   "previous": [
     "0e801aba",
     "533da63c",

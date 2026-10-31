@@ -5,6 +5,8 @@
 // 80 for a webdriver session, because trusted only looked at accept + client. These failed on main before the fix.
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// Tests start many sessions from one address in a few seconds; the per-site minting limit has its own test (round11).
+process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN = process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN || '100000';
 process.env.PYRMI_SITE_GUARD = 'off';
 const test = require('node:test');
 const assert = require('node:assert');
@@ -34,7 +36,9 @@ async function verdict(settings, signals) {
   const s = (await call('POST', '/api/v1/session', { site: p.publicKey }, { Origin: 'https://shop.example' })).body;
   assert.equal((await B.beacon(call, s, { pt: 1300, ...(signals || {}) })).status, 200);
   await wait(1300);
-  return (await call('POST', '/api/v1/verify', { token: s.token, player: 'p1' }, auth)).body;
+  // signed in the page and forwarded with the browser's context, the way pyrmi-server sends it (round 11)
+  const client = { ua: 'test-ua', ip: '203.0.113.' + ipn, sfs: 'same-site' };
+  return (await call('POST', '/api/v1/verify', { token: s.token, player: 'p1', request: B.sign(s, { player: 'p1' }), client }, auth)).body;
 }
 const codes = (v) => v.reasons.map((r) => r.code);
 

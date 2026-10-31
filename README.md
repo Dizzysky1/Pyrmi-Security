@@ -69,6 +69,9 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_SESSIONS_HARD_PER_DAY` | no | the hard ceiling past which every new session for a project is refused (default 5x `PYRMI_SESSIONS_PER_DAY`) |
 | `PYRMI_SESSIONS_PER_IP_PER_DAY` | no | sessions per project per network per day (default 2000). An IPv6 /64 counts as one network everywhere |
 | `PYRMI_SESSIONS_PER_IP` | no | sessions per network per 10 minutes (default 150) |
+| `PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN` | no | sessions per network per project per minute (default 30), so a token factory for one site is cut off fast |
+| `PYRMI_TRUSTED_MIN_INPUTS` | no | key presses plus pointer presses the page must have counted for `trusted` (default 3: one real click is 3) |
+| `PYRMI_SIGNED_MAX_AGE_SEC` | no | how old a sealed action may be when it's verified (default 120) |
 | `PYRMI_VERIFIES_PER_MIN` | no | verifies per project per minute for sessions from one network (default 60) |
 | `PYRMI_SIGNALS_PER_IP` | no | telemetry beacons per network per 10 minutes (default 1500) |
 | `PYRMI_DASHBOARD_PER_MIN` | no | dashboard reads per network per minute (default 60) |
@@ -152,11 +155,11 @@ doesn't offer STARTTLS is refused.
 | POST | `/api/v1/project` | a clean Pyrmi token from the dashboard page (rate limited) | `{name, origins?, pyrmiToken}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
 | GET / PATCH | `/api/v1/project` | `Bearer sk_` | project info / `{name?, settings}` |
 | POST | `/api/v1/project?action=rotate` | `Bearer sk_` | new secret key, old one stops working |
-| POST | `/api/v1/session` | public key in body, origin checked | `{site, pt?}` (pt: the page clock) → `{token, session, seed, expiresAt, bn}` |
+| POST | `/api/v1/session` | public key in body, origin checked | `{site, pt?}` (pt: the page clock) → `{token, session, seed, expiresAt, issuedAt, bn, rk}` (rk: the session's request key, used by `Pyrmi.seal`; never in the token) |
 | POST | `/api/v1/signal` | session token | `{token, bn, n, signals}` (plain JSON, text/plain so there's no preflight; `bn` from the session, `n` counts up) |
-| POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, client, reasons}` |
+| POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?, request?: {fields, ts, sig}, client?: {ua, ip, ch, sfs}}` → `{verdict, risk, client, trusted, signed, bound, reasons}`. `score` must be a JSON number |
 | GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
-| POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
+| POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{value?, visitor?, pyrmi: {token, ts, sig}}` (from `Pyrmi.seal`) → verdict |
 | POST | `/api/v1/auth/email?action=start` | CSRF header + Pyrmi token | `{email, pyrmiToken}` → emails a 6-digit code; the same answer for every address |
 | POST | `/api/v1/auth/email?action=verify` | CSRF header | `{email, code}` → sets the session cookie |
 | GET | `/api/v1/auth/github`, `/api/v1/auth/google` | none | starts that sign-in, then handles the redirect back and sets the session cookie |
@@ -216,17 +219,51 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   session and sending a page clock that keeps time, comes back `accept` and `corroborated`, and so does a real browser
   running an edited copy. Telemetry can't tell those from a person. A re-tester put a deliberate forgery at 30 to 60
   minutes of reading this repo. That is the honest ceiling for client telemetry: a speed bump, not a boundary.
+- **Round 11: signed actions, relay detection, real input (the CDP re-test).** A clean Chrome driven over the
+  DevTools protocol with trusted input events got a trusted accept, and so did two tricks built on it: handing the
+  session to Node to send the action (a relay), and rewriting the request body on the way out (`Fetch.requestPaused`,
+  55 became 88). Now:
+  - the browser script seals the action (`Pyrmi.seal({ ... })`): an HMAC over the session, a timestamp and the exact
+    fields, with a per-session request key the script got with the session and that is never in the token. A body
+    changed after the page sealed it, a token moved to another sealed body, or a stale seal is `bad_signature`, a reject;
+  - `/verify` takes the browser's own context from your server (`pyrmi-server` forwards it from `req`): its user agent,
+    `Sec-CH-UA`, `Sec-Fetch-Site` and address. A different browser, different client hints, or no fetch metadata from a
+    browser that always sends it is `relayed_session` (+45, review) and never trusted;
+  - `trusted` needs some real input counted on the page (keys plus pointer presses, `PYRMI_TRUSTED_MIN_INPUTS`), not
+    only the activation flag one click sets, and on new projects (`signedTrust`) a sealed action with the browser's
+    context forwarded. Projects made before keep their old `trusted` rule; tick the setting to opt in.
+  - a project can refuse unsigned actions outright (`requireSignedRequests`, off by default); sessions are capped per
+    network per site per minute; and a value must be a JSON number (`"1e3"`, `[1000]` and `true` are `bad_score`).
+- **What this does and doesn't stop.** The re-tester's own summary was that the toolkit owns exactly one layer:
+  client trust (`trusted`, the automation and tamper telemetry, where a request came from). It didn't produce a valid
+  token, replay one, get past `maxScore`, skip `minDurationMs`, or beat the rate limits. Token forgery (flipped,
+  missing or transplanted signatures, re-encoded or reordered payloads, a backdated start), replay races (six and twelve
+  concurrent verifies of one token gave exactly one non-reused answer), `maxScore` edge values, `/verify` without a
+  real secret key and spoofed `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` headers all held. After round 11:
+  - **stopped:** a body rewritten on the wire after the page sealed it, a harvested token sent from a script with
+    its own user agent or without browser headers, a session with no real input counting as trusted, a token factory
+    minting dozens of sessions a minute for one site, and coerced values;
+  - **still passes, by design:** a clean real browser fully driven over CDP. It can type, click, ask the script to seal
+    whatever it wants, and copy its exact headers onto a relay from the same network. An attacker who controls the
+    browser (or the network path for the session answer) controls everything the page knows, request key included.
+    That is the ceiling for anything that runs in the page, this script included;
+  - **what holds against that:** the server gate. Signed single-use tokens, `too_short`, `maxScore` /
+    `maxScorePerSec`, rate limits and quotas, `simulate` replay, and Turnstile on high-value actions. Configure them;
+    don't let `trusted` stand in for them.
 - **Gate sensitive actions on more than "not rejected".** For payouts, prizes, leaderboards and account changes, use
   `trusted(v)` from `pyrmi-server`, together with your own server-side limits. It reads `v.trusted`, which the server
-  sets only for an `accept` whose `client` is `corroborated`, whose browser saw a real key press or click (`ac: true`),
-  and whose every reason is harmless (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
+  sets only for an `accept` whose `client` is `corroborated`, whose browser saw a real key press or click (`ac: true`)
+  with some input counted on the page, that was sealed and sent from the same browser (new projects), and whose every
+  reason is harmless (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
   with your thresholds: raising `reviewAt` to 50 or 80 turns a tampered runtime or webdriver session into an accept,
   but never into a trusted one. A `review` never counts. The strongest setup is all three: `trusted(v)`, a Turnstile
   check on the same request (`verifyTurnstile`, then `trusted(v, t)`), and server-side replay where the app allows it. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
 - **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
   built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
   1 day after they're replaced (`PYRMI_SDK_GRACE_DAYS`; the CDN caches the script for 5 minutes) so cached pages
-  aren't called tampered, but they are never `corroborated`; after that they count as `tampered_runtime`
+  aren't called tampered, but they are never `corroborated`, except published versions that send the same beacons as
+  the current one (`supported` in `sdk-build.json`, like a page pinned to `/sdk/1.3.0/` with SRI), which stay fully
+  supported but can't seal actions if they predate `Pyrmi.seal`; after that they count as `tampered_runtime`
   (`pyrmi.js:outdated`) too. The readable source's hash is only known outside production.
 - **Speeding up your own code needs no hook.** A cheat that runs the game's own simulation faster, and leaves the
   clocks and timers alone, changes nothing the script watches; `Pyrmi.mark()` reports only what your app tells it.
@@ -235,8 +272,8 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
 - **The hard floor is server-side and can't be forged from the browser:** the HMAC-signed session token, single-use
   replay protection, expiry, `minDurationMs` (measured from when the token was issued, so a claimed `durationMs`
   can't satisfy it), `maxScore`/`maxScorePerSec`, and the per-network / per-project rate limits and quotas. These do
-  not depend on the client cooperating. (The network and browser a session started from are only compared on
-  beacons, as the soft `ip_changed`/`ua_changed` signals: your server calls verify, not the visitor.)
+  not depend on the client cooperating. (The network and browser a session started from are compared on beacons, as the soft
+  `ip_changed`/`ua_changed` signals, and at verify when your server forwards the browser's context.)
 - **So:** use `maxScore`/`maxScorePerSec`/`minDurationMs` and your own server rules for anything that matters (scores,
   payouts, sign-ups), and treat the telemetry-driven `risk`/`reasons` as a signal to flag or review, not as the sole
   gate. For a deterministic game, server-side replay (`simulate`) is the one anti-tamper check that doesn't depend on

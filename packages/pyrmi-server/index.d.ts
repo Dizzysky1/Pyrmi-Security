@@ -25,15 +25,34 @@ export interface VerifyResult {
    * reviewAt/rejectAt. Use trusted(v) rather than reading it, so a failOpen stand-in verdict is never trusted.
    */
   trusted?: boolean;
+  /** 'ok': the action arrived exactly as the page sealed it. 'bad': it was changed or is stale (a reject). 'none': not sealed. */
+  signed?: 'ok' | 'bad' | 'none';
+  /** The browser's context was forwarded (req or client) and checked against the browser that started the session. */
+  bound?: boolean;
   session?: string | null;
   player?: string;
   score?: number | null;
   unverified?: boolean;
 }
 
+export interface ClientContext {
+  ua: string;
+  ip?: string;
+  /** The Sec-CH-UA header. */
+  ch?: string;
+  /** The Sec-Fetch-Site header ('' when the request had none). */
+  sfs?: string;
+}
+
 export interface VerifyInput {
-  /** The token from Pyrmi.start() in the browser. */
-  token: string;
+  /** The token from Pyrmi.start() in the browser. Not needed with sealed. */
+  token?: string;
+  /** The parsed JSON body the page sent, made with Pyrmi.seal({ ... }). Checked for changes on the way. */
+  sealed?: Record<string, unknown> & { pyrmi?: { token: string; ts: number; sig: string } };
+  /** Your incoming request; its browser headers and address are forwarded so a relayed session is caught. */
+  req?: { headers: Record<string, string | string[] | undefined> | { get(name: string): string | null }; socket?: { remoteAddress?: string }; ip?: string };
+  /** Instead of req: the browser's context yourself. */
+  client?: ClientContext;
   /** Optional number the action carries (a score, points, a quantity). Checked against your caps. */
   score?: number;
   /** How long the action took, if you know. Used for impossible-time and rate checks. */
@@ -55,6 +74,8 @@ export interface PyrmiOptions {
   timeoutMs?: number;
   /** When Pyrmi can't be reached: false (default) rejects the action, true accepts it unverified. */
   failOpen?: boolean;
+  /** Proxies of yours in front of this server, so req's address is read from the right X-Forwarded-For entry. */
+  trustProxyHops?: number;
   /** Your Cloudflare Turnstile widget's secret key, for verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
   turnstileSecret?: string;
   /** Override Cloudflare's siteverify URL (tests). */

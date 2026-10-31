@@ -83,13 +83,14 @@
     <div class="code-pair">
       <div class="code">
         <div class="code-h">in your page <button class="copy" data-copy="c1">copy</button></div>
-<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.3.0/pyrmi.js" integrity="sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
+<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
 &lt;script&gt;
   const s = await Pyrmi.start();   // on page load
   // when the user signs up, votes, buys...
   await Pyrmi.flush();
+  const body = await Pyrmi.seal({ email }); // signed: changed on the way = rejected
   await fetch('/signup', { method: 'POST',
-    body: JSON.stringify({ token: s.token, email }) });
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 &lt;/script&gt;</pre>
       </div>
       <div class="code">
@@ -97,7 +98,7 @@
 <pre id="c2">const { Pyrmi, trusted } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
-const v = await pyrmi.verify({ token, user: email });
+const v = await pyrmi.verify({ sealed: req.body, req, user: email });
 if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review goes through, flagged
 // a payout or a prize instead: if (!trusted(v)) return res.status(403).end();</pre>
       </div>
@@ -131,6 +132,7 @@ if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review
           <button class="btn" type="button" data-act="replay">replay the last request</button>
           <button class="btn" type="button" data-act="edit">edit the token</button>
           <button class="btn" type="button" data-act="big">send an impossible value</button>
+          <button class="btn" type="button" data-act="rewrite">change it on the wire</button>
           <button class="btn" type="button" data-act="direct">skip the page (direct API call)</button>
         </div>
         <p class="muted small-t">Want more? Open devtools, or paste <code>performance.now = () =&gt; 0</code> into the console, then send it normally again.</p>
@@ -178,7 +180,7 @@ if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review
   </footer>
 </div>
 
-<script src="/sdk/1.3.0/pyrmi.js" integrity="sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
+<script src="/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
 <script src="/site.js"></script>
 <script src="/motion.js"></script>
 <script src="/sandbox.js"></script>

@@ -43,10 +43,11 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   can't do"). Round 7 made the cheap versions cost something: a missing `sh` or field set is `tampered_runtime`, old
   build hashes expire after `PYRMI_SDK_GRACE_DAYS` (1 day since round 8), the source hash isn't accepted in production, and every beacon
   is corroborated server-side (`unverified_client`, `client` on the verdict).
-- [ ] **Per-session HMAC nonce (considered, not done).** A key the script must HMAC each beacon with would sit in the
-  browser like the old XOR key, so it adds no secrecy. Round 7 uses a plain per-session nonce plus a beacon count
-  instead, which does the useful part (a beacon copied from another session or sent twice is refused) without
-  pretending to be more.
+- [x] **Per-session HMAC key, for the action rather than the beacons** (round 11). Beacons still use the plain nonce
+  and count. The action is what an attacker rewrites on the wire (the CDP re-test turned 55 into 88), so the script
+  now seals it with a per-session request key that's in the session answer only, never the token. It stops a rewrite
+  by anything that didn't see the session answer and a token lifted into another body. It doesn't stop code in the
+  page, or something that controls the page's network, from signing whatever it likes; the README says so.
 - [x] **A tampered runtime alone was an accept at the default settings** (round 8). `tampered_runtime` is now +40, so
   on its own it is a review; an edited or outdated copy of the script also fails corroboration, so it is a reject.
   Wrapped built-ins (Sentry, Angular) stay `wrapped_runtime` at +5.
@@ -71,7 +72,8 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 
 ## Loader and delivery
 
-- [ ] **SDK version pinning + SRI.** Serve versioned, immutable builds (e.g. `/sdk/1.2.0/pyrmi.js`) with long cache
+- [x] **SDK version pinning + SRI** (round 10; round 11 keeps pinned versions on the current beacon protocol fully
+  supported instead of letting them age out after a day). Serve versioned, immutable builds (e.g. `/sdk/1.2.0/pyrmi.js`) with long cache
   headers, publish their `integrity` hashes, and show the `<script ... integrity="sha384-..." crossorigin>` snippet in
   the dashboard, docs and `install.md`, keeping `/sdk/pyrmi.js` as the moving "latest". Keep `previous` fingerprints in
   `api/_lib/sdk-build.json` working for cached copies.
@@ -123,7 +125,13 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   `/sdk/<version>/pyrmi.js`, cached for a year and never changed, and every snippet pins it with an integrity hash.
 - [x] **pyrmi.com's public dashboard showed a per-day label for each visitor's network.** It shows "visitor" now.
 - [ ] **`trusted` and network or browser changes.** `ip_changed` is allowed (phones hand over), `ua_changed` isn't.
-  For payouts, a fresh check at payout time is the safer rule.
+  For payouts, a fresh check at payout time is the safer rule. Round 11 also compares the client at verify (when the
+  site's server forwards it): a different browser or client hints is `relayed_session`, never trusted.
+- [ ] **A relay that copies everything still passes** (round 11, by design). A real browser driven over CDP can seal
+  any action in the page and send it from a script with the same headers on the same network. No client-side check
+  can see that; the server gate (single use, minimum time, caps, replay, Turnstile) is what holds.
+- [ ] **Customer servers behind their own proxies** must set `trustProxyHops` in pyrmi-server, or the forwarded
+  address is the proxy's. A wrong address only costs `ip_changed` (+10), never trust, so it fails soft.
 - [x] **Player labels collided.** A label that needs cleaning gets a short hash of the original on the end, so `a<b`,
   `a>b` and `a/b` are three players. Ordinary labels are unchanged.
 - [ ] **DMARC is `p=none`.** Move to `quarantine`, then `reject`, and SPF to `-all` once the reports look right.

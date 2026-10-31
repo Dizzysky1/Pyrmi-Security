@@ -12,6 +12,8 @@
 // PYRMI_SDK_FILE=<path> runs the same tests against another copy of the script (e.g. main's, to watch them fail).
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// Tests start many sessions from one address in a few seconds; the per-site minting limit has its own test (round11).
+process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN = process.env.PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN || '100000';
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -69,6 +71,8 @@ const SETUP = `(function () {
   globalThis.document = doc;
   globalThis.location = H.location;
   globalThis.URL = H.URL; globalThis.Blob = H.Blob; globalThis.atob = H.atob; globalThis.btoa = H.btoa;
+  // Web Crypto, for signing actions (Pyrmi.seal), as a secure page has it
+  if (H.crypto) { globalThis.crypto = H.crypto; globalThis.TextEncoder = H.TextEncoder; }
   // window sizes: real accessors (as in a browser) when a test sets H.sizes, plain zeros otherwise
   ['outerWidth', 'innerWidth', 'outerHeight', 'innerHeight'].forEach(function (k) {
     if (H.sizes) Object.defineProperty(globalThis, k, { get: function () { return H.sizes[k]; }, set: function (v) {}, enumerable: true, configurable: true });
@@ -89,7 +93,7 @@ function page(file, opts) {
   opts = opts || {};
   const shims = opts.shims !== false, iframe = shims && opts.iframe !== false;
   const flags = { shims, iframe, webdriver: !!opts.webdriver, userAgent: 'Mozilla/5.0 Chrome/120', location: { href: (base || 'http://x') + '/', origin: base || 'http://x' },
-    URL, Blob, atob, btoa, setTimeout, setInterval, clearTimeout, clearInterval,
+    URL, Blob, atob, btoa, crypto: globalThis.crypto, TextEncoder, setTimeout, setInterval, clearTimeout, clearInterval,
     // a browser adds Origin and Sec-Fetch-Site to every request the page makes; the server corroborates beacons with them
     fetch: (u, o) => fetch(u, { ...o, headers: { ...(o && o.headers), 'User-Agent': opts.ua || 'test-ua', Origin: base || 'http://x', 'Sec-Fetch-Site': 'same-origin' } }),
     listen: opts.listen || (() => {}), sizes: opts.sizes || null, activation: opts.activation || null,
@@ -271,7 +275,7 @@ for (const file of FILES) {
       await wait(1600);
       await p.Pyrmi.flush();
       p.Pyrmi.stop();
-      const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
+      const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', 'Sec-Fetch-Site': 'same-origin' },
         body: JSON.stringify({ token: s.token, value: 5, visitor }) });
       return r.json();
     };
@@ -309,7 +313,7 @@ for (const file of FILES) {
       await wait(1600);
       await p.Pyrmi.flush();
       p.Pyrmi.stop();
-      const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
+      const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', 'Sec-Fetch-Site': 'same-origin' },
         body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-' + (hijack ? 'bad0' : '0c00') }) });
       return r.json();
     };
@@ -331,7 +335,7 @@ for (const file of FILES) {
   test(which + ': a fake window.Pyrmi planted before the script loads is replaced and reported', () => {
     // The old double-load guard returned early whenever window.Pyrmi.version existed, so this switched the script off.
     const p = page(file, { prelude: "window.Pyrmi = { version: '9.9.9', start: function () { return Promise.resolve({ token: 'fake' }); }, flush: function () {} };" });
-    assert.equal(p.run('window.Pyrmi.version'), '1.3.0');
+    assert.equal(p.run('window.Pyrmi.version'), require('../api/_lib/sdk-build.json').version);
     assert.ok(p.tp().includes('window.Pyrmi'), JSON.stringify(p.tp()));
     // ...also when the fake is a getter
     const g = page(file, { prelude: "Object.defineProperty(window, 'Pyrmi', { get: function () { return { version: '1.3.0' }; }, configurable: true });" });
@@ -410,7 +414,7 @@ for (const file of FILES) {
     await wait(1600);
     await p.Pyrmi.flush();
     p.Pyrmi.stop();
-    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua' },
+    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', 'Sec-Fetch-Site': 'same-origin' },
       body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-7c01' }) });
     const v = await r.json();
     assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
@@ -427,11 +431,43 @@ for (const file of FILES) {
     await wait(1600);
     await p.Pyrmi.flush();
     p.Pyrmi.stop();
-    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+    const r = await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ua, 'Sec-Fetch-Site': 'same-origin' },
       body: JSON.stringify({ token: s.token, value: 5, visitor: 'visitor-8c01' }) });
     const v = await r.json();
     assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
     assert.equal(v.client, 'corroborated');
     assert.equal(v.risk, 0, JSON.stringify(v.reasons));
+  });
+
+  // Round 11 (CDP Fetch.requestPaused rewrote 55 to 88 in flight and got a clean, trusted accept): the script seals the
+  // action with the session's request key, so the server can tell the value that arrived isn't the one the page signed.
+  test(which + ': end to end, a sealed action is signed; the same action rewritten on the wire is rejected', async () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0 Safari/537.36';
+    const send = async (body) => (await fetch(base + '/api/v1/demo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ua, 'Sec-Fetch-Site': 'same-origin' }, body: JSON.stringify(body) })).json();
+    const sealOne = async (value) => {
+      const p = page(file, { ua, activation: { active: true } });
+      await p.Pyrmi.start();
+      await wait(1600);
+      await p.Pyrmi.flush();
+      p.Pyrmi.stop();
+      const sealed = await p.Pyrmi.seal({ value, visitor: 'visitor-8c02' });
+      return JSON.parse(JSON.stringify(sealed)); // what goes over the wire
+    };
+    const honest = await send(await sealOne(55));
+    assert.equal(honest.verdict, 'accept', JSON.stringify(honest.reasons));
+    assert.equal(honest.signed, 'ok');
+    assert.equal(honest.bound, true);
+    const wire = await sealOne(55);
+    assert.equal(wire.value, 55);
+    wire.value = 88; // Fetch.continueRequest with a new postData
+    const v = await send(wire);
+    assert.equal(v.verdict, 'reject');
+    assert.ok(v.reasons.some((r) => r.code === 'bad_signature'), JSON.stringify(v.reasons));
+    assert.equal(v.trusted, false);
+    // and the key never leaves the script: start() doesn't return it, and it isn't in the token
+    const p = page(file, { ua });
+    const s = await p.Pyrmi.start(); p.Pyrmi.stop();
+    assert.equal(s.rk, undefined);
+    assert.ok(!/rk/.test(Buffer.from(s.token.split('.')[0], 'base64url').toString()));
   });
 }

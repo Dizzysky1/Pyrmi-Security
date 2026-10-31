@@ -1,5 +1,5 @@
 'use strict';
-// POST /api/v1/session  { site: "pk_..." }  ->  { token, session, seed, expiresAt }
+// POST /api/v1/session  { site: "pk_..." }  ->  { token, session, seed, expiresAt, issuedAt, bn, rk }
 // Called by the browser script (sdk/pyrmi.js) when a run starts. The token proves a real page asked for it.
 const core = require('../_lib/core');
 const { send, fail, readJson, clientIp, cors, handle } = require('../_lib/http');
@@ -11,6 +11,6 @@ module.exports = handle(async (req, res) => {
   const project = await core.projectByPublicKey(body.site);
   if (!project) { cors(req, res, null); return fail(res, 404, 'unknown_site', 'No project has that public key.'); }
   if (!cors(req, res, project.settings.origins)) return fail(res, 403, 'origin_not_allowed');
-  const out = await core.startSession(project, { ip: clientIp(req), ua: req.headers['user-agent'], origin: String(req.headers.origin || '') }, body);
+  const out = await core.startSession(project, { ip: clientIp(req), ua: req.headers['user-agent'], ch: String(req.headers['sec-ch-ua'] || ''), origin: String(req.headers.origin || '') }, body);
   send(res, 200, { ok: true, ...out });
 });

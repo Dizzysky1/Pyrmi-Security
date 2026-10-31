@@ -11,9 +11,11 @@ npm install pyrmi-server
 const { Pyrmi } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
+// The page sends await Pyrmi.seal({ email }) as JSON. Pass the parsed body as `sealed` and the request as `req`:
+// Pyrmi checks nothing changed on the way and that it came from the browser that started the session.
 app.post('/signup', async (req, res) => {
-  const { pyrmiToken, email } = req.body;
-  const v = await pyrmi.verify({ token: pyrmiToken, user: email });
+  const { email } = req.body;
+  const v = await pyrmi.verify({ sealed: req.body, req, user: email });
   if (v.verdict === 'reject') return res.status(403).json({ error: 'blocked', reasons: v.reasons });
   await db.createUser(email, { flagged: v.verdict === 'review' });
   res.json({ ok: true });
@@ -22,7 +24,7 @@ app.post('/signup', async (req, res) => {
 // A sensitive action: only an accept whose telemetry the server corroborated.
 const { trusted } = require('pyrmi-server');
 app.post('/claim-prize', async (req, res) => {
-  const v = await pyrmi.verify({ token: req.body.pyrmiToken, user: req.user.id, score: req.body.score });
+  const v = await pyrmi.verify({ sealed: req.body, req, user: req.user.id, score: req.body.score });
   if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
   await payPrize(req.user.id);
   res.json({ ok: true });
