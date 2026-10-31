@@ -230,7 +230,8 @@ async function createProject(body, ip, owner) {
   const ipf = await C.fingerprint('ip', ip);
   if (await bump('ps:rl:newproj:' + ipf, DAY, intEnv('PYRMI_PROJECTS_PER_IP', 3))) throw httpError(429, 'rate_limited', 'Too many new projects from your network today.');
   const count = await kv.cmd('INCR', 'ps:projects');
-  if (count > intEnv('PYRMI_MAX_PROJECTS', 500)) throw httpError(403, 'at_capacity', 'This server is not taking new projects right now.');
+  // Give the slot back on rejection: an over-cap attempt must not permanently inflate the counter (F-09).
+  if (count > intEnv('PYRMI_MAX_PROJECTS', 500)) { await kv.cmd('DECR', 'ps:projects'); throw httpError(403, 'at_capacity', 'This server is not taking new projects right now.'); }
   const pid = 'p_' + C.randomId(9), pk = 'pk_' + C.randomId(18), sk = 'sk_' + C.randomId(30);
   await kv.pipeline([
     ['HSET', 'ps:p:' + pid, 'name', name, 'pk', pk, 'skh', C.sha256(sk), 'created', Date.now(), 'settings', JSON.stringify(settings), ...(owner ? ['owner', owner] : [])],
@@ -281,10 +282,14 @@ function view(p) { const { owner, ...rest } = p; return rest; }
 async function deleteProject(project) {
   if (project.demo) throw httpError(403, 'demo_locked');
   const skh = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
-  await kv.pipeline([
-    ['DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid, 'ps:plf:' + project.pid, 'ps:plr:' + project.pid],
-    ['DECR', 'ps:projects'], // free the capacity slot this project took, so delete+create can't exhaust PYRMI_MAX_PROJECTS
-  ]);
+  // Only give back a capacity slot for a project that was actually still there. A repeat delete of an already-gone
+  // project must be a no-op, and the counter must never go negative (which would disable the cap) (F-13/F-14).
+  const existed = num(await kv.cmd('EXISTS', 'ps:p:' + project.pid), 0);
+  await kv.cmd('DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid, 'ps:plf:' + project.pid, 'ps:plr:' + project.pid);
+  if (existed) {
+    const left = num(await kv.cmd('DECR', 'ps:projects'), 0);
+    if (left < 0) await kv.cmd('SET', 'ps:projects', '0');
+  }
 }
 
 // ---- sessions & signals -----------------------------------------------------------------------------------------
@@ -292,6 +297,9 @@ async function deleteProject(project) {
 async function startSession(project, ctx) {
   const s = project.settings;
   if (s.origins.length && !s.origins.includes(ctx.origin)) throw httpError(403, 'origin_not_allowed', 'This page is not on the project\'s allowed origins.');
+  // A real browser always sends an Origin. Require one for ordinary projects so sessions can't be minted by a bare
+  // script with no page behind it; the builtin site widget and public sandbox are exempt (F-07).
+  if (!project.demo && !ctx.origin) throw httpError(403, 'origin_required', 'A browser Origin is required to start a session.');
   const ipf = await C.fingerprint('ip', ctx.ip), uaf = await C.fingerprint('ua', ctx.ua || '');
   const now = Date.now(), day = ymd(now);
   if (await bump('ps:rl:sess:' + ipf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
@@ -387,7 +395,7 @@ async function verify(project, body, ctx) {
   const score = hasScore ? Number(body.score) : null;
   const durationMs = body.durationMs === undefined || body.durationMs === null ? null : Number(body.durationMs);
   const player = cleanPlayer(body.player !== undefined ? body.player : body.user);
-  let sid = null, t = null;
+  let sid = null, t = null, genuine = false;
 
   if (hasScore && (!Number.isFinite(score) || score < 0)) hard('bad_score');
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
@@ -415,7 +423,7 @@ async function verify(project, body, ctx) {
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
     if (rp && rp.check === 'mismatch') hard('replay_mismatch', String(rp.detail || '').slice(0, 120));
-    if (sess.p === project.pid) reasons.push(...assess(sess, s, durationMs));
+    if (sess.p === project.pid) { reasons.push(...assess(sess, s, durationMs)); genuine = true; }
     else reasons.push({ code: 'no_client', weight: WEIGHTS.no_client, detail: 'session record missing' });
   }
 
@@ -425,26 +433,30 @@ async function verify(project, body, ctx) {
   reasons.sort((a, b) => b.weight - a.weight);
   const replayCheck = body.replay && ['match', 'mismatch', 'none'].includes(body.replay.check) ? body.replay.check : 'none';
   const ev = { t: now, sid, player, score: Number.isFinite(score) ? score : null, durationMs, verdict, risk, replay: replayCheck, reasons: reasons.map((r) => r.detail ? { code: r.code, detail: String(r.detail).slice(0, 120) } : { code: r.code }) };
-  await logVerdict(project.pid, ev);
+  await logVerdict(project.pid, ev, genuine);
   return { ok: true, verdict, risk, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
-async function logVerdict(pid, ev) {
+async function logVerdict(pid, ev, genuine) {
   const day = ymd(ev.t), stat = 'ps:st:' + pid + ':' + day, pl = 'ps:pl:' + pid + ':' + ev.player;
   const flagged = ev.verdict !== 'accept';
   const cmds = [
     ['LPUSH', 'ps:ev:' + pid, JSON.stringify(ev)], ['LTRIM', 'ps:ev:' + pid, 0, MAX_EVENTS - 1],
     ['HINCRBY', stat, ev.verdict, 1], ['EXPIRE', stat, 35 * DAY],
-    ['HINCRBY', pl, ev.verdict, 1], ['HSET', pl, 'last', ev.t, 'risk', ev.risk, 'top', (ev.reasons[0] && ev.reasons[0].code) || ''],
-    ['EXPIRE', pl, 30 * DAY],
-    ['ZADD', 'ps:plr:' + pid, ev.t, ev.player], ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, -1001],
     ['HSET', 'ps:p:' + pid, 'lv', ev.t], // "your server is connected" on the dashboard
   ];
   for (const r of ev.reasons) cmds.push(['HINCRBY', stat, 'r:' + r.code, 1]);
-  if (flagged) {
-    cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
-    // Cap the flagged-players set to the worst ~1000, so a flood of one-off names can't grow it without bound (F-08).
-    cmds.push(['ZREMRANGEBYRANK', 'ps:plf:' + pid, 0, -1001]);
+  // The per-visitor records are keyed on a caller-chosen label. Only write them when a genuine session backs the
+  // verdict; otherwise anyone could spray labels through the keyless /demo endpoint and grow the store unbounded (A2-06).
+  if (genuine) {
+    cmds.push(['HINCRBY', pl, ev.verdict, 1], ['HSET', pl, 'last', ev.t, 'risk', ev.risk, 'top', (ev.reasons[0] && ev.reasons[0].code) || '']);
+    cmds.push(['EXPIRE', pl, 30 * DAY]);
+    cmds.push(['ZADD', 'ps:plr:' + pid, ev.t, ev.player], ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, -1001]);
+    if (flagged) {
+      cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
+      // Cap the flagged-players set to the worst ~1000, so a flood of one-off names can't grow it without bound (F-08).
+      cmds.push(['ZREMRANGEBYRANK', 'ps:plf:' + pid, 0, -1001]);
+    }
   }
   await kv.pipeline(cmds);
 }

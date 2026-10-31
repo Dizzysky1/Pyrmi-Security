@@ -92,8 +92,11 @@ async function emailStart(body, ip, mailer) {
   const email = cleanEmail(body.email);
   if (!email) throw httpError(400, 'bad_email', 'That doesn\'t look like an email address.');
   const per = 'ps:rl:emailto:' + C.sha256(email);
-  const [n] = await kv.pipeline([['INCR', per], ['EXPIRE', per, 3600]]);
-  if (Number(n) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.');
+  // Set the hour-long window once, on the first code. Re-EXPIRE-ing on every request kept pushing the TTL back up,
+  // so an address under a steady stream of requests never cleared its limit and stayed locked out for good (F-05).
+  const n = Number(await kv.cmd('INCR', per));
+  if (n === 1) await kv.cmd('EXPIRE', per, 3600);
+  if (n > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.');
   const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
   await kv.cmd('HSET', 'ps:ec:' + C.sha256(email), 'h', await codeHash(email, code), 'n', 0);
   await kv.cmd('EXPIRE', 'ps:ec:' + C.sha256(email), CODE_TTL);
@@ -301,9 +304,17 @@ async function listSites(uid) {
 }
 
 async function createSite(uid, body, ip) {
-  if (num(await kv.cmd('ZCARD', 'ps:us:' + uid)) >= intEnv('PYRMI_SITES_PER_USER', MAX_SITES)) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
+  const key = 'ps:us:' + uid, cap = intEnv('PYRMI_SITES_PER_USER', MAX_SITES);
+  if (num(await kv.cmd('ZCARD', key)) >= cap) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
   const p = await core.createProject(body, ip, uid);
-  await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
+  await kv.cmd('ZADD', key, Date.now(), p.pid);
+  // The pre-check and the add are two steps, so parallel creates can both pass it. Re-check after reserving the slot
+  // and roll this one back if we went over, so concurrent POSTs can't exceed the per-owner cap (A2-08).
+  if (num(await kv.cmd('ZCARD', key)) > cap) {
+    await kv.cmd('ZREM', key, p.pid);
+    await core.deleteProject(await core.loadProject(p.pid));
+    throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
+  }
   return p;
 }
 
