@@ -11,6 +11,14 @@ import { ShaderPass } from '../vendor/three-r170/addons/postprocessing/ShaderPas
 
 const canvas = document.getElementById('gl');
 const root = document.documentElement;
+// Add ?bg=debug to a page's address to see what the background is doing (for checking a device or a browser).
+const DEBUG = /[?&]bg=debug\b/.test(location.search);
+function note(msg) {
+  if (!DEBUG) return;
+  let el = document.getElementById('bg-debug');
+  if (!el) { el = document.createElement('div'); el.id = 'bg-debug'; el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9;font:12px monospace;color:#fff;background:#000a;padding:4px 8px;border-radius:6px'; document.body.appendChild(el); }
+  el.textContent = 'bg: ' + msg;
+}
 
 function start() {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -22,7 +30,8 @@ function start() {
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: mobile ? 'low-power' : 'high-performance' });
-  } catch (e) { return; } // no WebGL: the CSS backdrop stays
+  } catch (e) { note('no WebGL (' + e.message + ')'); return; } // no WebGL: the CSS backdrop stays
+  renderer.debug.onShaderError = (gl, program, vs, fs) => note('shader error: ' + (gl.getShaderInfoLog(vs) || gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(program) || '?').slice(0, 200));
   renderer.setPixelRatio(PR);
   renderer.setSize(innerWidth, innerHeight, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -203,6 +212,7 @@ function start() {
     finish.uniforms.uDim.value = (quiet ? 0.55 : 1) * (1 - scrollK * 0.4);
     composer.render(dt);
     if (frames++ === 1) root.classList.add('gl-on');
+    if (DEBUG && frames % 30 === 2) note('running, ' + geo.drawRange.count + ' of ' + N + ' particles, quality level ' + level + ', ' + Math.round(1 / Math.max(dt, 1e-3)) + ' fps');
     // Slow device? Step quality down: lower resolution first, then half the particles and no bloom.
     if (!reduce && frames > 30 && level < 2) {
       slow = slow * 0.95 + (dt > 1 / 40 ? 1 : 0) * 0.05;
@@ -224,5 +234,5 @@ function start() {
 }
 
 if (canvas) {
-  try { start(); } catch (e) { /* any WebGL trouble: keep the CSS backdrop */ }
+  try { start(); } catch (e) { note('error: ' + e.message); /* any WebGL trouble: keep the CSS backdrop */ }
 }
