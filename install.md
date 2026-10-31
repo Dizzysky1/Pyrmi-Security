@@ -119,7 +119,7 @@ Finish by telling the developer:
 
 - Reasons: `invalid_token`, `wrong_project`, `expired`, `token_reused`, `impossible_time`, `too_short`,
   `score_over_max`, `score_too_fast`, `bad_score`, `replay_mismatch`, `rate_limited` (all reject);
-  `automation`, `no_client`, `synthetic_input`, `speed_hack`, `time_warp`, `tampered_runtime`, `inhuman_input`,
+  `automation`, `no_client`, `unverified_client`, `synthetic_input`, `speed_hack`, `time_warp`, `tampered_runtime`, `inhuman_input`,
   `ua_changed`, `idle_input`, `devtools_open`, `ip_changed` (add risk).
 - Self-hosting: pass `endpoint: 'https://your-deploy.example/api/v1'` to `new Pyrmi()` and use
   `data-api="https://your-deploy.example/api/v1"` on the script tag.

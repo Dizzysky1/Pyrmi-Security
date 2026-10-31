@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const kv = require('../api/_lib/kv');
 const C = require('../api/_lib/crypto');
 const core = require('../api/_lib/core');
+const { signals, order } = require('./_browser');
 
 let ipn = 10;
 const nextIp = () => '198.51.100.' + (ipn++);
@@ -19,8 +20,9 @@ async function freshProject(settings) {
   return { ...p, project, ip };
 }
 async function cleanSession(project, ip) {
-  const s = await core.startSession(project, { ip, ua: UA, origin: 'https://audit.example' });
-  await core.recordSignals({ token: s.token, signals: { pt: 1000, k: 5, p: 3 } }, { ip, ua: UA });
+  const s = await core.startSession(project, { ip, ua: UA, origin: 'https://audit.example' }, { pt: 0 });
+  // a beacon as the browser script sends it, from the page that started the session (see tests/_browser.js)
+  await core.recordSignals({ token: s.token, ...order(s), signals: signals() }, { ip, ua: UA, origin: 'https://audit.example', sfs: 'same-site' });
   return s;
 }
 

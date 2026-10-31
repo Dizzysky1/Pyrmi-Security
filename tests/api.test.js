@@ -13,17 +13,19 @@ let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
 test.after(() => server.close());
 
-const call = async (method, p, body, headers) => {
+const B = require('./_browser');
+const rawCall = async (method, p, body, headers) => {
   const r = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', ...(headers || {}) }, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });
   return { status: r.status, body: await r.json() };
 };
+const call = B.wrap(rawCall);
 // What the browser script sends: plain-JSON signals under `signals`. They're advisory (the server treats them as
 // hints, never proof), so there's nothing to encode and no per-session key.
-const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals } }), { 'Content-Type': 'text/plain' });
+const beacon = (s, signals) => B.beacon(call, s, signals);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // pyrmi.com's own new-project form is protected by Pyrmi: get a token the way the dashboard page does.
 async function siteToken() {
-  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' }, { Origin: 'https://pyrmi.com' })).body;
   await beacon(s, {});
   await wait(1300);
   return s.token;
@@ -119,7 +121,7 @@ test('the value is optional and user works as an alias for player', async () => 
 // ---- the homepage sandbox ----
 
 test('sandbox: a normal request is accepted, a replay of it is rejected', async () => {
-  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' })).body;
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_demo_sandbox' }, { Origin: 'https://pyrmi.com' })).body;
   await beacon(s, {});
   await wait(1600);
   const v = await call('POST', '/api/v1/demo', { token: s.token, value: 42, visitor: 'visitor-abc123' });

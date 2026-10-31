@@ -13,6 +13,12 @@ export interface VerifyResult {
   /** 0 (clean) to 100 (certain cheat). null when Pyrmi could not be reached. */
   risk: number | null;
   reasons: Reason[];
+  /**
+   * How much of the browser telemetry the server could check against what it saw itself (which page sent it, the
+   * browser's own request headers, its own clock). 'corroborated' still isn't proof of a person: a person in their
+   * own browser can send what the real script would. 'unverified' adds the unverified_client reason.
+   */
+  client?: 'corroborated' | 'unverified' | 'none';
   session?: string | null;
   player?: string;
   score?: number | null;

@@ -14,31 +14,42 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   `Object.getOwnPropertyDescriptor/getPrototypeOf`, `document.createElement`, the iframe `contentWindow` getter, and
   `navigator.webdriver/userAgent/languages` (stealth kits redefine these with `Object.defineProperty`) are now watched;
   `webdriver` is read through the load-time getter and cross-checked with the clean realm. The script's own clocks,
-  timers, `fetch`, `sendBeacon` and listeners use load-time references, and `window.Pyrmi` and its config are frozen.
-- [ ] **Run the self-test in real Firefox and Safari.** The automated tests run in V8 realms (Chrome's engine); this
-  environment can't download browsers. `/sdk/selftest.html` runs all the tricks (29 cases) in fresh frames of
-  whatever browser opens it and shows pass/fail; the same cases are checked against V8 in `tests/sdk-tamper.test.js`.
-  Open it in Safari, Firefox and Chrome (also with your usual extensions on) and fix anything that fails.
+  timers, `fetch` and listeners use load-time references, and `window.Pyrmi` and its config are frozen.
+- [x] **Run the self-test in real Firefox and Safari.** Done for round 6: real Chrome passed 29 of 29, and the owner
+  reports Firefox and Safari pass too. Round 7 added watched built-ins (`navigator.userActivation`, the window sizes),
+  so open `/sdk/selftest.html` in Safari and Firefox once more after it ships.
 - [x] **Expected wrappers** (round 6). Changes to timers, rAF, `fetch`, XHR `send`, `addEventListener` and `toString`
   (what Sentry, zone.js/Angular, Datadog and New Relic wrap) are now `wrapped_runtime` (+5), not `tampered_runtime`
   (+30). Recognition is by which built-in, never by library markers, which an attacker could copy.
 - [ ] **Speed hacks through the wrapped group.** Scaling `setTimeout`/`setInterval` delays or rAF timestamps now costs
   only +5 unless the clocks are touched too. Sites with their own game clock should call `Pyrmi.mark()` so `time_warp`
   can catch it; a per-site "strict" setting could put the timers back at full weight.
-- [ ] **Input can be hidden from the script.** A capture listener on `window` registered before ours can call
-  `stopImmediatePropagation()`, so the script never counts those events (scripted-input and cadence checks go blind).
-  Fix idea: also listen on `document` capture and compare counts; flag when the window count lags far behind.
-- [ ] **A pre-planted `window.Pyrmi` makes the script skip itself.** The double-load guard returns early if
-  `window.Pyrmi.version` exists. The server then sees no beacons (`no_client`), so it isn't a clean pass, but the page
-  loses its signals. Fix idea: recognise our own instance (non-writable, frozen) and otherwise run anyway.
+- [x] **Input can be hidden from the script** (round 7). A capture listener on `window` registered first can
+  `stopImmediatePropagation()` before ours runs (a `document` listener wouldn't help: it's stopped too). Now the
+  script reads `navigator.userActivation.hasBeenActive`, which the browser sets on a real key press or click whatever
+  scripts do; activated since load with no input ever reaching us is `input.hidden`. The getters are watched. Scripted
+  `keyup`/`pointerup`/`mouseup`/`touchend`/`wheel` also count as synthetic. Limit: a page activated before the script
+  loaded can't be checked this way.
+- [x] **A pre-planted `window.Pyrmi` makes the script skip itself** (round 7). It now recognises only its own instance
+  and replaces and reports anything else (`window.Pyrmi`). A non-configurable fake still can't be replaced; the page
+  then sends us nothing, which the server reads as `no_client` (or `unverified_client` if the fake makes beacons up).
 - [ ] **Code that ran first and also fakes the iframe.** Hooking `createElement`/`appendChild`/`contentWindow` and the
   iframe's own `toString` before the script loads can make the "clean copy" lie. Those hooks are watched, but this is
   the limit of any in-page check: document "load Pyrmi first in `<head>`" in the install guide (`install.md`, docs).
-- [ ] **The devtools hint is trivial to spoof** (`outerWidth`/`innerWidth` are plain getters). It's only 10 risk;
-  either watch those getters too or drop the signal.
+- [x] **The devtools hint is trivial to spoof** (round 7). The window sizes are read through getters taken at load and
+  watched, so a spoof is reported as tampering instead of hiding the hint. Still only +10, and blind to undocked tools.
 - [ ] **Self-fingerprint and all telemetry are client-sent.** An edited copy of the script can send the expected `sh`
   and an empty `tp`. Inherent to client telemetry; it stays advisory (see README, "What the browser telemetry can and
-  can't do").
+  can't do"). Round 7 made the cheap versions cost something: a missing `sh` or field set is `tampered_runtime`, old
+  build hashes expire after `PYRMI_SDK_GRACE_DAYS`, the source hash isn't accepted in production, and every beacon
+  is corroborated server-side (`unverified_client`, `client` on the verdict).
+- [ ] **Per-session HMAC nonce (considered, not done).** A key the script must HMAC each beacon with would sit in the
+  browser like the old XOR key, so it adds no secrecy. Round 7 uses a plain per-session nonce plus a beacon count
+  instead, which does the useful part (a beacon copied from another session or sent twice is refused) without
+  pretending to be more.
+- [ ] **A tampered runtime alone is still an accept at the default settings** (+30, review at 40). Fine for wrapped
+  built-ins on ordinary sites; arguable for an edited copy of the script on its own. Product call: weight `pyrmi.js`
+  (edited) higher, or a per-site "strict" setting.
 
 ## Loader and delivery
 

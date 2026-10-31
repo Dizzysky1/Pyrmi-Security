@@ -15,16 +15,18 @@ let base, server;
 test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
 test.after(() => server.close());
 
-const call = async (method, p, body, headers) => {
+const B = require('./_browser');
+const rawCall = async (method, p, body, headers) => {
   const r = await fetch(base + p, { method, redirect: 'manual', headers: { 'Content-Type': 'application/json', 'User-Agent': 'test-ua', ...(headers || {}) }, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });
   const text = await r.text();
   let json = null; try { json = JSON.parse(text); } catch (_) { /* redirect */ }
   return { status: r.status, body: json, headers: r.headers };
 };
-const beacon = (s, signals) => call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: { pt: 1000, k: 5, p: 3, au: [], tp: [], ...signals } }), { 'Content-Type': 'text/plain' });
+const call = B.wrap(rawCall);
+const beacon = (s, signals) => B.beacon(call, s, signals);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function siteToken() {
-  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
+  const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' }, { Origin: 'https://pyrmi.com' })).body;
   await beacon(s, {});
   await wait(1300);
   return s.token;
