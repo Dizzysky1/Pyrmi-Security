@@ -83,12 +83,50 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   "blocks devtools/tampering" means "detects and reports", not "prevents". Round 5 flagged this without a list of
   lines; do a read-through of `index.html`, `docs/index.html`, `dashboard/` and `install.md`.
 
+## Server (master list follow-up)
+
+- [x] **Rate-limit windows could lose their expiry.** `bump()` did INCR and then a separate EXPIRE; if the second call
+  was lost the limit stuck for good. The TTL is now set with the key (`SET NX EX`, then `INCR`, in one request).
+- [x] **The `/verify` limiter never fired.** It was keyed on the session id, and a token is single-use. It is now keyed
+  on the network the session started from (in the signed token), default 60 a minute per project.
+- [x] **Expired tokens weren't marked used**, so each replay logged a new event. They are marked now.
+- [x] **Beacon sabotage.** Anyone holding a session's token could send beacons from another site and mark the real
+  player's session as made up. A beacon whose Origin isn't the page that started the session is refused and changes
+  nothing. A script outside a browser can still fake the Origin; see "A full mimic" above.
+- [x] **`recordSignals` didn't check that token and session agree on the project** (defence in depth).
+- [x] **Dead decoder for the old per-session shape key** removed.
+- [x] **Key rotation raced.** Two rotations at once (the owner and someone with a stolen key) both wrote, and the last
+  one kept a working key. Rotations now take a short per-project lock and a rotation with the old key only succeeds
+  while that key is still current; the loser gets a 409.
+- [x] **Revoke-all missed sessions from before the per-user index.** Only indexed sessions count now, so those stop
+  working (a one-time sign-in again) and revoke-all ends everything.
+- [x] **Email sign-in lockout.** Five code requests and six wrong guesses from anywhere locked an address out for an
+  hour. Requests and wrong guesses are now counted per network, with looser caps on the address as a whole.
+- [x] **CSRF check accepted `Origin: null` and compared only the host.** It now compares the full origin.
+- [x] **Behind your own proxy, the client address was the first X-Forwarded-For entry** (which the client writes).
+  `PYRMI_PROXY_HOPS` takes it from the right instead. Vercel is unaffected.
+- [x] **The site list stopped at a fixed length** if the per-account cap was raised.
+- [x] **Public demo dashboards showed session ids, and the site guard's label for a network never changed.** Session
+  ids are gone from them and the label changes daily.
+- [x] **The home page and docs had no CSP or frame protection.** They have both now. 405 responses send `Allow`.
+- [ ] **Secure defaults.** New projects still start with no minimum duration, no score cap and no required origins,
+  and `PYRMI_REQUIRE_ORIGINS` is off. Changing them breaks existing integrations, so it's the owner's call.
+- [ ] **Quotas a spread-out source can still drain**: the per-project session quota, the project cap and the global
+  email cap. Turnstile is the main answer for the forms; the session quota needs per-network-first limits.
+- [ ] **`ps:secret` fallback.** If `PYRMI_SECRET` is ever unset, the secret kept in the store comes back. Production
+  should fail closed instead.
+- [ ] **`trusted` and network or browser changes.** `ip_changed` is allowed (phones hand over), `ua_changed` isn't.
+  For payouts, a fresh check at payout time is the safer rule.
+- [ ] **Player labels.** Characters outside `[\w .-@:#]` become `_`, so `a<b` and `a>b` count as one player. Send ids,
+  not free text.
+
 ## Architecture and infrastructure (flagged in round 5)
 
 This repository is public, so infrastructure gaps are tracked here only in outline; the details live with the owner.
 
-- [ ] **Separate preview and production data** (stores and deployment access). Infra, outside the repo.
-- [ ] **Retire old deployments** that predate the round-5 removals. Infra, outside the repo.
-- [ ] **Clear orphaned keys** left in the store by the old site (the owner runs these deletes by hand).
+- [x] **Separate preview and production data** (stores and deployment access). Previews no longer reach the production
+  store.
+- [x] **Retire old deployments** that predate the round-5 removals.
+- [x] **Clear orphaned keys** left in the store by the old site. None were left.
 - [ ] **Old blobs in GitHub's pull-request refs** (removed files, the old author email). A force-push can't remove them;
   needs GitHub support or a fresh repository before treating history as clean.

@@ -194,14 +194,31 @@ test('email sign-in: a one-time code, hashed, single use, and no clue whether th
   assert.equal((await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode }, { 'X-Pyrmi-CSRF': '1' })).status, 400);
 });
 
-test('email codes die after 5 wrong tries and are capped per address', async () => {
-  await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.9' });
+test('email codes: wrong tries from one network lock only that network, and codes are capped per address', async () => {
+  const mine = { 'X-Forwarded-For': '203.0.113.9' }, theirs = { 'X-Forwarded-For': '198.51.100.77' };
+  await askCode('dave@example.com', mine);
   const code = lastCode(), bad = code === '999999' ? '888888' : '999999';
-  for (let i = 0; i < 5; i++) assert.equal((await call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code: bad }, { 'X-Pyrmi-CSRF': '1' })).body.error, 'bad_code');
-  const locked = await call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code }, { 'X-Pyrmi-CSRF': '1' });
-  assert.equal(locked.body.error, 'too_many_tries');
-  for (let i = 0; i < 4; i++) await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.' + (20 + i) });
-  assert.equal((await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.40' })).status, 429);
+  const verify = (c, h) => call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code: c }, { 'X-Pyrmi-CSRF': '1', ...h });
+  // someone else guessing from their own network burns their tries, not the owner's
+  for (let i = 0; i < 5; i++) assert.equal((await verify(bad, theirs)).body.error, 'bad_code');
+  assert.equal((await verify(code, theirs)).body.error, 'too_many_tries');
+  assert.equal((await verify(code, mine)).status, 200, 'the owner can still use the code');
+  // the same five starts from somebody else's network no longer lock the owner out of new codes
+  for (let i = 0; i < 5; i++) await askCode('dave@example.com', theirs);
+  assert.equal((await askCode('dave@example.com', theirs)).status, 429);
+  assert.equal((await askCode('dave@example.com', mine)).status, 200);
+  // and there is still a cap on the address as a whole
+  let last;
+  for (let i = 0; i < 20; i++) last = await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.' + (100 + i) });
+  assert.equal(last.status, 429);
+});
+
+test('email codes are deleted after enough wrong tries from everywhere', async () => {
+  await askCode('erin@example.com', { 'X-Forwarded-For': '203.0.113.10' });
+  const code = lastCode(), bad = code === '999999' ? '888888' : '999999';
+  for (let n = 0; n < 6; n++) for (let i = 0; i < 5; i++) await call('POST', '/api/v1/auth/email?action=verify', { email: 'erin@example.com', code: bad }, { 'X-Pyrmi-CSRF': '1', 'X-Forwarded-For': '192.0.2.' + (50 + n) });
+  const r = await call('POST', '/api/v1/auth/email?action=verify', { email: 'erin@example.com', code }, { 'X-Pyrmi-CSRF': '1', 'X-Forwarded-For': '203.0.113.10' });
+  assert.equal(r.body.error, 'too_many_tries');
 });
 
 // ---- GitHub ----

@@ -39,9 +39,14 @@ async function readJson(req, max) {
 
 function httpError(status, code, message) { const e = new Error(message || code); e.status = status; e.code = code; return e; }
 
+// The caller's address. On Vercel the platform writes X-Forwarded-For itself, so its first entry is the client. Behind
+// your own proxy (nginx, a load balancer) the first entry is whatever the client sent, so set PYRMI_PROXY_HOPS to the
+// number of proxies you run and the address is taken that many entries from the right instead.
 function clientIp(req) {
-  const xff = String(req.headers['x-forwarded-for'] || '');
-  return (xff.split(',')[0] || '').trim() || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || '0.0.0.0';
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const hops = parseInt(process.env.PYRMI_PROXY_HOPS, 10);
+  const pick = Number.isFinite(hops) && hops > 0 ? xff[Math.max(0, xff.length - hops)] : xff[0];
+  return pick || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || '0.0.0.0';
 }
 
 function bearer(req) {

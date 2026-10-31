@@ -28,7 +28,8 @@ const STATE_COOKIE = '__Host-pyrmi_oauth';
 const SID_RE = /^[A-Za-z0-9_-]{43}$/;
 const MAX_SITES = 10;
 const CODE_TTL = 600;
-const CODE_TRIES = 5;
+const CODE_TRIES = 5;        // wrong tries per network, per code
+const CODE_TRIES_TOTAL = 30; // wrong tries from everywhere before the code is deleted
 
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
 // Signed-in session lifetime. Env-tunable so it can be lowered without a deploy; the default is kept at 7 days
@@ -98,16 +99,23 @@ async function codeHash(email, code) {
   return crypto.createHmac('sha256', await C.secret()).update('email-code:' + email + ':' + code).digest('base64url');
 }
 
+// Hour-long counter whose TTL is set with the key, in the same request (see core's bump()).
+async function hourly(key) {
+  const r = await kv.pipeline([['SET', key, '0', 'EX', 3600, 'NX'], ['INCR', key]]);
+  return Number(r[1]);
+}
+
 async function emailStart(body, ip, mailer) {
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
   const email = cleanEmail(body.email);
   if (!email) throw httpError(400, 'bad_email', 'That doesn\'t look like an email address.');
-  const per = 'ps:rl:emailto:' + C.sha256(email);
-  // Set the hour-long window once, on the first code. Re-EXPIRE-ing on every request kept pushing the TTL back up,
-  // so an address under a steady stream of requests never cleared its limit and stayed locked out for good (F-05).
-  const n = Number(await kv.cmd('INCR', per));
-  if (n === 1) await kv.cmd('EXPIRE', per, 3600);
-  if (n > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; throw e; }
+  // Codes to one address are limited per network, so somebody else asking for codes to your address can't use up
+  // your hourly allowance (they used to lock the owner out for an hour with five requests). A looser cap on the
+  // address as a whole still bounds how many codes one inbox can be sent.
+  const ah = C.sha256(email), ipf = await C.fingerprint('ip', ip);
+  const tooMany = () => { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; return e; };
+  if (await hourly('ps:rl:emailto:' + ah + ':' + ipf) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw tooMany();
+  if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20)) throw tooMany();
   // Per-IP and per-address limits don't bound the TOTAL: rotating both lets a script send one code to each of many
   // addresses, bombing inboxes and burning login@pyrmi.com's sender reputation. Cap the whole server's sign-in codes
   // per day so the blast radius is bounded no matter how the source is spread (F-24). Generous, and env-tunable.
@@ -128,16 +136,22 @@ async function emailStart(body, ip, mailer) {
   });
 }
 
-async function emailVerify(body) {
+async function emailVerify(body, ip) {
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
   const email = cleanEmail(body.email), code = String(body.code || '').replace(/\D/g, '');
   const wrong = httpError(400, 'bad_code', 'That code didn\'t work. Check it, or ask for a new one.');
   if (!email || code.length !== 6) throw wrong;
   const key = 'ps:ec:' + C.sha256(email);
-  const tries = Number(await kv.cmd('HINCRBY', key, 'n', 1));
-  const stored = await kv.cmd('HGET', key, 'h');
+  // Wrong tries are counted per network. Six wrong guesses from anywhere used to delete the code, so anyone who
+  // knew your address could keep you from signing in. Now another network's guesses only lock that network out of
+  // this code, and the code itself is deleted only after CODE_TRIES_TOTAL wrong tries in all (still far too few to
+  // guess a six-digit code).
+  const ipf = await C.fingerprint('ip', ip);
+  const [mine, total, stored] = await kv.pipeline([['HINCRBY', key, 'n:' + ipf, 1], ['HINCRBY', key, 'n', 1], ['HGET', key, 'h']]);
   if (!stored) { await kv.cmd('DEL', key); throw wrong; }
-  if (tries > CODE_TRIES) { await kv.cmd('DEL', key); throw httpError(400, 'too_many_tries', 'Too many wrong codes. Ask for a new one.'); }
+  const tooMany = httpError(400, 'too_many_tries', 'Too many wrong codes. Ask for a new one.');
+  if (Number(total) > CODE_TRIES_TOTAL) { await kv.cmd('DEL', key); throw tooMany; }
+  if (Number(mine) > CODE_TRIES) throw tooMany;
   if (!C.safeEqual(stored, await codeHash(email, code))) throw wrong;
   await kv.cmd('DEL', key);
   return signIn(email, email, 'email');
@@ -283,9 +297,15 @@ function sessionSid(req) {
 async function currentUser(req) {
   const sid = sessionSid(req);
   if (!sid) return null;
-  const uid = await kv.cmd('GET', 'ps:auth:' + C.sha256(sid));
+  const sidh = C.sha256(sid);
+  const uid = await kv.cmd('GET', 'ps:auth:' + sidh);
   if (!uid) return null;
-  const u = kv.pairs(await kv.cmd('HGETALL', 'ps:u:' + uid));
+  // Only sessions in the per-user index count. Sessions from before the index existed were never in it, so
+  // revoke-all couldn't end them; now they simply stop working (a one-time sign-in again), and revoke-all, which
+  // clears the index, ends every session there is.
+  const [inIndex, h] = await kv.pipeline([['ZSCORE', 'ps:usess:' + uid, sidh], ['HGETALL', 'ps:u:' + uid]]);
+  if (inIndex === null || inIndex === undefined) return null;
+  const u = kv.pairs(h);
   return u.email ? { uid, email: u.email, name: u.name || u.email } : null;
 }
 
@@ -300,10 +320,15 @@ function checkCsrf(req) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return;
   const site = req.headers['sec-fetch-site'];
   if (req.headers['x-pyrmi-csrf'] !== '1' || (site && site !== 'same-origin')) throw httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
+  // Compare the whole origin (scheme, host and port), and refuse Origin: null, which sandboxed iframes and some
+  // redirects send. Plain http is only accepted from this machine, for local development.
   const origin = req.headers.origin;
-  if (origin && origin !== 'null') {
-    let host = ''; try { host = new URL(origin).host; } catch (_) { /* bad origin */ }
-    if (host !== String(req.headers['x-forwarded-host'] || req.headers.host)) throw httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
+  if (origin !== undefined) {
+    const refused = () => httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
+    let u = null; try { u = new URL(origin); } catch (_) { throw refused(); }
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+    if (u.origin !== (local && u.protocol === 'http:' ? 'http://' : 'https://') + host) throw refused();
   }
 }
 
@@ -335,7 +360,8 @@ function status(p) {
 }
 
 async function listSites(uid) {
-  const pids = await kv.cmd('ZREVRANGE', 'ps:us:' + uid, 0, MAX_SITES * 2);
+  // Read every site the account has (bounded by the per-account cap, whatever it is set to), not a fixed number.
+  const pids = await kv.cmd('ZREVRANGE', 'ps:us:' + uid, 0, Math.max(intEnv('PYRMI_SITES_PER_USER', MAX_SITES), MAX_SITES) * 2 - 1);
   const out = [];
   for (const pid of pids || []) {
     const p = await core.loadProject(pid);

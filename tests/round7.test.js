@@ -121,10 +121,16 @@ test('the page clock has to keep pace with the server\'s, and beacons have to co
   await post('/signal', { token: s.token, bn: s.bn, n: 1, signals: B.signals({ pt: 500 + 60000 }) }, h); // a minute "passed" in 0 s
   await wait(1600);
   assert.match(detail(await verdict(s.token, ip, 5), 'unverified_client'), /clock/);
+  // A beacon from another page is refused outright and changes nothing (it used to mark the session, which let any
+  // page holding the token sabotage the real player's session).
   const t = (await post('/session', { site: 'pk_demo_sandbox', pt: 0 }, h)).body;
-  await post('/signal', { token: t.token, bn: t.bn, n: 1, signals: B.signals() }, { ...h, Origin: 'https://evil.example' });
+  const evil = await post('/signal', { token: t.token, bn: t.bn, n: 1, signals: B.signals({ wd: true }) }, { ...h, Origin: 'https://evil.example' });
+  assert.equal(evil.status, 409);
+  assert.equal(evil.body.error, 'wrong_origin');
+  await post('/signal', { token: t.token, bn: t.bn, n: 1, signals: B.signals() }, h);
   await wait(1600);
-  assert.match(detail(await verdict(t.token, ip, 5), 'unverified_client'), /transport/);
+  const tv = await verdict(t.token, ip, 5);
+  assert.ok(!codes(tv).includes('automation') && !codes(tv).includes('unverified_client'), JSON.stringify(tv.reasons));
   // a script that claims to be Chrome but sends none of the fetch metadata Chrome always sends
   const chrome = { 'User-Agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/156.0 Safari/537.36' };
   const u = (await post('/session', { site: 'pk_demo_sandbox', pt: 0 }, { ...h, ...chrome })).body;

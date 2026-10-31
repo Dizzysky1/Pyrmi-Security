@@ -33,5 +33,5 @@ module.exports = handle(async (req, res) => {
     return send(res, 200, { ok: true, project: core.view(await core.updateSettings(project, { ...(body.settings || {}), ...('name' in body ? { name: body.name } : {}) })) });
   }
   if (req.method === 'POST') return send(res, 200, { ok: true, secretKey: await core.rotateSecret(project, sk) });
-  fail(res, 405, 'method_not_allowed');
+  fail(res, 405, 'method_not_allowed', undefined, { Allow: 'GET, POST, PATCH' });
 });

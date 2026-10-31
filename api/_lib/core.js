@@ -78,12 +78,12 @@ const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number
 // and the create form collects them; an origin-bound project is already enforced regardless of this flag.
 const requireOrigins = () => /^(1|true|on|yes)$/i.test(String(process.env.PYRMI_REQUIRE_ORIGINS || ''));
 
-// Fixed-window counter: INCR, and set the TTL only on the first hit so the window actually expires.
-// (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever and lock the victim out of a limit.)
+// Fixed-window counter. The window's TTL is set when the key is created, in the same request as the count: SET NX EX
+// then INCR. (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever, and INCR then a separate EXPIRE
+// left a key with no TTL at all if the second call was lost, which locked that limit for good.)
 async function bump(key, ttl, limit) {
-  const n = num(await kv.cmd('INCR', key), 1);
-  if (n === 1) await kv.cmd('EXPIRE', key, ttl);
-  return n > limit;
+  const r = await kv.pipeline([['SET', key, '0', 'EX', ttl, 'NX'], ['INCR', key]]);
+  return num(r[1], 1) > limit;
 }
 
 // Per-network limit for one kind of request. Limits can be changed with env vars (see README).
@@ -111,7 +111,10 @@ async function projectForKey(sk, ip) {
 // pyrmi.com's own check on a request from one of its pages. Anything short of a clean accept is refused.
 async function guardSite(token, ip) {
   if (String(process.env.PYRMI_SITE_GUARD || '').toLowerCase() === 'off') return null;
-  const ipf = await C.fingerprint('ip', ip);
+  // The label is shown on the public ?demo=site dashboard, so it changes every day: a fixed one let anyone follow a
+  // network across days (and, with the secret, test which IPv4 address it was).
+  const day = ymd(Date.now());
+  const ipf = await C.fingerprint('ip-day', day + ':' + ip);
   const v = await verify(await loadProject(SITE.pid), { token, player: 'net-' + ipf.slice(0, 8) }, { ip });
   if (v.verdict === 'accept') return v;
   const e = httpError(403, 'blocked_by_pyrmi', 'Pyrmi flagged this request: ' + v.reasons.map((r) => r.text).join(' '));
@@ -170,21 +173,7 @@ function cleanSettings(patch, base) {
 // browser a session started from are only compared on beacons, as the soft ip_changed / ua_changed signals.
 // We used to also hand the page a per-session XOR "shape" key and treat a beacon that decoded cleanly as proof of
 // a real client. That was security theatre: the key shipped to the browser, so anyone could read it from the public
-// SDK and forge a clean beacon (risk 0). The key is no longer sent; beacons are plain JSON. Order matches the SDK.
-const FIELDS = ['wd', 'hl', 'au', 'tp', 'dt', 'ut', 'ih', 'k', 'p', 'h', 'pt', 'gt', 'sh'];
-// Legacy: decode a shaped+XOR beacon from a session created before the key was dropped. New sessions send plain JSON.
-function decodeShaped(body, shape) {
-  const enc = body && body[shape.n];
-  if (typeof enc !== 'string' || enc.length > 8192) return null;
-  const key = Buffer.from(shape.k, 'base64url'), raw = Buffer.from(enc, 'base64url');
-  let json = '';
-  for (let i = 0; i < raw.length; i++) json += String.fromCharCode((raw[i] ^ key[i % key.length] ^ (i * 7)) & 255);
-  let obj; try { obj = JSON.parse(json); } catch (_) { return null; }
-  if (!obj || typeof obj !== 'object') return null;
-  const out = {};
-  for (let i = 0; i < FIELDS.length; i++) { if (!(shape.f[i] in obj)) return null; out[FIELDS[i]] = obj[shape.f[i]]; }
-  return out;
-}
+// SDK and forge a clean beacon (risk 0). It is gone, and so is the decoder that read it; beacons are plain JSON.
 // Which copies of the browser script the server recognises, by the fingerprint the script reports of its own code.
 // This only catches a careless edit: the fingerprints are public (this file, the built script), so a deliberate fake
 // just sends the right one. The served build is always known. The readable source (src/, never deployed) is only
@@ -389,19 +378,29 @@ async function updateSettings(project, patch) {
   return loadProject(project.pid);
 }
 
+// One rotation at a time per project, and a rotation with the old key only succeeds if that key is still the current
+// one. Before, two rotations racing each other (the owner and someone with a stolen key) both read, then both wrote,
+// and whichever wrote last kept a working key. Now the second one gets a 409 and its key is never stored.
 async function rotateSecret(project, oldSk) {
   if (project.demo) throw httpError(403, 'demo_locked');
-  const sk = 'sk_' + C.randomId(30);
-  // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
-  const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
-  const oldHash = oldSk ? C.sha256(oldSk) : stored;
-  await kv.pipeline([
-    ['DEL', 'ps:sk:' + oldHash],
-    ...(stored && stored !== oldHash ? [['DEL', 'ps:sk:' + stored]] : []), // one key per DEL: kv only prefixes the first
-    ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
-    ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
-  ]);
-  return sk;
+  const lock = 'ps:rot:' + project.pid, token = C.randomId(12);
+  if (await kv.cmd('SET', lock, token, 'NX', 'EX', 10) !== 'OK') throw httpError(409, 'rotate_in_progress', 'This project\'s key is being rotated right now. Try again in a few seconds.');
+  try {
+    const sk = 'sk_' + C.randomId(30);
+    // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
+    const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+    const oldHash = oldSk ? C.sha256(oldSk) : stored;
+    if (oldSk && stored && oldHash !== stored) throw httpError(409, 'key_changed', 'That secret key was already rotated.');
+    await kv.pipeline([
+      ['DEL', 'ps:sk:' + oldHash],
+      ...(stored && stored !== oldHash ? [['DEL', 'ps:sk:' + stored]] : []), // one key per DEL: kv only prefixes the first
+      ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
+      ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
+    ]);
+    return sk;
+  } finally {
+    if (await kv.cmd('GET', lock) === token) await kv.cmd('DEL', lock);
+  }
 }
 
 // What an API response may show of a project (never the owner's account id).
@@ -479,12 +478,19 @@ async function recordSignals(body, ctx) {
   const key = 'ps:s:' + t.s;
   const sess = kv.pairs(await kv.cmd('HGETALL', key));
   if (!sess.p) throw httpError(410, 'expired');
+  // The token and the stored session have to agree on the project. Session ids are random, so this can't happen by
+  // accident; it is a second check on top of the signature.
+  if (sess.p !== t.p) throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
+  // A beacon has to come from the page that started the session. Anyone who gets hold of a token (it is readable on
+  // the page) used to be able to send beacons for it from another site and mark the real player's session as
+  // made up (beacon sabotage). Such a beacon is now refused and changes nothing. A browser can't fake its Origin;
+  // a script outside a browser can, so this blocks other web pages, not a determined attacker with the token.
+  if (num(sess.sv, 0) && sess.o && String(ctx.origin || '') !== String(sess.o)) {
+    throw httpError(409, 'wrong_origin', 'This beacon did not come from the page that started the session.');
+  }
   if (num(sess.b, 0) >= MAX_BEACONS) return { ok: true, capped: true };
   let prev = {}; try { prev = JSON.parse(sess.sig || '{}'); } catch (_) { /* fresh */ }
-  // Beacons are plain JSON under `signals`. Legacy sessions created before this change carry a shape key in `x`;
-  // decode those too so an in-flight session keeps working across the deploy.
-  let shape = null; try { shape = sess.x ? JSON.parse(sess.x) : null; } catch (_) { /* fresh */ }
-  const raw = shape ? decodeShaped(body, shape) : body.signals;
+  const raw = body.signals;
   if (!raw || typeof raw !== 'object') {
     // Malformed telemetry is just dropped. We do NOT poison the session's verdict for it: a single bad or truncated
     // beacon (a flaky network, a racing tab close) must not permanently flag an otherwise fine session (was F-10).
@@ -577,14 +583,20 @@ async function verify(project, body, ctx) {
 
   t = await readSession(body.token);
   // Rate-limit on something the caller can't freely multiply. The player name is caller-chosen, so keying only on it
-  // let an attacker reset the limit by spraying new names (was F-12). Key on the session id from the (signed,
-  // single-use) token when present, and fall back to the caller's network, so player is never the sole dimension.
-  const rlKey = (t && t.s) ? 's:' + t.s : 'n:' + (ctx && ctx.ip ? await C.fingerprint('ip', ctx.ip) : 'none');
-  if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 30))) hard('rate_limited');
+  // let an attacker reset the limit by spraying new names (was F-12). Keying on the session id never fired either: a
+  // token is single-use, so each session gets one call. Key on the network the session started from, which is in the
+  // signed token and can't be changed, and fall back to the calling server's network when there is no token.
+  const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await C.fingerprint('ip', ctx.ip) : 'none');
+  if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 60))) hard('rate_limited');
 
   if (!t) hard('invalid_token');
   else if (t.p !== project.pid) hard('wrong_project');
-  else if (now > t.e) { sid = t.s; hard('expired'); }
+  else if (now > t.e) {
+    sid = t.s; hard('expired');
+    // Mark expired tokens used too, so replaying one is reported as a replay and doesn't log a fresh event every time.
+    const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', 3600);
+    if (fresh !== 'OK') hard('token_reused');
+  }
   else {
     sid = t.s;
     // Keep the marker for as long as the token itself can still be used, not the project's current TTL: lowering
@@ -698,7 +710,9 @@ async function dashboard(project) {
     for (const [k, v] of Object.entries(h)) if (k.startsWith('r:')) reasons[k.slice(2)] = Number(v);
     return { day: d, sessions: num(h.sessions, 0), accept: num(h.accept, 0), review: num(h.review, 0), reject: num(h.reject, 0), reasons };
   });
-  const events = (res[days.length] || []).map((s) => { try { return JSON.parse(s); } catch (_) { return null; } }).filter(Boolean);
+  const events = (res[days.length] || []).map((s) => { try { return JSON.parse(s); } catch (_) { return null; } }).filter(Boolean)
+    // The demo dashboards are public: no session ids on them.
+    .map((e) => { if (!BUILTIN[pid]) return e; const { sid, ...rest } = e; return rest; });
   const flaggedList = kv.pairs(res[days.length + 1]);
   const recentList = kv.pairs(res[days.length + 2]);
   const names = [...new Set([...Object.keys(flaggedList), ...Object.keys(recentList)])].slice(0, 40);

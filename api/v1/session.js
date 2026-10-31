@@ -6,7 +6,7 @@ const { send, fail, readJson, clientIp, cors, handle } = require('../_lib/http')
 
 module.exports = handle(async (req, res) => {
   if (req.method === 'OPTIONS') { cors(req, res, null); res.statusCode = 204; return res.end(); }
-  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Use POST.', { Allow: 'POST, OPTIONS' });
   const body = await readJson(req, 4096);
   const project = await core.projectByPublicKey(body.site);
   if (!project) { cors(req, res, null); return fail(res, 404, 'unknown_site', 'No project has that public key.'); }

@@ -6,7 +6,7 @@ const core = require('../_lib/core');
 const { send, fail, bearer, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
-  if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Use GET.', { Allow: 'GET' });
   const ip = clientIp(req);
   await core.limitIp(ip, 'dash', 60, 'PYRMI_DASHBOARD_PER_MIN', 60);
   const demo = new URL(req.url, 'http://x').searchParams.get('demo');

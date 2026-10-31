@@ -7,7 +7,7 @@ const core = require('../_lib/core');
 const { send, fail, readJson, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
-  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Use POST.', { Allow: 'POST' });
   const ip = clientIp(req);
   // Use the shared limiter so the window actually counts down instead of being reset on every call (F-17),
   // and pass ctx to verify so its limiter is keyed on this caller's network, not one shared 'none' bucket (F-18).

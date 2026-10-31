@@ -65,7 +65,7 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_PROJECTS_PER_IP` | no | new projects per network per day (default 3) |
 | `PYRMI_SESSIONS_PER_DAY` | no | sessions per project per day (default 20000), protects the free Redis quota |
 | `PYRMI_SESSIONS_PER_IP` | no | sessions per network per 10 minutes (default 150) |
-| `PYRMI_VERIFIES_PER_MIN` | no | verifies per user per minute (default 30) |
+| `PYRMI_VERIFIES_PER_MIN` | no | verifies per project per minute for sessions from one network (default 60) |
 | `PYRMI_SIGNALS_PER_IP` | no | telemetry beacons per network per 10 minutes (default 1500) |
 | `PYRMI_DASHBOARD_PER_MIN` | no | dashboard reads per network per minute (default 60) |
 | `PYRMI_PROJECT_CALLS_PER_MIN` | no | project reads, edits and key rotations per network per minute (default 30) |
@@ -81,7 +81,9 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_SITES_PER_USER` | no | sites per account (default 10) |
 | `PYRMI_SIGNINS_PER_IP` | no | GitHub or Google sign-ins, and email code checks, per network per 10 minutes (default 30) |
 | `PYRMI_EMAIL_CODES_PER_IP` | no | sign-in codes sent per network per 10 minutes (default 10) |
-| `PYRMI_EMAIL_CODES_PER_ADDRESS` | no | sign-in codes sent to one address per hour (default 5) |
+| `PYRMI_EMAIL_CODES_PER_ADDRESS` | no | sign-in codes sent to one address from one network per hour (default 5) |
+| `PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL` | no | sign-in codes sent to one address from anywhere per hour (default 20) |
+| `PYRMI_PROXY_HOPS` | no | only when self-hosting behind your own proxies: how many there are, so the client address is read from the right of `X-Forwarded-For`. Leave unset on Vercel. |
 | `PYRMI_ACCOUNT_CALLS_PER_MIN` | no | account calls per network per minute (default 60) |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | recommended in production | a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) widget's keys. With both set, sign-in codes, new projects and sites, and claiming, rotating or deleting a site each need a human check. Off while either is missing. |
 | `TURNSTILE_HOSTNAMES` | no | comma-separated page hostnames a Turnstile token may come from, e.g. `pyrmi.com,www.pyrmi.com`. Defaults to the host the request was sent to. |

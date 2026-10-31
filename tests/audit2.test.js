@@ -31,11 +31,19 @@ async function cleanSession(project, ip) {
 // survives the owner rotating. Only the key the project currently records may work.
 test('A2-01: a key left behind by racing rotations stops working once the owner rotates', async () => {
   const { project, secretKey } = await freshProject();
-  const [a, b] = await Promise.all([core.rotateSecret(project, secretKey), core.rotateSecret(project, secretKey)]);
+  // Two rotations with the same old key race: exactly one wins, the other gets a 409 and its key is never stored.
+  const raced = await Promise.allSettled([core.rotateSecret(project, secretKey), core.rotateSecret(project, secretKey)]);
+  const won = raced.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+  const lost = raced.filter((r) => r.status === 'rejected').map((r) => r.reason);
+  assert.equal(won.length, 1, JSON.stringify(raced.map((r) => r.status)));
+  assert.equal(lost[0].status, 409);
+  assert.ok(['rotate_in_progress', 'key_changed'].includes(lost[0].code), lost[0].code);
+  assert.equal((await core.projectBySecretKey(won[0])).pid, project.pid);
+  // once one rotation finished, the old key can't rotate again
+  await assert.rejects(core.rotateSecret(project, secretKey), (e) => e.status === 409 && e.code === 'key_changed');
   const fresh = await core.rotateSecret(await core.loadProject(project.pid)); // the owner rotates from the account
   assert.equal(await core.projectBySecretKey(secretKey), null);
-  assert.equal(await core.projectBySecretKey(a), null, 'first raced key must be dead after the owner rotates');
-  assert.equal(await core.projectBySecretKey(b), null, 'second raced key must be dead after the owner rotates');
+  assert.equal(await core.projectBySecretKey(won[0]), null, 'the raced key must be dead after the owner rotates');
   assert.equal((await core.projectBySecretKey(fresh)).pid, project.pid);
 });
 
