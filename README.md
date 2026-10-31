@@ -72,6 +72,20 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_PROJECT_CALLS_PER_MIN` | no | project reads, edits and key rotations per network per minute (default 30) |
 | `PYRMI_BAD_KEYS_PER_IP` | no | wrong secret keys per network per 15 minutes before it's locked out (default 20) |
 | `PYRMI_SITE_GUARD` | no | set to `off` to stop requiring a Pyrmi token on the new-project form (for self-hosting without the dashboard page) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for accounts | a Google OAuth client (Web application). Without them the dashboard hides Sign in with Google and only the key login works. |
+| `PYRMI_PUBLIC_URL` | no | pins the address Google sends people back to, e.g. `https://pyrmi.com`. Defaults to the deployment's own host. |
+| `PYRMI_SITES_PER_USER` | no | sites per account (default 10) |
+| `PYRMI_SIGNINS_PER_IP` | no | Google sign-in attempts per network per 10 minutes (default 30) |
+| `PYRMI_ACCOUNT_CALLS_PER_MIN` | no | account calls per network per minute (default 60) |
+
+### Sign in with Google
+
+1. In Google Cloud Console, open APIs & Services → OAuth consent screen. Pick External, fill in the app name and
+   support email, and add the scopes `openid`, `email` and `profile` (none of them need Google's review).
+2. Under Credentials → Create credentials → OAuth client ID, pick Web application and add the authorized redirect URI
+   `https://pyrmi.com/api/v1/google`. Add a preview address too (`https://<preview-host>/api/v1/google`) to try it there.
+3. In Vercel, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and redeploy. Set `PYRMI_PUBLIC_URL` only if the
+   site is reached through more than one host name.
 
 ## API
 
@@ -85,6 +99,13 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?}` → `{verdict, risk, reasons}` |
 | GET | `/api/v1/dashboard` | `Bearer sk_` (or `?demo=1` sandbox, `?demo=site` pyrmi.com itself) | 14 days of stats, last 100 verdicts, flagged users |
 | POST | `/api/v1/demo` | session token | the homepage sandbox's stand-in server: `{token, value?}` → verdict |
+| GET | `/api/v1/google` | none | starts Sign in with Google, then handles Google's redirect back and sets the session cookie |
+| GET | `/api/v1/me` | session cookie | `{user, sites}` with each site's connection status, or 401 `{google}` |
+| POST | `/api/v1/me?action=signout` | session cookie + CSRF header | ends the session |
+| POST | `/api/v1/sites` | session cookie + CSRF header + Pyrmi token | `{name, origins?, pyrmiToken}` → a new site in this account |
+| POST | `/api/v1/sites?action=claim` | session cookie + CSRF header | `{secretKey}` moves a key-only project into this account |
+| GET / PATCH / DELETE | `/api/v1/sites?pid=` | session cookie (+ CSRF header to change) | one of your sites: dashboard data, `{name?, settings}`, or delete |
+| POST | `/api/v1/sites?pid=&action=rotate` | session cookie + CSRF header | new secret key for one of your sites |
 
 ## Security notes
 
@@ -94,6 +115,10 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 - The dashboard page runs under a strict Content-Security-Policy and escapes all user-supplied text.
 - Every endpoint is rate limited per network, per user or per project, and wrong secret keys are capped per network.
 - pyrmi.com uses Pyrmi on itself: the new-project form needs a clean accept from the built-in `pyrmi-site` project.
+- Signed-in sessions are a random cookie (`__Host-`, HttpOnly, Secure, SameSite=Lax) stored only as a SHA-256 hash.
+  Google sign-in uses PKCE and a signed state cookie, and needs a verified email. Google's own tokens are never kept.
+- Every change made with the session cookie needs the `X-Pyrmi-CSRF` header and a same-site origin.
+- Each account sees only its own sites: anyone else's answers 404, the same as one that doesn't exist.
 - The browser script is served as a scrambled build that fingerprints itself, and each session has its own telemetry
   shape and key. These slow down bot authors; the server-side verdict is still the real protection.
 

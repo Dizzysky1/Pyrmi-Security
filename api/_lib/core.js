@@ -198,7 +198,8 @@ function parseProject(pid, h) {
   settings = { ...DEFAULTS, ...settings };
   const b = BUILTIN[pid];
   if (b) settings = { ...settings, ...b.settings, origins: [] };
-  return { pid, name: h.name, publicKey: h.pk, created: num(h.created, 0), settings, demo: !!b };
+  return { pid, name: h.name, publicKey: h.pk, created: num(h.created, 0), settings, demo: !!b,
+    owner: h.owner || null, lastSession: num(h.ls, 0), lastVerify: num(h.lv, 0) };
 }
 
 async function loadProject(pid) {
@@ -219,7 +220,7 @@ async function ensureBuiltin(b) {
   builtinReady.add(b.pid);
 }
 
-async function createProject(body, ip) {
+async function createProject(body, ip, owner) {
   if (String(process.env.PYRMI_SIGNUPS || '').toLowerCase() === 'off') throw httpError(403, 'signups_closed', 'New projects are paused on this server.');
   const name = cleanName(body.name);
   const settings = cleanSettings({ origins: body.origins || [] }, DEFAULTS);
@@ -229,7 +230,7 @@ async function createProject(body, ip) {
   if (count > intEnv('PYRMI_MAX_PROJECTS', 500)) throw httpError(403, 'at_capacity', 'This server is not taking new projects right now.');
   const pid = 'p_' + C.randomId(9), pk = 'pk_' + C.randomId(18), sk = 'sk_' + C.randomId(30);
   await kv.pipeline([
-    ['HSET', 'ps:p:' + pid, 'name', name, 'pk', pk, 'skh', C.sha256(sk), 'created', Date.now(), 'settings', JSON.stringify(settings)],
+    ['HSET', 'ps:p:' + pid, 'name', name, 'pk', pk, 'skh', C.sha256(sk), 'created', Date.now(), 'settings', JSON.stringify(settings), ...(owner ? ['owner', owner] : [])],
     ['SET', 'ps:pk:' + pk, pid],
     ['SET', 'ps:sk:' + C.sha256(sk), pid],
   ]);
@@ -261,12 +262,23 @@ async function updateSettings(project, patch) {
 async function rotateSecret(project, oldSk) {
   if (project.demo) throw httpError(403, 'demo_locked');
   const sk = 'sk_' + C.randomId(30);
+  // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
+  const oldHash = oldSk ? C.sha256(oldSk) : await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
   await kv.pipeline([
-    ['DEL', 'ps:sk:' + C.sha256(oldSk)],
+    ['DEL', 'ps:sk:' + oldHash],
     ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
     ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
   ]);
   return sk;
+}
+
+// What an API response may show of a project (never the owner's account id).
+function view(p) { const { owner, ...rest } = p; return rest; }
+
+async function deleteProject(project) {
+  if (project.demo) throw httpError(403, 'demo_locked');
+  const skh = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  await kv.pipeline([['DEL', 'ps:sk:' + skh, 'ps:pk:' + project.publicKey, 'ps:p:' + project.pid, 'ps:ev:' + project.pid]]);
 }
 
 // ---- sessions & signals -----------------------------------------------------------------------------------------
@@ -285,6 +297,7 @@ async function startSession(project, ctx) {
     ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'b', 0, 'x', JSON.stringify(shape)],
     ['EXPIRE', 'ps:s:' + sid, s.sessionTtlSec + 3600],
     ['HINCRBY', stat, 'sessions', 1], ['EXPIRE', stat, 35 * DAY],
+    ['HSET', 'ps:p:' + project.pid, 'ls', now], // "your page is connected" on the dashboard
   ]);
   return { token, session: sid, seed, expiresAt: exp, x: shape };
 }
@@ -409,6 +422,7 @@ async function logVerdict(pid, ev) {
     ['HINCRBY', pl, ev.verdict, 1], ['HSET', pl, 'last', ev.t, 'risk', ev.risk, 'top', (ev.reasons[0] && ev.reasons[0].code) || ''],
     ['EXPIRE', pl, 30 * DAY],
     ['ZADD', 'ps:plr:' + pid, ev.t, ev.player], ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, -1001],
+    ['HSET', 'ps:p:' + pid, 'lv', ev.t], // "your server is connected" on the dashboard
   ];
   for (const r of ev.reasons) cmds.push(['HINCRBY', stat, 'r:' + r.code, 1]);
   if (flagged) cmds.push(['ZINCRBY', 'ps:plf:' + pid, 1, ev.player]);
@@ -444,13 +458,14 @@ async function dashboard(project) {
   }).sort((a, b) => (b.reject + b.review) - (a.reject + a.review) || b.lastSeen - a.lastSeen);
   return {
     ok: true,
-    project: { pid, name: project.name, publicKey: project.publicKey, created: project.created, settings: project.settings, demo: project.demo },
+    project: { pid, name: project.name, publicKey: project.publicKey, created: project.created, settings: project.settings, demo: project.demo,
+      lastSession: project.lastSession, lastVerify: project.lastVerify },
     days: stats, events, players, playerCount: num(res[days.length + 3], 0), reasonText: REASONS,
   };
 }
 
 module.exports = {
   DEFAULTS, DEMO, SITE, WEIGHTS, REASONS, HARD,
-  createProject, loadProject, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret,
+  createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret,
   startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
 };
