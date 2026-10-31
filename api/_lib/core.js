@@ -86,12 +86,15 @@ async function limitIp(ip, name, ttl, env, dflt, message) {
 }
 
 // Secret-key lookup with a cap on wrong guesses per network, so nobody can hammer the key check.
+// The right key always works: checking the cap first let anyone on a shared network (an office, a school, mobile
+// CGNAT) lock the real owner out with a few junk keys (A2-05). Keys are 180 bits, so the cap is about load, not
+// guessing.
 async function projectForKey(sk, ip) {
-  const ipf = await C.fingerprint('ip', ip), bad = 'ps:rl:badkey:' + ipf;
-  if (num(await kv.cmd('GET', bad), 0) >= intEnv('PYRMI_BAD_KEYS_PER_IP', 20)) throw httpError(429, 'rate_limited', 'Too many wrong secret keys from your network. Try again later.');
   const project = await projectBySecretKey(sk);
-  if (!project) await kv.pipeline([['INCR', bad], ['EXPIRE', bad, 900]]);
-  return project;
+  if (project) return project;
+  const ipf = await C.fingerprint('ip', ip);
+  if (await bump('ps:rl:badkey:' + ipf, 900, intEnv('PYRMI_BAD_KEYS_PER_IP', 20))) throw httpError(429, 'rate_limited', 'Too many wrong secret keys from your network. Try again later.');
+  return null;
 }
 
 // pyrmi.com's own check on a request from one of its pages. Anything short of a clean accept is refused.
@@ -152,7 +155,8 @@ function cleanSettings(patch, base) {
 // Telemetry fields the browser script may report. These are ADVISORY: client telemetry is attacker-controlled,
 // so it can only ADD risk (flag automation, scripted input, tampering), never prove a request is human. The hard
 // floor is server-side and cannot be forged from the browser: the HMAC-signed session token, single-use replay
-// protection, expiry, the IP/UA bound into the token, minimum duration, score caps and the rate limits.
+// protection, expiry, minimum duration (measured on the server), score caps and the rate limits. The network and
+// browser a session started from are only compared on beacons, as the soft ip_changed / ua_changed signals.
 // We used to also hand the page a per-session XOR "shape" key and treat a beacon that decoded cleanly as proof of
 // a real client. That was security theatre: the key shipped to the browser, so anyone could read it from the public
 // SDK and forge a clean beacon (risk 0). The key is no longer sent; beacons are plain JSON. Order matches the SDK.
@@ -250,8 +254,14 @@ async function projectByPublicKey(pk) {
 
 async function projectBySecretKey(sk) {
   if (typeof sk !== 'string' || !/^sk_[\w-]{20,60}$/.test(sk)) return null;
-  const pid = await kv.cmd('GET', 'ps:sk:' + C.sha256(sk));
-  return pid ? loadProject(pid) : null;
+  const h = C.sha256(sk);
+  const pid = await kv.cmd('GET', 'ps:sk:' + h);
+  if (!pid) return null;
+  // Only the key the project itself records is live. Two rotations racing (say, an attacker with a stolen key
+  // hammering rotate) could each map a new key to the project while only one was stored, and the other was never
+  // revoked by later rotations (A2-01). A stale ps:sk entry now opens nothing.
+  if ((await kv.cmd('HGET', 'ps:p:' + pid, 'skh')) !== h) return null;
+  return loadProject(pid);
 }
 
 async function updateSettings(project, patch) {
@@ -267,9 +277,11 @@ async function rotateSecret(project, oldSk) {
   if (project.demo) throw httpError(403, 'demo_locked');
   const sk = 'sk_' + C.randomId(30);
   // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
-  const oldHash = oldSk ? C.sha256(oldSk) : await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  const oldHash = oldSk ? C.sha256(oldSk) : stored;
   await kv.pipeline([
     ['DEL', 'ps:sk:' + oldHash],
+    ...(stored && stored !== oldHash ? [['DEL', 'ps:sk:' + stored]] : []), // one key per DEL: kv only prefixes the first
     ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
     ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
   ]);
@@ -293,6 +305,13 @@ async function deleteProject(project) {
 }
 
 // ---- sessions & signals -----------------------------------------------------------------------------------------
+
+// A session token, and only a session token. OAuth state cookies are signed with the same key and format, and anyone
+// can get one by starting a sign-in, so check the shape too (A2-07).
+async function readSession(token) {
+  const t = await C.readToken(token);
+  return t && t.v === 1 && typeof t.p === 'string' && typeof t.s === 'string' && Number.isFinite(t.i) && Number.isFinite(t.e) ? t : null;
+}
 
 async function startSession(project, ctx) {
   const s = project.settings;
@@ -320,7 +339,7 @@ async function startSession(project, ctx) {
 }
 
 async function recordSignals(body, ctx) {
-  const t = await C.readToken(body && body.token);
+  const t = await readSession(body && body.token);
   if (!t) throw httpError(400, 'invalid_token');
   const now = Date.now();
   if (now > t.e + 3600e3) throw httpError(410, 'expired');
@@ -400,7 +419,7 @@ async function verify(project, body, ctx) {
   if (hasScore && (!Number.isFinite(score) || score < 0)) hard('bad_score');
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
 
-  t = await C.readToken(body.token);
+  t = await readSession(body.token);
   // Rate-limit on something the caller can't freely multiply. The player name is caller-chosen, so keying only on it
   // let an attacker reset the limit by spraying new names (was F-12). Key on the session id from the (signed,
   // single-use) token when present, and fall back to the caller's network, so player is never the sole dimension.
@@ -412,11 +431,15 @@ async function verify(project, body, ctx) {
   else if (now > t.e) { sid = t.s; hard('expired'); }
   else {
     sid = t.s;
-    const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', s.sessionTtlSec + 3600);
+    // Keep the marker for as long as the token itself can still be used, not the project's current TTL: lowering
+    // sessionTtlSec after tokens were issued let the marker expire first and the same token pass again (A2-02).
+    const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600);
     if (fresh !== 'OK') hard('token_reused');
     const sess = kv.pairs(await kv.cmd('HGETALL', 'ps:s:' + sid));
     const elapsed = now - t.i;
-    const dur = durationMs === null ? elapsed : durationMs;
+    // The 2 s grace is for clock skew on impossible_time only. Limits use the shorter of the claimed and the real
+    // time, so a claimed duration can't satisfy minDurationMs or dilute maxScorePerSec (A2-03).
+    const dur = durationMs === null ? elapsed : Math.min(durationMs, elapsed);
     if (durationMs !== null && durationMs > elapsed + 2000) hard('impossible_time', Math.round(durationMs / 1000) + 's run in a ' + Math.round(elapsed / 1000) + 's session');
     if (dur < s.minDurationMs) hard('too_short');
     if (hasScore && s.maxScore !== null && score > s.maxScore) hard('score_over_max', score + ' > ' + s.maxScore);
