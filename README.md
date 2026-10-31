@@ -217,6 +217,9 @@ of those is reported separately as `wrapped_runtime` (+5), not `tampered_runtime
 clocks, `Math.random`, `call`/`apply`/`bind`, the descriptor lookups or the `navigator` getters, so replacing any of
 those stays `tampered_runtime`, whatever markers (`__sentry_original__`, `__zone_symbol__`) a replacement carries.
 
+To see what a browser reports, open `/sdk/selftest.html` in it: it runs every trick above in a fresh frame and shows
+pass or fail. Nothing is sent anywhere.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

@@ -270,6 +270,22 @@ for (const file of FILES) {
     assert.ok(t && t.weight === 30 && /performance\.now/.test(t.detail), JSON.stringify(attacked.reasons));
   });
 
+  // sdk/selftest.html runs these same tricks in a real browser (open it in Safari or Firefox to check those engines).
+  // Here they run in V8 realms, so a wrong expectation in the page would show up before anyone opens it.
+  test(which + ': every case on the in-browser self-test page passes in this engine', () => {
+    const casesSrc = fs.readFileSync(path.join(__dirname, '../sdk/selftest-case.js'), 'utf8');
+    const ids = Array.from(page(file, { prelude: casesSrc }).run('window.PYRMI_SELFTEST.map(function (c) { return c.id; })'));
+    assert.ok(ids.length >= 25, 'cases: ' + ids.length);
+    const has = (got, exp) => !exp || (exp.length ? exp.every((x) => got.includes(x)) : got.length === 0);
+    for (const id of ids) {
+      const p = page(file, { prelude: 'window.PYRMI_SELFTEST_CASE = ' + JSON.stringify(id) + ';\n' + casesSrc });
+      p.run('(function () { var c = window.PYRMI_SELFTEST.filter(function (x) { return x.id === ' + JSON.stringify(id) + '; })[0]; if (c.when === "after") c.run(); })()');
+      const exp = p.run('window.PYRMI_SELFTEST.filter(function (x) { return x.id === ' + JSON.stringify(id) + '; })[0]');
+      assert.equal(p.run('window.PYRMI_SELFTEST_ERROR || null'), null, id);
+      assert.ok(has(p.tp(), exp.tp) && has(p.wr(), exp.wr), id + ' -> tampered ' + JSON.stringify(p.tp()) + ' wrapped ' + JSON.stringify(p.wr()));
+    }
+  });
+
   test(which + ': end to end, the bind() bypass now costs risk at the server instead of a clean accept', async () => {
     const verdict = async (hijack) => {
       const p = page(file);

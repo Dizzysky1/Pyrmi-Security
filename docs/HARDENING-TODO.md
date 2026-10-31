@@ -15,9 +15,10 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
   `navigator.webdriver/userAgent/languages` (stealth kits redefine these with `Object.defineProperty`) are now watched;
   `webdriver` is read through the load-time getter and cross-checked with the clean realm. The script's own clocks,
   timers, `fetch`, `sendBeacon` and listeners use load-time references, and `window.Pyrmi` and its config are frozen.
-- [ ] **Try the new check in real Firefox and Safari before relying on it.** The tests run in V8 realms (Chrome's
-  engine). The comparison is realm-to-realm in the same browser, so formatting differences shouldn't matter, but it
-  hasn't been watched in Gecko or WebKit, or with common extensions installed.
+- [ ] **Run the self-test in real Firefox and Safari.** The automated tests run in V8 realms (Chrome's engine); this
+  environment can't download browsers. `/sdk/selftest.html` runs all the tricks (29 cases) in fresh frames of
+  whatever browser opens it and shows pass/fail; the same cases are checked against V8 in `tests/sdk-tamper.test.js`.
+  Open it in Safari, Firefox and Chrome (also with your usual extensions on) and fix anything that fails.
 - [x] **Expected wrappers** (round 6). Changes to timers, rAF, `fetch`, XHR `send`, `addEventListener` and `toString`
   (what Sentry, zone.js/Angular, Datadog and New Relic wrap) are now `wrapped_runtime` (+5), not `tampered_runtime`
   (+30). Recognition is by which built-in, never by library markers, which an attacker could copy.
