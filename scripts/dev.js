@@ -13,6 +13,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 
 function serve(req, res) {
   const url = new URL(req.url, 'http://localhost');
+  if (/^\/api\/v1\/auth\/[a-z]+$/.test(url.pathname)) return require(path.join(ROOT, 'api', 'v1', 'auth', '[provider].js'))(req, res);
   const m = url.pathname.match(/^\/api\/v1\/([a-z]+)$/);
   if (m) {
     const file = path.join(ROOT, 'api', 'v1', m[1] + '.js');

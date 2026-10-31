@@ -28,12 +28,25 @@
   <!-- signed out -->
   <section id="gate" hidden>
     <h1 class="title">Your dashboard</h1>
-    <div class="card signin" id="google-card" hidden>
+    <div class="card signin" id="signin-card" hidden>
       <div>
         <h3>Sign in to manage your sites</h3>
         <p>Add your sites, get their keys, follow the setup guide and see only your own verdicts.</p>
       </div>
-      <a class="btn primary" href="/api/v1/google" id="google-btn">sign in with Google</a>
+      <div class="ways">
+        <a class="btn" href="/api/v1/auth/github" id="github-btn" hidden>sign in with GitHub</a>
+        <a class="btn" href="/api/v1/auth/google" id="google-btn" hidden>sign in with Google</a>
+      </div>
+      <form class="email-in" id="email-form" hidden>
+        <label>Or with your email<input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></label>
+        <button class="btn primary" type="submit">email me a code</button>
+      </form>
+      <form class="email-in" id="code-form" hidden>
+        <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes.</p>
+        <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456"></label>
+        <button class="btn primary" type="submit">sign in</button>
+        <button class="btn" type="button" id="code-back">use another email</button>
+      </form>
       <p class="err" id="signin-err" role="alert"></p>
     </div>
     <p class="lead gap"><span id="skip-acct" hidden>Or skip the account: </span>A project gives you two keys, a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
