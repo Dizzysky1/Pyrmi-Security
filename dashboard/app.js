@@ -1,5 +1,7 @@
-/* Pyrmi Security dashboard. The secret key lives in sessionStorage (or localStorage if "remember" is ticked) and is
-   only ever sent to this site's own API. Everything shown is escaped: user names come from your users. */
+/* Pyrmi Security dashboard. Two ways in: signed in (by email code, GitHub or Google; a session cookie this script never sees; every change
+   also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in sessionStorage (or localStorage if
+   "remember" is ticked) and is only ever sent to this site's own API. Everything shown is escaped: user names come
+   from your users. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
@@ -10,14 +12,17 @@
   function guardStart() { if (window.Pyrmi && !demo) Pyrmi.start().then(function (s) { guard = s; }, function () { guard = null; }); }
   guardStart();
   var KEY = 'pyrmi_sk', sk = null, timer = null, lastLoad = 0, data = null;
+  var me = null, pid = null; // signed in: the account, and the site being looked at
   try { sk = sessionStorage.getItem(KEY) || localStorage.getItem(KEY); } catch (e) { /* storage blocked */ }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-  function show(id) { ['gate', 'keys', 'dash'].forEach(function (x) { $(x).hidden = x !== id; }); }
+  function show(id) { ['gate', 'keys', 'dash', 'account'].forEach(function (x) { $(x).hidden = x !== id; }); }
   function api(method, path, body) {
     var h = { 'Content-Type': 'application/json' };
-    if (sk && !demo) h.Authorization = 'Bearer ' + sk;
-    return fetch('/api/v1/' + path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, credentials: 'omit' })
+    if (sk && !demo && !me) h.Authorization = 'Bearer ' + sk;
+    var own = me || path === 'me' || path.indexOf('auth/') === 0;
+    if (own) h['X-Pyrmi-CSRF'] = '1';
+    return fetch('/api/v1/' + path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, credentials: own ? 'same-origin' : 'omit' })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'http_' + r.status }; }).then(function (j) { j._status = r.status; return j; }); });
   }
   function ago(t) {
@@ -49,7 +54,7 @@
     }, function () { btn.disabled = false; $('create-err').textContent = 'Could not reach the server.'; });
   });
   $('k-saved').addEventListener('change', function () { $('k-go').disabled = !this.checked; });
-  $('k-go').addEventListener('click', function () { $('k-sk').textContent = ''; load(true); });
+  $('k-go').addEventListener('click', function () { $('k-sk').textContent = ''; $('k-saved').checked = false; $('k-go').disabled = true; if (me) location.hash = 'site=' + pid; else load(true); });
   $('login').addEventListener('submit', function (e) {
     e.preventDefault();
     var f = e.target; sk = f.sk.value.trim(); $('login-err').textContent = '';
@@ -58,7 +63,103 @@
       save(sk, f.remember.checked); f.sk.value = ''; load(true);
     });
   });
-  $('signout').addEventListener('click', function () { if (demo) { location.href = '/dashboard/'; return; } forget(); clearInterval(timer); show('gate'); });
+  $('signout').addEventListener('click', function () {
+    if (demo) { location.href = '/dashboard/'; return; }
+    if (me) { signOut(); return; }
+    forget(); clearInterval(timer); show('gate');
+  });
+
+  // ---- signing in ----
+  var SIGNIN_ERR = { cancelled: 'Sign-in was cancelled.', bad_state: 'That sign-in link expired. Try again.',
+    bad_id_token: 'Google didn\'t confirm a verified email for that account.', exchange_failed: 'The sign-in didn\'t go through. Try again.',
+    no_verified_email: 'Your GitHub account has no verified primary email. Verify one on GitHub and try again.',
+    github_not_configured: 'Sign in with GitHub isn\'t set up on this server yet.', google_not_configured: 'Sign in with Google isn\'t set up on this server yet.' };
+  if (q.get('signin')) $('signin-err').textContent = SIGNIN_ERR[q.get('signin')] || 'Sign-in didn\'t work. Try again.';
+  var codeEmail = '';
+  function codeStep(on) { $('email-form').hidden = on; $('code-form').hidden = !on; if (on) $('code-form').code.focus(); }
+  $('email-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target, btn = f.querySelector('button');
+    btn.disabled = true; $('signin-err').textContent = '';
+    (window.Pyrmi ? Pyrmi.flush() : Promise.resolve()).then(function () {
+      var token = guard && guard.token; guard = null;
+      codeEmail = f.email.value.trim();
+      return api('POST', 'auth/email?action=start', { email: codeEmail, pyrmiToken: token });
+    }).then(function (r) {
+      btn.disabled = false; guardStart();
+      if (!r.ok) { $('signin-err').textContent = r.message || r.error; return; }
+      $('code-to').textContent = codeEmail; codeStep(true);
+    }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
+  });
+  $('code-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target, btn = f.querySelector('button');
+    btn.disabled = true; $('signin-err').textContent = '';
+    api('POST', 'auth/email?action=verify', { email: codeEmail, code: f.code.value }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) { $('signin-err').textContent = r.message || r.error; if (r.error === 'too_many_tries') codeStep(false); return; }
+      f.reset(); codeStep(false); boot();
+    }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
+  });
+  $('code-back').addEventListener('click', function () { $('signin-err').textContent = ''; codeStep(false); });
+  function signOut() {
+    api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; clearInterval(timer); timer = null; history.replaceState(null, '', '/dashboard/'); boot(); });
+  }
+  $('a-signout').addEventListener('click', signOut);
+  $('back').addEventListener('click', function () { location.hash = ''; });
+  function dot(on, label) { return '<span class="' + (on ? 'on' : '') + '">' + (on ? '● ' : '○ ') + label + '</span>'; }
+  function sites() {
+    clearInterval(timer); timer = null; pid = null;
+    return api('GET', 'me').then(function (r) {
+      if (!r.ok) { me = null; return boot(); }
+      me = r.user; $('a-email').textContent = me.email; show('account');
+      $('sites').innerHTML = r.sites.length ? r.sites.map(function (x) {
+        return '<button class="card site" type="button" data-pid="' + esc(x.pid) + '"><b>' + esc(x.name) + '</b><code>' + esc(x.publicKey) + '</code>' +
+          '<span class="dots">' + dot(x.status.page, 'page') + dot(x.status.server, 'server') + '</span></button>';
+      }).join('') : '<p class="empty">No sites yet. Add your first one below.</p>';
+    });
+  }
+  $('sites').addEventListener('click', function (e) { var b = e.target.closest('[data-pid]'); if (b) location.hash = 'site=' + b.getAttribute('data-pid'); });
+  $('add-site').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target, btn = f.querySelector('button');
+    btn.disabled = true; $('add-err').textContent = '';
+    (window.Pyrmi ? Pyrmi.flush() : Promise.resolve()).then(function () {
+      var token = guard && guard.token; guard = null;
+      return api('POST', 'sites', { name: f.name.value, origins: lines(f.origins.value), pyrmiToken: token });
+    }).then(function (r) {
+      btn.disabled = false; guardStart();
+      if (!r.ok) { $('add-err').textContent = r.message || r.error; return; }
+      f.reset(); pid = r.project.pid;
+      $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey; show('keys');
+    }, function () { btn.disabled = false; $('add-err').textContent = 'Could not reach the server.'; });
+  });
+  $('claim').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target; $('claim-err').textContent = '';
+    api('POST', 'sites?action=claim', { secretKey: f.sk.value.trim() }).then(function (r) {
+      if (!r.ok) { $('claim-err').textContent = r.message || r.error; return; }
+      f.reset(); location.hash = 'site=' + r.site.pid;
+    });
+  });
+  $('g-check').addEventListener('click', function () { $('g-note').textContent = 'checking…'; load().then(function () { $('g-note').textContent = 'checked ' + new Date().toLocaleTimeString(); }); });
+  function guide(d) {
+    var p = d.project, st = d.status, origin = location.origin;
+    $('guide').hidden = false;
+    $('g1').textContent = '<script src="' + origin + '/sdk/pyrmi.js" data-site="' + p.publicKey + '"></script>\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); then send pyrmi.token along with it, and call Pyrmi.start() again after\n</script>';
+    $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\nconst v = await pyrmi.verify({ token: body.pyrmiToken, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });";
+    $('g3').textContent = 'Read ' + origin + '/install.md and add Pyrmi Security to this site. My public key is ' + p.publicKey + ' and my secret key is in the PYRMI_SECRET_KEY environment variable (don\'t write it into any file). Protect the requests worth protecting (sign-ups, logins, votes, checkouts, scores) and tell me which files you changed.';
+    $('g-page').className = st.page ? 'done' : ''; $('g-server').className = st.server ? 'done' : '';
+    var c = $('g-state');
+    c.className = 'chip ' + (st.connected ? 'accept' : st.page || st.server ? 'review' : 'info');
+    c.textContent = st.connected ? 'connected' : st.page ? 'page connected, waiting for your server' : st.server ? 'server connected, waiting for your page' : 'not connected yet';
+  }
+  function route() {
+    var m = /site=(p_[\w-]+)/.exec(location.hash);
+    if (me && m) { pid = m[1]; $('guide').hidden = true; return load(true); }
+    if (me) return sites();
+  }
+  addEventListener('hashchange', route);
 
   // ---- dashboard ----
   function chart(days) {
@@ -134,7 +235,7 @@
     e.preventDefault();
     var f = e.target, msg = $('settings-msg');
     msg.className = 'err'; msg.textContent = 'saving…';
-    api('PATCH', 'project', { name: f.name.value, settings: {
+    api('PATCH', me ? 'sites?pid=' + pid : 'project', { name: f.name.value, settings: {
       maxScore: f.maxScore.value.trim(), maxScorePerSec: f.maxScorePerSec.value.trim(), minDurationMs: f.minDurationMs.value.trim(),
       reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked } })
       .then(function (r) { if (!r.ok) { msg.textContent = r.message || r.error; return; } msg.className = 'err good'; msg.textContent = 'saved'; document.activeElement.blur(); load(); });
@@ -142,25 +243,40 @@
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });
   $('rotate-no').addEventListener('click', function () { $('rotate-confirm').hidden = true; });
   $('rotate-yes').addEventListener('click', function () {
-    api('POST', 'project?action=rotate', {}).then(function (r) {
+    api('POST', me ? 'sites?pid=' + pid + '&action=rotate' : 'project?action=rotate', {}).then(function (r) {
       $('rotate-confirm').hidden = true;
       if (!r.ok) return;
+      if (me) { $('r-sk').textContent = r.secretKey; $('rotate-out').hidden = false; return; }
       sk = r.secretKey; var remembered = false; try { remembered = !!localStorage.getItem(KEY); } catch (e) { /* ignore */ }
       save(sk, remembered); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
     });
   });
 
   function load(first) {
-    return api('GET', demo ? 'dashboard?demo=' + demo : 'dashboard').then(function (r) {
+    return api('GET', demo ? 'dashboard?demo=' + demo : me ? 'sites?pid=' + pid : 'dashboard').then(function (r) {
       if (!r.ok) {
+        if (me) { if (first) { location.hash = ''; } return; }
         if (r._status === 401 && !demo) { forget(); show('gate'); return; }
         if (first) { show(demo ? 'dash' : 'gate'); $(demo ? 'd-name' : 'login-err').textContent = r.message || 'Could not load the dashboard.'; }
         return;
       }
       show('dash'); render(r);
+      $('back').hidden = !me; $('signout').hidden = !!me;
+      if (me) guide(r); else $('guide').hidden = true;
       if (!timer) timer = setInterval(function () { if (!document.hidden) load(); tick(); }, 15000);
     }, function () { if (first) { show(demo ? 'dash' : 'gate'); } });
   }
 
-  if (demo || sk) load(true); else show('gate');
+  function boot() {
+    if (demo) return load(true);
+    return api('GET', 'me').then(function (r) {
+      if (r.ok) { me = r.user; return route(); }
+      var p = r.providers || {}, any = p.email || p.github || p.google;
+      $('signin-card').hidden = !any; $('skip-acct').hidden = !any;
+      $('github-btn').hidden = !p.github; $('google-btn').hidden = !p.google;
+      if (!p.email) { $('email-form').hidden = true; $('code-form').hidden = true; } else if ($('code-form').hidden) $('email-form').hidden = false;
+      if (sk) load(true); else show('gate');
+    }, function () { if (sk) load(true); else show('gate'); });
+  }
+  boot();
 })();
