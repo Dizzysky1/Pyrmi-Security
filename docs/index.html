@@ -74,7 +74,7 @@ createAccount(email, { flagged: v.verdict === 'review' });
 // For anything that matters (a payout, a prize, a leaderboard entry), only a corroborated accept
 // (const { trusted } = require('pyrmi-server')):
 if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></div>
-    <p><code>trusted(v)</code> is true only when the verdict is <code>accept</code> and its <code>client</code> is <code>corroborated</code>. A <code>review</code> never counts. It still isn't proof of a person: a script that copies everything the real one sends can pass, so keep your own limits as well, and for a deterministic game re-run the inputs with <code>simulate</code>.</p>
+    <p><code>trusted(v)</code> is true only when the verdict is <code>accept</code>, its <code>client</code> is <code>corroborated</code>, the browser saw a real key press or click, and every reason is a harmless one (<code>wrapped_runtime</code>, <code>devtools_open</code>, <code>ip_changed</code>, <code>idle_input</code>). The server decides it, so raising your thresholds never makes a tampered or automated session trusted. A <code>review</code> never counts. It still isn't proof of a person: a script that copies everything the real one sends can pass, so keep your own limits as well, and for a deterministic game re-run the inputs with <code>simulate</code>.</p>
     <p>Not on Node? It's one HTTPS call from your server:</p>
     <div class="code"><div class="code-h">any language <button class="copy" data-copy="d3">copy</button></div>
 <pre id="d3">curl https://pyrmi.com/api/v1/verify \

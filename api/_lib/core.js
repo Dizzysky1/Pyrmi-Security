@@ -284,7 +284,7 @@ function cleanSignals(raw) {
   const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x).replace(/[^\w.:-]/g, '').slice(0, 24)).filter(Boolean).slice(0, 10);
   const t = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) < 1e12 ? Number(v) : null);
   return { wd: !!r.wd, hl: !!r.hl, au: list(r.au), dt: n(r.dt), ut: n(r.ut), ih: n(r.ih), tp: list(r.tp), wr: list(r.wr), k: n(r.k), p: n(r.p), h: n(r.h), pt: t(r.pt), gt: t(r.gt),
-    sh: typeof r.sh === 'string' ? r.sh.replace(/[^\w]/g, '').slice(0, 16) : null, uv: list(r.uv) };
+    sh: typeof r.sh === 'string' ? r.sh.replace(/[^\w]/g, '').slice(0, 16) : null, uv: list(r.uv), ac: r.ac === true };
 }
 
 function mergeSignals(a, b) {
@@ -294,7 +294,18 @@ function mergeSignals(a, b) {
     dt: Math.max(a.dt || 0, b.dt), ut: Math.max(a.ut || 0, b.ut), ih: Math.max(a.ih || 0, b.ih),
     k: Math.max(a.k || 0, b.k), p: Math.max(a.p || 0, b.p), h: Math.max(a.h || 0, b.h),
     uac: !!(a.uac || b.uac), ipc: !!(a.ipc || b.ipc), uv: u(a.uv, b.uv),
+    ac: !!(a.ac || b.ac), // the browser saw a real key press or click (hasBeenActive only ever turns on)
   };
+}
+
+// `trusted` on a verdict: the gate for payouts, prizes and account changes. Unlike accept/review/reject it does not
+// move with a project's reviewAt/rejectAt: raising those to cut false positives must not turn a tampered or webdriver
+// session into a trusted one (round 8 re-test: reviewAt 50 trusted tp, reviewAt 80 trusted webdriver). It is an
+// allow-list, so a reason added later is untrusted until someone decides otherwise. Allowed: wrapped built-ins (error
+// trackers do that), a devtools hint, a network change (phones switch Wi-Fi to mobile data), a quiet long session.
+const TRUST_ALLOWS = new Set(['wrapped_runtime', 'devtools_open', 'ip_changed', 'idle_input']);
+function isTrusted(verdict, client, reasons, activated) {
+  return verdict === 'accept' && client === 'corroborated' && activated === true && reasons.every((r) => TRUST_ALLOWS.has(r.code));
 }
 
 // ---- projects ---------------------------------------------------------------------------------------------------
@@ -559,7 +570,7 @@ async function verify(project, body, ctx) {
   const score = hasScore ? Number(body.score) : null;
   const durationMs = body.durationMs === undefined || body.durationMs === null ? null : Number(body.durationMs);
   const player = cleanPlayer(body.player !== undefined ? body.player : body.user);
-  let sid = null, t = null, genuine = false;
+  let sid = null, t = null, genuine = false, activated = false;
 
   if (hasScore && (!Number.isFinite(score) || score < 0)) hard('bad_score');
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
@@ -601,7 +612,10 @@ async function verify(project, body, ctx) {
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
     if (rp && rp.check === 'mismatch') hard('replay_mismatch', String(rp.detail || '').slice(0, 120));
-    if (genuineSess) { reasons.push(...assess(sess, s, durationMs)); genuine = true; }
+    if (genuineSess) {
+      reasons.push(...assess(sess, s, durationMs)); genuine = true;
+      try { activated = JSON.parse(sess.sig || '{}').ac === true; } catch (_) { activated = false; }
+    }
     else reasons.push({ code: 'no_client', weight: WEIGHTS.no_client, detail: 'session record missing' });
   }
 
@@ -613,7 +627,10 @@ async function verify(project, body, ctx) {
   const ev = { t: now, sid, player, score: Number.isFinite(score) ? score : null, durationMs, verdict, risk, replay: replayCheck, reasons: reasons.map((r) => r.detail ? { code: r.code, detail: String(r.detail).slice(0, 120) } : { code: r.code }) };
   await logVerdict(project.pid, ev, genuine);
   const client = !genuine ? 'none' : reasons.some((r) => r.code === 'no_client') ? 'none' : reasons.some((r) => r.code === 'unverified_client') ? 'unverified' : 'corroborated';
-  return { ok: true, verdict, risk, client, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
+  // trusted also needs the browser's own word that a person pressed a key or clicked (ac === true from the current
+  // script), whatever the user agent says: a script claiming an old Safari could otherwise send ac: null.
+  const trusted = isTrusted(verdict, client, reasons, activated);
+  return { ok: true, verdict, risk, client, trusted, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
 async function logVerdict(pid, ev, genuine) {
@@ -699,6 +716,7 @@ async function dashboard(project) {
 }
 
 module.exports = {
+  TRUST_ALLOWS, isTrusted,
   DEFAULTS, DEMO, SITE, WEIGHTS, REASONS, HARD,
   createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret,
   startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,

@@ -198,8 +198,11 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
   running an edited copy. Telemetry can't tell those from a person. A re-tester put a deliberate forgery at 30 to 60
   minutes of reading this repo. That is the honest ceiling for client telemetry: a speed bump, not a boundary.
 - **Gate sensitive actions on more than "not rejected".** For payouts, prizes, leaderboards and account changes, use
-  `trusted(v)` from `pyrmi-server` (an `accept` whose `client` is `corroborated`; a `review` never counts), together
-  with your own server-side limits. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
+  `trusted(v)` from `pyrmi-server`, together with your own server-side limits. It reads `v.trusted`, which the server
+  sets only for an `accept` whose `client` is `corroborated`, whose browser saw a real key press or click (`ac: true`),
+  and whose every reason is harmless (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
+  with your thresholds: raising `reviewAt` to 50 or 80 turns a tampered runtime or webdriver session into an accept,
+  but never into a trusted one. A `review` never counts. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
 - **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
   built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
   1 day after they're replaced (`PYRMI_SDK_GRACE_DAYS`; the CDN caches the script for 5 minutes) so cached pages

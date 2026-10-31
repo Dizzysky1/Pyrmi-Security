@@ -19,6 +19,12 @@ export interface VerifyResult {
    * own browser can send what the real script would. 'unverified' adds the unverified_client reason.
    */
   client?: 'corroborated' | 'unverified' | 'none';
+  /**
+   * The gate for payouts, prizes and account changes: an accept with corroborated telemetry, a real key press or
+   * click, and no reason beyond wrapped_runtime, devtools_open, ip_changed or idle_input. Independent of
+   * reviewAt/rejectAt. Use trusted(v) rather than reading it, so a failOpen stand-in verdict is never trusted.
+   */
+  trusted?: boolean;
   session?: string | null;
   player?: string;
   score?: number | null;
@@ -55,6 +61,6 @@ export declare class Pyrmi {
   constructor(opts?: PyrmiOptions);
   verify(input: VerifyInput): Promise<VerifyResult>;
 }
-/** True only for an accept whose telemetry the server corroborated. Use it to gate sensitive actions. */
+/** The server's `trusted` flag, safely (false for a failOpen stand-in). Use it to gate sensitive actions. */
 export declare function trusted(v: VerifyResult | null | undefined): boolean;
 export default Pyrmi;

@@ -53,6 +53,10 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 - [x] **Corroboration had shortcuts** (round 8 re-test). `pt: null`, a previous build's fingerprint and a missing `ac`
   each skipped a check and came back `corroborated`. Fixed: numeric `pt` and an `ac` are required from the current
   build, only the current build can be corroborated, and the grace period for old builds is 1 day.
+- [x] **`trusted(v)` followed the site's thresholds** (master list). With `reviewAt` raised to 50 or 80, a tampered
+  runtime, webdriver or input-hiding session became an accept and so passed `trusted(v)`. The server now sets
+  `trusted` itself from an allow-list of harmless reasons, a corroborated accept and `ac: true`, independent of
+  thresholds; `pyrmi-server` uses it and falls back to the same allow-list. Tests: `tests/trusted.test.js`.
 - [ ] **A full mimic still corroborates.** A script that starts its own session and sends exactly what the real one
   would, page clock included, is an accept. Inherent; documented. The sample and `pyrmi-server`'s `trusted(v)` gate
   sensitive actions on a corroborated accept, and `simulate` is the check that doesn't depend on the client.

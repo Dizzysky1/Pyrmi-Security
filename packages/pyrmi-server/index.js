@@ -19,7 +19,7 @@ class Pyrmi {
     if (typeof window !== 'undefined' && typeof document !== 'undefined') throw new Error('pyrmi-server: this runs on your server only, never in the browser');
   }
 
-  // Returns { verdict: 'accept'|'review'|'reject', risk, client: 'corroborated'|'unverified'|'none', reasons, session, player, score }.
+  // Returns { verdict: 'accept'|'review'|'reject', risk, client: 'corroborated'|'unverified'|'none', trusted, reasons, session, player, score }.
   // user is an alias for player. score is optional: send it when the action carries a number you want capped.
   // simulate (optional): (replay) => ({ score, durationMs }) re-runs a deterministic app from its recorded inputs on
   // your server. If it gives a different score, the verdict is 'reject' with reason replay_mismatch.
@@ -53,13 +53,20 @@ class Pyrmi {
   }
 }
 
-// The gate for anything that matters (payouts, prizes, leaderboards, account changes): an accept whose telemetry the
-// server could corroborate. A review is never trusted, nor is the stand-in verdict from failOpen when Pyrmi is down.
-// This still isn't proof of a person: a script that copies the real one closely enough can pass, so pair it with
-// your own limits (maxScore, minDurationMs, rate limits) and, for a deterministic game, simulate.
+// The gate for anything that matters (payouts, prizes, leaderboards, account changes). Pyrmi works it out on the
+// server as `trusted`: an accept whose telemetry it corroborated, from a page a person really pressed or clicked on,
+// with no reason beyond the harmless ones below. It doesn't move with your reviewAt/rejectAt, so tuning those to cut
+// false positives can't make a tampered or webdriver session trusted. A review is never trusted, nor is the stand-in
+// verdict from failOpen when Pyrmi is down. This still isn't proof of a person: a script that copies the real one
+// closely enough can pass, so pair it with your own limits (maxScore, minDurationMs, rate limits), Turnstile, and,
+// for a deterministic game, simulate.
+const TRUST_ALLOWS = new Set(['wrapped_runtime', 'devtools_open', 'ip_changed', 'idle_input']);
 function trusted(v) {
-  return !!(v && v.ok !== false && !v.unverified && v.verdict === 'accept' && v.client === 'corroborated');
+  if (!v || v.ok === false || v.unverified || v.verdict !== 'accept' || v.client !== 'corroborated') return false;
+  if (typeof v.trusted === 'boolean') return v.trusted;
+  // An older Pyrmi server that doesn't send `trusted`: the same allow-list over the reasons.
+  return (v.reasons || []).every((r) => r && TRUST_ALLOWS.has(r.code));
 }
 
-module.exports = { Pyrmi, trusted };
+module.exports = { Pyrmi, trusted, TRUST_ALLOWS };
 module.exports.default = Pyrmi;
