@@ -11,13 +11,14 @@
 <meta name="theme-color" content="#07070c">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/site.css">
 <style>
-  .doc{max-width:780px}
-  .doc h1{font-size:34px;margin:16px 0 8px;letter-spacing:-.5px}
-  .doc h2{font-size:22px;margin:38px 0 10px}
-  .doc p,.doc li{color:#cfd2ee;line-height:1.65}
+  .doc{max-width:820px;margin:30px 0 0;padding:6px 30px 30px;border-radius:22px}
+  @media(max-width:560px){.doc{padding:4px 18px 22px}}
+  .doc h1{font-family:var(--display);font-weight:700;font-size:34px;margin:22px 0 8px;letter-spacing:-.02em}
+  .doc h2{font-family:var(--display);font-weight:500;font-size:21px;margin:38px 0 10px;letter-spacing:-.01em}
+  .doc p,.doc li{color:#d6d3f0;line-height:1.65}
   .doc .code{margin:14px 0}
   .doc table{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0}
   .doc th,.doc td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -27,18 +28,19 @@
 </style>
 </head>
 <body>
-<div id="bg"></div>
-<div class="scan"></div>
+<div id="bg-fallback" class="quiet"></div>
+<canvas id="gl" data-mode="quiet" aria-hidden="true"></canvas>
+<div class="veil"></div>
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
     <nav><a href="/#demo">sandbox</a><a href="/docs/">docs</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
   </header>
 
-  <main class="doc">
+  <main class="doc glass">
     <h1>Docs</h1>
     <p>Pyrmi Security checks requests from your site in two halves. A browser script starts a signed session on a real page load and reports signs of bots and tampering. Your server then asks Pyrmi for a verdict before it trusts the request: a sign-up, a login, a vote, a checkout, a score, or any endpoint that bots and scrapers hit. You need both halves: the browser half alone protects nothing, because whoever runs the browser controls it.</p>
-    <div class="toc"><a href="#start">quick start</a><a href="#client">browser script</a><a href="#server">server check</a><a href="#verdicts">verdicts</a><a href="#settings">settings</a><a href="#values">values and clocks</a><a href="#replay">replay check</a><a href="#agents">ai agents</a><a href="#self-host">self-hosting</a><a href="#limits">limits</a></div>
+    <div class="toc"><a href="#start">quick start</a><a href="#client">browser script</a><a href="#server">server check</a><a href="#verdicts">verdicts</a><a href="#settings">settings</a><a href="#values">values and clocks</a><a href="#replay">replay check</a><a href="#agents">ai agents</a><a href="#self-host">self-hosting</a><a href="#dogfood">pyrmi.com itself</a><a href="#limits">limits</a></div>
 
     <h2 id="start">Quick start</h2>
     <ol>
@@ -58,6 +60,7 @@
       <tr><td><code>Pyrmi.report()</code></td><td>What the script has noticed so far, if you want to show it.</td></tr>
     </table>
     <p>Send <code>token</code> to your server with the request. The script watches for webdriver and headless browsers, bot frameworks, scripted input events, inhumanly fast or even typing and clicking, replaced built-ins like <code>fetch</code> and <code>performance.now</code>, a page clock that doesn't match real time, and probably-open devtools. It sends this as small beacons every 10 seconds while the tab is visible.</p>
+    <p>The script you load is a scrambled build (names mangled, strings and property names encoded), and it reports a fingerprint of its own code, so an edited copy shows up as <code>tampered_runtime</code>. Each session also gets its own random field names and key for its telemetry, so a bot that copied one session's requests can't replay that shape on the next. These raise the cost of faking a browser; they don't make it impossible, which is why the verdict on your server is the real check. The readable source is <code>src/sdk/pyrmi.js</code> in the repo.</p>
 
     <h2 id="server">Server check</h2>
     <div class="code"><div class="code-h">node · npm install pyrmi-server <button class="copy" data-copy="d2">copy</button></div>
@@ -118,11 +121,15 @@ createAccount(email, { flagged: v.verdict === 'review' });</pre></div>
     <h2 id="self-host">Self-hosting</h2>
     <p>Everything is MIT, so you can run your own copy: deploy the repo to Vercel, add a free Upstash Redis from Vercel's Storage tab (it sets <code>KV_REST_API_URL</code> and <code>KV_REST_API_TOKEN</code>), and set <code>PYRMI_SECRET</code> to a long random string. Then point the script at it with <code>data-api="https://your-deploy/api/v1"</code> and <code>pyrmi-server</code> with <code>endpoint</code>. For local work: <code>PYRMI_KV=memory node scripts/dev.js</code>.</p>
 
+    <h2 id="dogfood">How pyrmi.com protects itself</h2>
+    <p>The dashboard's "new project" form sends a Pyrmi token, and the API only creates the project on a clean accept. You can watch what it catches on <a href="/dashboard/?demo=site">pyrmi.com's own dashboard</a>. Every endpoint is also rate limited per network, and wrong secret keys are capped per network.</p>
+
     <h2 id="limits">Limits, honestly</h2>
     <div class="note">Pyrmi can't block devtools or stop code running in a visitor's browser, and nothing can: the visitor owns that browser. A determined attacker can hide most browser signals. What they can't fake is a signed, single-use session from a real page load, timing that fits the real time it took, and, for deterministic apps, inputs that reproduce the result. Treat browser signals as evidence, and let your server's verdict be the gate.</div>
   </main>
   <footer>Pyrmi Security · open source, MIT · <a href="/">home</a> · <a href="/dashboard/">dashboard</a></footer>
 </div>
 <script src="/site.js"></script>
+<script type="module" src="/bg/singularity.js"></script>
 </body>
 </html>

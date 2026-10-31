@@ -9,6 +9,8 @@ const { send, fail, readJson, bearer, fromBrowser, handle } = require('../_lib/h
 module.exports = handle(async (req, res) => {
   if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
   if (fromBrowser(req)) return fail(res, 400, 'secret_key_in_browser', 'Call /verify from your server. A secret key in the browser can be stolen.');
+  // No per-network cap on wrong keys here: customer servers often share outbound addresses (serverless), and a
+  // 180-bit key can't be guessed anyway.
   const project = await core.projectBySecretKey(bearer(req));
   if (!project) return fail(res, 401, 'bad_secret_key', 'Missing or wrong secret key.');
   const body = await readJson(req, 16384);
