@@ -28,7 +28,28 @@
   <!-- signed out -->
   <section id="gate" hidden>
     <h1 class="title">Your dashboard</h1>
-    <p class="lead">No account needed. A project gives you two keys: a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
+    <div class="card signin" id="signin-card" hidden>
+      <div>
+        <h3>Sign in to manage your sites</h3>
+        <p>Add your sites, get their keys, follow the setup guide and see only your own verdicts.</p>
+      </div>
+      <div class="ways">
+        <a class="btn" href="/api/v1/auth/github" id="github-btn" hidden>sign in with GitHub</a>
+        <a class="btn" href="/api/v1/auth/google" id="google-btn" hidden>sign in with Google</a>
+      </div>
+      <form class="email-in" id="email-form" hidden>
+        <label>Or with your email<input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></label>
+        <button class="btn primary" type="submit">email me a code</button>
+      </form>
+      <form class="email-in" id="code-form" hidden>
+        <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes.</p>
+        <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456"></label>
+        <button class="btn primary" type="submit">sign in</button>
+        <button class="btn" type="button" id="code-back">use another email</button>
+      </form>
+      <p class="err" id="signin-err" role="alert"></p>
+    </div>
+    <p class="lead gap"><span id="skip-acct" hidden>Or skip the account: </span>A project gives you two keys, a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
     <div class="grid2">
       <form class="card" id="create">
         <h3>New project</h3>
@@ -45,6 +66,35 @@
         <button class="btn" type="submit">open dashboard</button>
         <p class="err" id="login-err" role="alert"></p>
         <p class="muted small-t">Or look around the <a href="?demo=1">public dashboard</a> for the pyrmi.com sandbox, or watch <a href="?demo=site">pyrmi.com protect itself</a>.</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- signed in: your sites -->
+  <section id="account" hidden>
+    <div class="dash-h">
+      <div>
+        <h1 class="title">Your sites</h1>
+        <div class="muted small-t">signed in as <span id="a-email"></span></div>
+      </div>
+      <button class="btn" id="a-signout">sign out</button>
+    </div>
+    <div id="sites" class="sites"></div>
+    <div class="grid2 gap">
+      <form class="card" id="add-site">
+        <h3>Add a site</h3>
+        <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
+        <label>Allowed pages <span class="muted">(optional, one per line)</span>
+          <textarea name="origins" rows="2" placeholder="https://mysite.com"></textarea></label>
+        <button class="btn primary" type="submit">add site</button>
+        <p class="err" id="add-err" role="alert"></p>
+      </form>
+      <form class="card" id="claim">
+        <h3>Bring in an existing project</h3>
+        <p class="muted small-t">Made a project with keys only? Its secret key moves it into this account.</p>
+        <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
+        <button class="btn" type="submit">add to my account</button>
+        <p class="err" id="claim-err" role="alert"></p>
       </form>
     </div>
   </section>
@@ -69,7 +119,20 @@
         <h1 class="title" id="d-name"></h1>
         <div class="muted small-t"><span id="d-demo" hidden class="chip info">public demo · read only</span> public key <code id="d-pk"></code> <button class="copy" data-copy="d-pk">copy</button> · <span id="d-updated"></span></div>
       </div>
-      <button class="btn" id="signout">sign out</button>
+      <div class="acts"><button class="btn" id="back" hidden>all sites</button><button class="btn" id="signout">sign out</button></div>
+    </div>
+
+    <div class="panel guide" id="guide" hidden>
+      <div class="panel-h">link your site <span id="g-state" class="chip info">not connected yet</span></div>
+      <ol class="steps-list">
+        <li id="g-page"><b>Add the script to your pages.</b> Put this before your own scripts, then call <code>Pyrmi.start()</code> when the page loads.
+          <div class="code"><div class="code-h">html <button class="copy" data-copy="g1">copy</button></div><pre id="g1"></pre></div></li>
+        <li id="g-server"><b>Check each protected request on your server.</b> Set <code>PYRMI_SECRET_KEY</code> in your server's environment, then:
+          <div class="code"><div class="code-h">node <button class="copy" data-copy="g2">copy</button></div><pre id="g2"></pre></div></li>
+        <li><b>Or let your coding agent do both.</b> Paste this into Claude Code, Cursor or another agent:
+          <div class="code"><div class="code-h">prompt <button class="copy" data-copy="g3">copy</button></div><pre id="g3"></pre></div></li>
+      </ol>
+      <div class="acts"><button class="btn" type="button" id="g-check">check again</button><span class="muted small-t" id="g-note"></span></div>
     </div>
 
     <div class="tiles">
