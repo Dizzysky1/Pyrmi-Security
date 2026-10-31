@@ -196,7 +196,7 @@ test('a session is not shipped a telemetry key, and a malformed beacon does not 
   // The per-session shape key used to ship to the client (and so protected nothing); it is gone now.
   assert.equal(s.x, undefined);
   // Garbage telemetry is dropped with a 400...
-  const garbage = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: 'not-an-object' }), { 'Content-Type': 'text/plain' });
+  const garbage = await call('POST', '/api/v1/signal', JSON.stringify({ token: s.token, signals: 'not-an-object' }), { 'Content-Type': 'text/plain', Origin: 'https://game.example' });
   assert.equal(garbage.status, 400);
   // ...but it must NOT permanently flag the session (was F-10: one bad beacon tainted the whole session).
   await beacon(s, {});

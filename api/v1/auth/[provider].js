@@ -31,7 +31,7 @@ module.exports = handle(async (req, res) => {
   if (!provider) return fail(res, 404, 'not_found');
 
   if (provider === 'email') {
-    if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
+    if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Use POST.', { Allow: 'POST' });
     if (!accounts.emailConfigured()) return fail(res, 503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
     accounts.checkCsrf(req);
     const body = await readJson(req, 4096);
@@ -44,13 +44,13 @@ module.exports = handle(async (req, res) => {
     }
     if (q.get('action') === 'verify') {
       await core.limitIp(ip, 'emailverify', 600, 'PYRMI_SIGNINS_PER_IP', 30);
-      const r = await accounts.emailVerify(body);
+      const r = await accounts.emailVerify(body, ip);
       return send(res, 200, { ok: true }, { 'Set-Cookie': r.setCookies });
     }
     return fail(res, 400, 'bad_action');
   }
 
-  if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Use GET.', { Allow: 'GET' });
   await core.limitIp(ip, 'oauth', 600, 'PYRMI_SIGNINS_PER_IP', 30);
   if (!q.has('code') && !q.has('error')) {
     const s = await accounts.oauthStart(req, provider);

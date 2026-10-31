@@ -51,5 +51,5 @@ module.exports = handle(async (req, res) => {
     if (turnstile.configured()) await turnstile.check((await readJson(req, 4096)).turnstileToken, ip, 'delete', req.headers.host);
     await accounts.deleteSite(user.uid, p); return send(res, 200, { ok: true });
   }
-  fail(res, 405, 'method_not_allowed');
+  fail(res, 405, 'method_not_allowed', undefined, { Allow: 'GET, POST, PATCH, DELETE' });
 });

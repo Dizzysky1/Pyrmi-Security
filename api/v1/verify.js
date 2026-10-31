@@ -7,7 +7,7 @@ const core = require('../_lib/core');
 const { send, fail, readJson, bearer, fromBrowser, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
-  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Use POST.', { Allow: 'POST' });
   if (fromBrowser(req)) return fail(res, 400, 'secret_key_in_browser', 'Call /verify from your server. A secret key in the browser can be stolen.');
   // No per-network cap on wrong keys here: customer servers often share outbound addresses (serverless), and a
   // 180-bit key can't be guessed anyway.

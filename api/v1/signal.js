@@ -7,7 +7,7 @@ const { send, fail, readJson, clientIp, cors, handle } = require('../_lib/http')
 module.exports = handle(async (req, res) => {
   cors(req, res, null); // the token is what's checked here, not the origin
   if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
-  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed');
+  if (req.method !== 'POST') return fail(res, 405, 'method_not_allowed', 'Use POST.', { Allow: 'POST, OPTIONS' });
   await core.limitIp(clientIp(req), 'sig', 600, 'PYRMI_SIGNALS_PER_IP', 1500);
   const body = await readJson(req, 8192);
   // Origin and Sec-Fetch-Site are set by the browser itself (page code can't change them), so they're compared with
