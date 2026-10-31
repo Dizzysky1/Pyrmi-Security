@@ -57,7 +57,8 @@ nav a.nav-cta:hover{border-color:var(--red2);box-shadow:0 0 18px rgba(255,46,85,
 .hero{min-height:calc(100svh - 90px);display:flex;flex-direction:column;justify-content:center;padding:40px 0;max-width:600px}
 .eyebrow{font-size:11px;color:var(--violet2);margin-bottom:20px}
 .hero h1{font-family:var(--display);font-size:clamp(32px,5.4vw,60px);line-height:1.06;margin:0 0 20px;font-weight:700;letter-spacing:-.02em}
-.hero h1 .g{background:linear-gradient(90deg,var(--red2),var(--violet2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero h1 .g{color:var(--red2);position:relative;white-space:nowrap;text-shadow:0 0 28px rgba(255,46,85,.45)}
+.hero h1 .g::after{content:"";position:absolute;left:0;right:0;bottom:-.06em;height:.07em;border-radius:9px;background:var(--red2);transform-origin:left;box-shadow:0 0 14px rgba(255,46,85,.7)}
 .hero p{color:var(--muted);font-size:18px;margin:0 0 30px;line-height:1.55;max-width:520px}
 .cta{display:flex;gap:12px;flex-wrap:wrap}
 @media(max-width:899px){
@@ -133,3 +134,51 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--violet);outline-
 footer{border-top:1px solid var(--line);margin-top:40px;padding:26px 0;color:var(--muted);font-size:13px;text-align:center}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion: reduce){.btn,canvas#gl{transition:none}}
+
+/* ---- landing motion (only with html.motion, which intro.js sets unless reduced motion is on) ---- */
+#intro{display:none}
+html.intro #intro{display:flex;position:fixed;inset:0;z-index:20;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:var(--void);transition:background-color .6s ease .1s}
+#intro .mark{font-family:var(--display);font-weight:700;font-size:clamp(44px,11vw,128px);letter-spacing:.3em;margin-right:-.3em;display:flex}
+#intro .mark span{display:inline-block;opacity:0;filter:blur(14px);transform:translateY(.25em) scale(1.5);animation:mark-in .7s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--i) * 80ms + 80ms)}
+#intro .mark .r{color:var(--red);text-shadow:0 0 30px rgba(255,46,85,.9)}
+#intro .mark-sub{font-size:12px;color:var(--violet2);letter-spacing:.6em;margin-right:-.6em;opacity:0;animation:fade-in .6s ease .55s forwards}
+#intro .skip{position:absolute;right:20px;bottom:20px;background:none;border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:7px 14px;font-size:10px;cursor:pointer;opacity:0;animation:fade-in .4s ease .4s forwards}
+#intro .skip:hover{color:var(--ink);border-color:var(--line2)}
+@keyframes mark-in{to{opacity:1;filter:blur(0);transform:none}}
+@keyframes fade-in{to{opacity:1}}
+/* the wordmark falls into the singularity and the dark lifts off the scene */
+html.intro-out #intro{background-color:transparent;pointer-events:none}
+html.intro-out #intro .skip{pointer-events:auto}
+html.intro-out #intro .mark,html.intro-out #intro .mark-sub{transition:transform .6s cubic-bezier(.6,0,.9,.4),opacity .5s ease .1s,filter .6s;transform:translate(22vw,-4vh) scale(.08);opacity:0;filter:blur(6px)}
+@media(max-width:899px){html.intro-out #intro .mark,html.intro-out #intro .mark-sub{transform:translate(0,12vh) scale(.08)}}
+html.intro-skip #intro{transition:opacity .3s;opacity:0}
+html.intro #bg-fallback{animation:bg-in 1.8s cubic-bezier(.2,.8,.2,1) .7s both}
+@keyframes bg-in{from{opacity:0;transform:scale(1.25)}to{opacity:1;transform:none}}
+
+/* hero: everything waits, then comes in one piece at a time; headline words rise out of a blur */
+html.motion .hero>*{opacity:0;transform:translateY(16px)}
+html.motion .hero h1{opacity:1;transform:none}
+html.motion .hero h1 .w{display:inline-block;opacity:0;transform:translateY(.45em) rotate(2deg);filter:blur(8px)}
+html.motion .hero h1 .g::after{transform:scaleX(0)}
+html.hero-in .hero>*,html.shown .hero>*{opacity:1;transform:none;transition:opacity .7s ease,transform .8s cubic-bezier(.2,.8,.2,1)}
+html.hero-in .hero .eyebrow{transition-delay:0s}
+html.hero-in .hero h1 .w,html.shown .hero h1 .w{opacity:1;transform:none;filter:none;
+  transition:opacity .6s ease,transform .8s cubic-bezier(.2,.8,.2,1),filter .6s ease;transition-delay:calc(80ms + var(--i) * 55ms)}
+html.hero-in .hero h1 .g::after,html.shown .hero h1 .g::after{transform:scaleX(1);transition:transform .7s cubic-bezier(.7,0,.2,1) calc(200ms + var(--n,8) * 55ms)}
+html.hero-in .hero>p{transition-delay:calc(200ms + var(--n,8) * 55ms)}
+html.hero-in .hero>.cta{transition-delay:calc(320ms + var(--n,8) * 55ms)}
+html.intro-skip .hero *{transition-duration:.3s !important;transition-delay:0s !important}
+
+/* scroll reveals */
+html.motion .rv{opacity:0;transform:translateY(26px) scale(.985)}
+html.motion .rv.in{opacity:1;transform:none;transition:opacity .7s ease var(--d,0ms),transform .9s cubic-bezier(.2,.8,.2,1) var(--d,0ms)}
+html.motion h2.sec.rv::after{transform:scaleX(0);transform-origin:left}
+html.motion h2.sec.rv.in::after{transform:scaleX(1);transition:transform 1.1s cubic-bezier(.7,0,.2,1) .15s}
+
+/* a soft light under the pointer on cards */
+@media (hover:hover){
+  .card,.mini,.panel,.code{background-image:radial-gradient(260px circle at var(--mx,-300px) var(--my,-300px),rgba(185,162,255,.09),transparent 60%)}
+  .card:hover,.mini:hover{border-color:var(--line2)}
+}
+
