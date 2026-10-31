@@ -15,7 +15,7 @@ const nextIp = () => '198.51.100.' + (ipn++);
 const UA = 'audit-ua';
 async function freshProject(settings) {
   const ip = nextIp();
-  const p = await core.createProject({ name: 'Audit' }, ip, 'owner-audit');
+  const p = await core.createProject({ name: 'Audit', origins: ['https://audit.example'] }, ip, 'owner-audit');
   const project = settings ? await core.updateSettings(await core.loadProject(p.pid), settings) : await core.loadProject(p.pid);
   return { ...p, project, ip };
 }
@@ -50,7 +50,7 @@ test('A2-01: a key left behind by racing rotations stops working once the owner 
 // A2-02: the "already used" marker lived for the project's CURRENT sessionTtlSec + 1h. Lower the TTL after tokens were
 // issued and the marker expired long before the token did, so the same token was accepted a second time.
 test('A2-02: the single-use marker outlives the token even if the session TTL is lowered later', async () => {
-  const { project, ip } = await freshProject({ sessionTtlSec: 86400 });
+  const { project, ip } = await freshProject({ sessionTtlSec: 86400, minDurationMs: 0 });
   const s = await cleanSession(project, ip);
   const lowered = await core.updateSettings(project, { sessionTtlSec: 60 });
   const v = await core.verify(lowered, { token: s.token, player: 'a' }, { ip });

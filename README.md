@@ -58,12 +58,16 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | env var | needed | what |
 | --- | --- | --- |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | yes | Upstash Redis. Vercel → Storage → Upstash for Redis fills both in. (`UPSTASH_REDIS_REST_*` also works.) |
-| `PYRMI_SECRET` | strongly recommended | 32+ random characters that sign session tokens. Without it, one is generated and kept in Redis, which works but means anyone with Redis access could forge tokens. |
-| `PYRMI_KV_PREFIX` | no | key prefix in Redis. Defaults to `live:` in production and `preview:` on previews, so they never mix |
+| `PYRMI_SECRET` | yes | 32+ random characters that sign session tokens. Without it the API answers 503 (`secret_not_configured`) instead of signing anything: it used to fall back to a secret kept in Redis, which anyone who could read the store could use to forge tokens. Only the in-memory store (`PYRMI_KV=memory`) makes up a secret for the process. |
+| `PYRMI_KV_PREFIX` | no | key prefix in Redis. Defaults to `live:` in production and `preview:` on previews, so they never mix. A prefix is not a permission: give previews their own database, or no Redis at all (`PYRMI_KV=memory` on Preview only), as pyrmi.com does |
 | `PYRMI_SIGNUPS` | no | set to `off` to stop new projects being created |
-| `PYRMI_MAX_PROJECTS` | no | total project cap (default 500) |
+| `PYRMI_MAX_PROJECTS` | no | total project cap (default 2000) |
+| `PYRMI_MAX_ANON_PROJECTS` | no | of those, how many can be made without an account, with the key-only form (default 200), so that form alone can't fill the server |
+| `PYRMI_REQUIRE_ORIGINS` | no | `new` (default): a new project must register the pages that will start sessions, and keep at least one unless its owner turns `requireOrigins` off. `all`: every project, older ones too. `off`: nobody has to |
 | `PYRMI_PROJECTS_PER_IP` | no | new projects per network per day (default 3) |
-| `PYRMI_SESSIONS_PER_DAY` | no | sessions per project per day (default 20000), protects the free Redis quota |
+| `PYRMI_SESSIONS_PER_DAY` | no | sessions per project per day (default 20000), protects the free Redis quota. Past it, only networks that already started more than `PYRMI_SESSIONS_PER_IP_OVER_QUOTA` (default 20) today are refused, so a few heavy sources can't lock everyone else out. The dashboard warns at 80% |
+| `PYRMI_SESSIONS_HARD_PER_DAY` | no | the hard ceiling past which every new session for a project is refused (default 5x `PYRMI_SESSIONS_PER_DAY`) |
+| `PYRMI_SESSIONS_PER_IP_PER_DAY` | no | sessions per project per network per day (default 2000). An IPv6 /64 counts as one network everywhere |
 | `PYRMI_SESSIONS_PER_IP` | no | sessions per network per 10 minutes (default 150) |
 | `PYRMI_VERIFIES_PER_MIN` | no | verifies per project per minute for sessions from one network (default 60) |
 | `PYRMI_SIGNALS_PER_IP` | no | telemetry beacons per network per 10 minutes (default 1500) |
@@ -83,6 +87,8 @@ Static files plus the functions in `api/` deploy with zero config. Storage is Up
 | `PYRMI_EMAIL_CODES_PER_IP` | no | sign-in codes sent per network per 10 minutes (default 10) |
 | `PYRMI_EMAIL_CODES_PER_ADDRESS` | no | sign-in codes sent to one address from one network per hour (default 5) |
 | `PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL` | no | sign-in codes sent to one address from anywhere per hour (default 20) |
+| `PYRMI_EMAIL_CODES_PER_IP_PER_DAY` | no | sign-in codes per network per day, whatever the addresses (default 30) |
+| `PYRMI_EMAIL_STARTS_PER_DAY` | no | codes per day to addresses with no account yet (default 500; also at most `PYRMI_EMAIL_NEW_PER_HOUR`, default 100, in any hour). Past it a new address gets the same answer but no mail, so the cap never says which addresses have accounts. People who already have an account keep getting codes, up to `PYRMI_EMAIL_KNOWN_PER_DAY` (default 5000). 80% of either is logged |
 | `PYRMI_PROXY_HOPS` | no | only when self-hosting behind your own proxies: how many there are, so the client address is read from the right of `X-Forwarded-For`. Leave unset on Vercel. |
 | `PYRMI_ACCOUNT_CALLS_PER_MIN` | no | account calls per network per minute (default 60) |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | recommended in production | a [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) widget's keys. With both set, sign-in codes, new projects and sites, and claiming, rotating or deleting a site each need a human check. Off while either is missing. |

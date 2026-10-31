@@ -5,6 +5,10 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
+  // The browser script to tell people to use: a fixed version with its integrity hash (scripts/build-sdk.js keeps this
+  // line up to date). That file never changes, so a page that pins it can't be handed a different script.
+  var SDK_PATH = '/sdk/1.3.0/pyrmi.js', SDK_SRI = 'sha384-I4k52N6yLHLTOlv4IKBJ2FHbCPZ8Rz+nhpU7E5woSDO+zoAsGmJD9f1uW2MoDruR';
+  var sdkTag = function (origin, pk) { return '<script src="' + origin + SDK_PATH + '" integrity="' + SDK_SRI + '" crossorigin="anonymous" data-site="' + pk + '"></script>'; };
   var q = new URLSearchParams(location.search);
   var demo = q.has('demo') ? (q.get('demo') === 'site' ? 'site' : '1') : null;
   // pyrmi.com protects its own "new project" form with Pyrmi: start a session now, send its token with the form.
@@ -176,7 +180,7 @@
   function guide(d) {
     var p = d.project, st = d.status, origin = location.origin;
     $('guide').hidden = false;
-    $('g1').textContent = '<script src="' + origin + '/sdk/pyrmi.js" data-site="' + p.publicKey + '"></script>\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); then send pyrmi.token along with it, and call Pyrmi.start() again after\n</script>';
+    $('g1').textContent = sdkTag(origin, p.publicKey) + '\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); then send pyrmi.token along with it, and call Pyrmi.start() again after\n</script>';
     $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\nconst v = await pyrmi.verify({ token: body.pyrmiToken, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });";
     $('g3').textContent = 'Read ' + origin + '/install.md and add Pyrmi Security to this site. My public key is ' + p.publicKey + ' and my secret key is in the PYRMI_SECRET_KEY environment variable (don\'t write it into any file). Protect the requests worth protecting (sign-ups, logins, votes, checkouts, scores) and tell me which files you changed.';
     $('g-page').className = st.page ? 'done' : ''; $('g-server').className = st.server ? 'done' : '';
@@ -213,6 +217,9 @@
     data = d; var p = d.project;
     $('d-name').textContent = p.name; $('d-pk').textContent = p.publicKey; $('d-demo').hidden = !p.demo;
     $('owner-only').hidden = !!p.demo; $('signout').textContent = p.demo ? 'exit demo' : 'sign out';
+    var w = d.warnings || [];
+    $('warns').hidden = !w.length;
+    $('warn-list').innerHTML = w.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('');
     var tot = { sessions: 0, accept: 0, review: 0, reject: 0 }, reasons = {};
     d.days.forEach(function (x) { tot.sessions += x.sessions; tot.accept += x.accept; tot.review += x.review; tot.reject += x.reject;
       for (var k in x.reasons) reasons[k] = (reasons[k] || 0) + x.reasons[k]; });
@@ -245,7 +252,7 @@
         f.minDurationMs.value = s.minDurationMs; f.reviewAt.value = s.reviewAt; f.rejectAt.value = s.rejectAt;
         f.origins.value = (s.origins || []).join('\n'); f.strictClock.checked = !!s.strictClock;
       }
-      $('i-snippet').textContent = '<script src="' + location.origin + '/sdk/pyrmi.js" data-site="' + p.publicKey + '"></script>';
+      $('i-snippet').textContent = sdkTag(location.origin, p.publicKey);
     }
     lastLoad = Date.now(); tick();
   }

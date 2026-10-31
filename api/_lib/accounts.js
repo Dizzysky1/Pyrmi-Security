@@ -112,18 +112,34 @@ async function emailStart(body, ip, mailer) {
   // Codes to one address are limited per network, so somebody else asking for codes to your address can't use up
   // your hourly allowance (they used to lock the owner out for an hour with five requests). A looser cap on the
   // address as a whole still bounds how many codes one inbox can be sent.
-  const ah = C.sha256(email), ipf = await C.fingerprint('ip', ip);
+  const ah = C.sha256(email), ipf = await C.fingerprint('ip', core.network(ip));
   const tooMany = () => { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; return e; };
   if (await hourly('ps:rl:emailto:' + ah + ':' + ipf) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw tooMany();
   if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20)) throw tooMany();
-  // Per-IP and per-address limits don't bound the TOTAL: rotating both lets a script send one code to each of many
-  // addresses, bombing inboxes and burning login@pyrmi.com's sender reputation. Cap the whole server's sign-in codes
-  // per day so the blast radius is bounded no matter how the source is spread (F-24). Generous, and env-tunable.
-  const day = new Date().toISOString().slice(0, 10);
-  const gk = 'ps:rl:emailstart:' + day;
-  const g = Number(await kv.cmd('INCR', gk));
-  if (g === 1) await kv.cmd('EXPIRE', gk, 2 * 86400);
-  if (g > intEnv('PYRMI_EMAIL_STARTS_PER_DAY', 500)) { const e = httpError(429, 'rate_limited', 'Email sign-in is temporarily paused on this server. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
+  const day = core.ymd(Date.now());
+  // One network's share of the day's codes, whatever addresses it asks for.
+  if (await core.hit('ps:rl:emailnet:' + ipf + ':' + day, 2 * 86400) > intEnv('PYRMI_EMAIL_CODES_PER_IP_PER_DAY', 30)) {
+    const e = httpError(429, 'rate_limited', 'Too many sign-in codes from your network today. Try again tomorrow or use another sign-in method.'); e.retryAfter = 3600; throw e;
+  }
+  // Per-network and per-address limits don't bound the TOTAL: rotating both lets a script send one code to each of
+  // many addresses, bombing inboxes and burning the sender's reputation, so the server's codes are capped too (F-24).
+  // That cap used to cover everyone, so 50 networks could pause email sign-in for the whole server until midnight
+  // (retest of b127c08). Now it only covers addresses with no account yet: people who already have one keep getting
+  // codes (bounded per address above and by a larger backstop). Past the cap a new address gets the same answer as any
+  // other, so the cap doesn't tell anyone which addresses have accounts, but no mail is sent; the dashboard says to
+  // use GitHub or Google if a code doesn't come. Crossing 80% of either cap is logged (see core.nearLimit).
+  const known = Number(await kv.cmd('EXISTS', 'ps:ue:' + ah)) > 0;
+  if (known) {
+    const n = await core.hit('ps:rl:emailknown:' + day, 2 * 86400), cap = intEnv('PYRMI_EMAIL_KNOWN_PER_DAY', 5000);
+    await core.nearLimit('email-known', n, cap, day);
+    if (n > cap) { const e = httpError(429, 'rate_limited', 'Email sign-in is busy right now. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
+  } else {
+    const hour = new Date().toISOString().slice(0, 13).replace(/\D/g, '');
+    const [d, h] = await Promise.all([core.hit('ps:rl:emailstart:' + day, 2 * 86400), core.hit('ps:rl:emailnew:' + hour, 7200)]);
+    const dayCap = intEnv('PYRMI_EMAIL_STARTS_PER_DAY', 500), hourCap = intEnv('PYRMI_EMAIL_NEW_PER_HOUR', 100);
+    await core.nearLimit('email-new', d, dayCap, day);
+    if (d > dayCap || h > hourCap) return { sent: false };
+  }
   const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
   await kv.cmd('HSET', 'ps:ec:' + C.sha256(email), 'h', await codeHash(email, code), 'n', 0);
   await kv.cmd('EXPIRE', 'ps:ec:' + C.sha256(email), CODE_TTL);
@@ -134,6 +150,7 @@ async function emailStart(body, ip, mailer) {
     html: '<p>Your Pyrmi Security sign-in code is</p><p style="font:600 28px/1 monospace;letter-spacing:6px">' + code + '</p>' +
       '<p>It works once, for the next 10 minutes. If you didn\'t ask for it, ignore this email: nobody can sign in without the code.</p><p>pyrmi.com</p>',
   });
+  return { sent: true };
 }
 
 async function emailVerify(body, ip) {
@@ -146,7 +163,7 @@ async function emailVerify(body, ip) {
   // knew your address could keep you from signing in. Now another network's guesses only lock that network out of
   // this code, and the code itself is deleted only after CODE_TRIES_TOTAL wrong tries in all (still far too few to
   // guess a six-digit code).
-  const ipf = await C.fingerprint('ip', ip);
+  const ipf = await C.fingerprint('ip', core.network(ip));
   const [mine, total, stored] = await kv.pipeline([['HINCRBY', key, 'n:' + ipf, 1], ['HINCRBY', key, 'n', 1], ['HGET', key, 'h']]);
   if (!stored) { await kv.cmd('DEL', key); throw wrong; }
   const tooMany = httpError(400, 'too_many_tries', 'Too many wrong codes. Ask for a new one.');
@@ -402,6 +419,8 @@ async function claimSite(uid, sk) {
     throw httpError(409, 'owned', 'That project already belongs to another account.');
   }
   await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
+  // It now belongs to an account, so it stops counting against the key-only project cap.
+  if (Number(await kv.cmd('HDEL', 'ps:p:' + p.pid, 'anon')) > 0) await core.releaseAnon();
   return { pid: p.pid, name: p.name, publicKey: p.publicKey };
 }
 

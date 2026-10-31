@@ -109,16 +109,26 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 - [x] **Public demo dashboards showed session ids, and the site guard's label for a network never changed.** Session
   ids are gone from them and the label changes daily.
 - [x] **The home page and docs had no CSP or frame protection.** They have both now. 405 responses send `Allow`.
-- [ ] **Secure defaults.** New projects still start with no minimum duration, no score cap and no required origins,
-  and `PYRMI_REQUIRE_ORIGINS` is off. Changing them breaks existing integrations, so it's the owner's call.
-- [ ] **Quotas a spread-out source can still drain**: the per-project session quota, the project cap and the global
-  email cap. Turnstile is the main answer for the forms; the session quota needs per-network-first limits.
-- [ ] **`ps:secret` fallback.** If `PYRMI_SECRET` is ever unset, the secret kept in the store comes back. Production
-  should fail closed instead.
+- [x] **Secure defaults** (retest of b127c08). New projects must register their pages, get a 1.5 s minimum time,
+  and reject a value sent with no maximum set (`no_score_limit`). Projects made before keep their settings; the
+  dashboard warns when a project is instant and open. `PYRMI_REQUIRE_ORIGINS` is `new` by default (`all` binds old
+  projects too).
+- [x] **Quotas a spread-out source could drain.** The session quota is per network first: past the project's daily
+  limit only heavy networks are refused, up to a hard ceiling, and refusals aren't counted. The email cap only covers
+  addresses with no account, per hour and per day, and answers them the same either way; each network also has a
+  daily share. Projects made without an account have their own smaller cap. An IPv6 /64 counts as one network. 80%
+  of a limit is logged, and shown on the dashboard for a project's sessions.
+- [x] **`ps:secret` fallback.** Without `PYRMI_SECRET` the API answers 503 instead of reading a secret from the store.
+- [x] **The browser script was unversioned** with a 5-minute cache. Each version is now also at
+  `/sdk/<version>/pyrmi.js`, cached for a year and never changed, and every snippet pins it with an integrity hash.
+- [x] **pyrmi.com's public dashboard showed a per-day label for each visitor's network.** It shows "visitor" now.
 - [ ] **`trusted` and network or browser changes.** `ip_changed` is allowed (phones hand over), `ua_changed` isn't.
   For payouts, a fresh check at payout time is the safer rule.
-- [ ] **Player labels.** Characters outside `[\w .-@:#]` become `_`, so `a<b` and `a>b` count as one player. Send ids,
-  not free text.
+- [x] **Player labels collided.** A label that needs cleaning gets a short hash of the original on the end, so `a<b`,
+  `a>b` and `a/b` are three players. Ordinary labels are unchanged.
+- [ ] **DMARC is `p=none`.** Move to `quarantine`, then `reject`, and SPF to `-all` once the reports look right.
+- [ ] **`Pyrmi.token()` is readable by other scripts on the same page.** Beacons are bound to the page's origin, so
+  another site can't use it; a script you load yourself can. Load only scripts you trust on protected pages.
 
 ## Architecture and infrastructure (flagged in round 5)
 

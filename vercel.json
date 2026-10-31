@@ -92,10 +92,24 @@
         {
           "key": "Access-Control-Allow-Origin",
           "value": "*"
-        },
+        }
+      ]
+    },
+    {
+      "source": "/sdk/pyrmi.js",
+      "headers": [
         {
           "key": "Cache-Control",
           "value": "public, max-age=300, s-maxage=300"
+        }
+      ]
+    },
+    {
+      "source": "/sdk/(\\d+\\.\\d+\\.\\d+)/pyrmi.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     },

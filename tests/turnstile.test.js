@@ -127,9 +127,9 @@ test('the answer must carry this form\'s action and this site\'s hostname, and a
 test('a key-only project needs a token for the new-project form', async () => {
   on();
   try {
-    const no = await call('POST', '/api/v1/project', { name: 'x' });
+    const no = await call('POST', '/api/v1/project', { name: 'x', origins: ['https://t.example'] });
     assert.equal(no.status, 403); assert.equal(no.body.error, 'turnstile_required');
-    const yes = await call('POST', '/api/v1/project', { name: 'x', turnstileToken: tok('new-project') });
+    const yes = await call('POST', '/api/v1/project', { name: 'x', origins: ['https://t.example'], turnstileToken: tok('new-project') });
     assert.equal(yes.status, 201, JSON.stringify(yes.body));
   } finally { off(); }
 });
@@ -145,9 +145,9 @@ test('signed in: adding, claiming, rotating and deleting each need their own tok
     const as = { Cookie: cookie, 'X-Pyrmi-CSRF': '1', ip: '192.0.2.50' };
     assert.equal((await call('GET', '/api/v1/me', undefined, as)).body.turnstile, '0x-test-site-key');
 
-    const add0 = await call('POST', '/api/v1/sites', { name: 'mine' }, as);
+    const add0 = await call('POST', '/api/v1/sites', { name: 'mine', origins: ['https://t.example'] }, as);
     assert.equal(add0.status, 403); assert.equal(add0.body.error, 'turnstile_required');
-    const add = await call('POST', '/api/v1/sites', { name: 'mine', turnstileToken: tok('new-site') }, as);
+    const add = await call('POST', '/api/v1/sites', { name: 'mine', origins: ['https://t.example'], turnstileToken: tok('new-site') }, as);
     assert.equal(add.status, 201, JSON.stringify(add.body));
     const pid = add.body.project.pid;
 
@@ -156,7 +156,7 @@ test('signed in: adding, claiming, rotating and deleting each need their own tok
     const rot = await call('POST', '/api/v1/sites?pid=' + pid + '&action=rotate', { turnstileToken: tok('rotate') }, as);
     assert.equal(rot.status, 200); assert.match(rot.body.secretKey, /^sk_/);
 
-    const loose = await call('POST', '/api/v1/project', { name: 'loose', turnstileToken: tok('new-project') });
+    const loose = await call('POST', '/api/v1/project', { name: 'loose', origins: ['https://t.example'], turnstileToken: tok('new-project') });
     const claim0 = await call('POST', '/api/v1/sites?action=claim', { secretKey: loose.body.project.secretKey }, as);
     assert.equal(claim0.status, 403);
     const claim = await call('POST', '/api/v1/sites?action=claim', { secretKey: loose.body.project.secretKey, turnstileToken: tok('claim') }, as);

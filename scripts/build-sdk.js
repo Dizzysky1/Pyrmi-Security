@@ -1,7 +1,8 @@
 'use strict';
 // Builds the browser script pyrmi.com serves (sdk/pyrmi.js) from the readable source (src/sdk/pyrmi.js):
-//   node scripts/build-sdk.js           write sdk/pyrmi.js and api/_lib/sdk-build.json
-//   node scripts/build-sdk.js --check   fail if the committed build is out of date (used by the tests)
+//   node scripts/build-sdk.js           write sdk/pyrmi.js, sdk/<version>/pyrmi.js, api/_lib/sdk-build.json and the
+//                                       script tags in the pages and docs (versioned path + integrity hash)
+//   node scripts/build-sdk.js --check   fail if any of those is out of date (CI and the tests)
 //
 // No dependencies, so it only understands the plain ES5-style JavaScript the source is written in (semicolons
 // everywhere, no template literals, no shorthand properties, no labels). What it does:
@@ -178,17 +179,55 @@ function build(source) {
   return { file: banner + '\n(' + code + ')(window,document);\n', hash: fnv(code), sourceHash };
 }
 
+// Every place that tells someone which script to load. scripts/build-sdk.js rewrites them to the current versioned
+// file with its integrity hash, and --check fails if one is behind. (src/sdk/pyrmi.js is left alone: changing its
+// comment would change the build.)
+const SNIPPETS = ['index.html', 'install.md', 'docs/index.html', 'dashboard/index.html'];
+const TAG = /src="((?:https:\/\/pyrmi\.com)?)\/sdk\/(?:\d+\.\d+\.\d+\/)?pyrmi\.js"(?: integrity="[^"]*" crossorigin="anonymous")?/g;
+const APP = path.join(ROOT, 'dashboard/app.js');
+const APP_LINE = /var SDK_PATH = '[^']*', SDK_SRI = '[^']*';/;
+
+function sri(file) { return 'sha384-' + crypto.createHash('sha384').update(file).digest('base64'); }
+
+// What each snippet file should hold for this build.
+function snippets(version, integrity) {
+  const out = {};
+  for (const rel of SNIPPETS) {
+    const p = path.join(ROOT, rel), cur = fs.readFileSync(p, 'utf8');
+    out[p] = cur.replace(TAG, (m, host) => 'src="' + host + '/sdk/' + version + '/pyrmi.js" integrity="' + integrity + '" crossorigin="anonymous"');
+  }
+  const app = fs.readFileSync(APP, 'utf8');
+  out[APP] = app.replace(APP_LINE, "var SDK_PATH = '/sdk/" + version + "/pyrmi.js', SDK_SRI = '" + integrity + "';");
+  return out;
+}
+
 function main() {
   const source = fs.readFileSync(SRC, 'utf8');
   const version = /version:\s*'([\d.]+)'/.exec(source)[1];
   const b = build(source);
+  const integrity = sri(b.file);
+  // Each version is also served from its own path, /sdk/<version>/pyrmi.js, which is cached for a year and never
+  // changes: pages pin it with Subresource Integrity, so even someone who took over pyrmi.com couldn't swap the script
+  // on them. /sdk/pyrmi.js stays as a short-cache alias for the latest build.
+  const versioned = path.join(ROOT, 'sdk', version, 'pyrmi.js');
+  const published = fs.existsSync(versioned) ? fs.readFileSync(versioned, 'utf8') : null;
   let meta = { version: null, hash: null, sourceHash: null, previous: [] };
   try { meta = JSON.parse(fs.readFileSync(META, 'utf8')); } catch (_) { /* first build */ }
+  const want = snippets(version, integrity);
   if (process.argv.includes('--check')) {
     const cur = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : '';
-    if (cur !== b.file || meta.hash !== b.hash || meta.sourceHash !== b.sourceHash) { console.error('sdk/pyrmi.js is out of date: run node scripts/build-sdk.js'); process.exit(1); }
-    console.log('sdk/pyrmi.js is up to date (' + b.file.length + ' bytes, fingerprint ' + b.hash + ')');
+    const stale = [];
+    if (cur !== b.file || meta.hash !== b.hash || meta.sourceHash !== b.sourceHash) stale.push('sdk/pyrmi.js');
+    if (published !== b.file) stale.push('sdk/' + version + '/pyrmi.js');
+    if (meta.integrity !== integrity || meta.path !== '/sdk/' + version + '/pyrmi.js') stale.push('api/_lib/sdk-build.json');
+    for (const [p, text] of Object.entries(want)) if (fs.readFileSync(p, 'utf8') !== text) stale.push(path.relative(ROOT, p));
+    if (stale.length) { console.error('out of date: ' + stale.join(', ') + '. Run node scripts/build-sdk.js'); process.exit(1); }
+    console.log('sdk/pyrmi.js is up to date (' + b.file.length + ' bytes, fingerprint ' + b.hash + ', ' + integrity + ')');
     return;
+  }
+  if (published !== null && published !== b.file) {
+    console.error('sdk/' + version + '/pyrmi.js is already published and never changes. Bump version in src/sdk/pyrmi.js first.');
+    process.exit(1);
   }
   // Keep a few earlier fingerprints so pages still holding the last build (CDN and browser caches) aren't flagged.
   const previous = [meta.hash, ...(meta.previous || [])].filter((h) => h && h !== b.hash).slice(0, 5);
@@ -197,8 +236,11 @@ function main() {
   const retired = {};
   for (const h of previous) retired[h] = (meta.retired && meta.retired[h]) || Date.now();
   fs.writeFileSync(OUT, b.file);
-  fs.writeFileSync(META, JSON.stringify({ version, hash: b.hash, sourceHash: b.sourceHash, previous, retired }, null, 2) + '\n');
-  console.log('built sdk/pyrmi.js: ' + b.file.length + ' bytes (source ' + source.length + '), fingerprint ' + b.hash);
+  fs.mkdirSync(path.dirname(versioned), { recursive: true });
+  fs.writeFileSync(versioned, b.file);
+  for (const [p, text] of Object.entries(want)) fs.writeFileSync(p, text);
+  fs.writeFileSync(META, JSON.stringify({ version, hash: b.hash, sourceHash: b.sourceHash, path: '/sdk/' + version + '/pyrmi.js', integrity, previous, retired }, null, 2) + '\n');
+  console.log('built sdk/pyrmi.js and sdk/' + version + '/pyrmi.js: ' + b.file.length + ' bytes (source ' + source.length + '), fingerprint ' + b.hash + ', ' + integrity);
 }
 
 if (require.main === module) main();

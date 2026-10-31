@@ -34,7 +34,7 @@ async function siteToken() {
 let pk, sk;
 
 test('create project returns keys once', async () => {
-  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'], pyrmiToken: await siteToken() });
+  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'], settings: { minDurationMs: 0, maxScore: 1000 }, pyrmiToken: await siteToken() });
   assert.equal(r.status, 201);
   ({ publicKey: pk, secretKey: sk } = r.body.project);
   assert.match(pk, /^pk_/); assert.match(sk, /^sk_/);
@@ -172,18 +172,18 @@ test('pyrmi-server SDK verifies through the API, including a simulate hook', asy
 
 // ---- pyrmi.com protecting itself ----
 test('site: creating a project without a clean Pyrmi token is refused', async () => {
-  const none = await call('POST', '/api/v1/project', { name: 'Bot' });
+  const none = await call('POST', '/api/v1/project', { name: 'Bot', origins: ['https://t.example'] });
   assert.equal(none.status, 403);
   assert.equal(none.body.error, 'blocked_by_pyrmi');
   assert.ok(none.body.reasons.includes('invalid_token'));
   const s = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
-  const rushed = await call('POST', '/api/v1/project', { name: 'Bot', pyrmiToken: s.token });
+  const rushed = await call('POST', '/api/v1/project', { name: 'Bot', origins: ['https://t.example'], pyrmiToken: s.token });
   assert.equal(rushed.status, 403);
   assert.ok(rushed.body.reasons.includes('too_short') && rushed.body.reasons.includes('no_client'));
   const s2 = (await call('POST', '/api/v1/session', { site: 'pk_pyrmi_site' })).body;
   await beacon(s2, { wd: true });
   await wait(1300);
-  const bot = await call('POST', '/api/v1/project', { name: 'Bot', pyrmiToken: s2.token });
+  const bot = await call('POST', '/api/v1/project', { name: 'Bot', origins: ['https://t.example'], pyrmiToken: s2.token });
   assert.equal(bot.status, 403);
   assert.ok(bot.body.reasons.includes('automation'));
   const d = await call('GET', '/api/v1/dashboard?demo=site');
