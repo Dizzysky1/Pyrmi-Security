@@ -365,7 +365,17 @@ async function claimSite(uid, sk) {
   if (!p || p.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
   if (p.owner && p.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
   if (num(await kv.cmd('ZCARD', 'ps:us:' + uid)) >= intEnv('PYRMI_SITES_PER_USER', MAX_SITES)) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
-  await kv.pipeline([['HSET', 'ps:p:' + p.pid, 'owner', uid], ['ZADD', 'ps:us:' + uid, Date.now(), p.pid]]);
+  // Take ownership atomically. The old read-check-then-HSET let two concurrent claims both pass the owner check and
+  // both write owner, so the last writer won and the loser's site silently vanished — the loser got a 200 but then
+  // ownedSite 404, leaving a dangling index entry and no audit. HSETNX sets owner only while the project is still
+  // unowned, so exactly one racing claim wins; only that winner adds the per-user index entry. (M10)
+  const won = num(await kv.cmd('HSETNX', 'ps:p:' + p.pid, 'owner', uid), 0);
+  if (!won) {
+    const current = await core.loadProject(p.pid);
+    if (current && current.owner === uid) return { pid: p.pid, name: p.name, publicKey: p.publicKey }; // already ours (idempotent)
+    throw httpError(409, 'owned', 'That project already belongs to another account.');
+  }
+  await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
   return { pid: p.pid, name: p.name, publicKey: p.publicKey };
 }
 
