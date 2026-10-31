@@ -57,7 +57,7 @@
     { id: 'fake-sentry-marker', desc: 'a fake clock carrying a __sentry_original__ marker', when: 'after', run: function () { var f = function () { return 0; }; f.__sentry_original__ = performance.now; performance.now = f; }, tp: ['performance.now'] },
   ];
   window.PYRMI_SELFTEST = C;
-  var m = /[?&]case=([\w-]+)/.exec(location.search);
+  var m = window.PYRMI_SELFTEST_CASE ? [0, window.PYRMI_SELFTEST_CASE] : /[?&]case=([\w-]+)/.exec(location.search);
   if (!m) return;
   for (var i = 0; i < C.length; i++) {
     if (C[i].id === m[1] && C[i].when === 'before') { try { C[i].run(); } catch (e) { window.PYRMI_SELFTEST_ERROR = String(e); } }

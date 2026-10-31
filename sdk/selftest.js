@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var C = window.PYRMI_SELFTEST || [];
-  var m = /[?&]case=([\w-]+)/.exec(location.search);
+  var m = window.PYRMI_SELFTEST_CASE ? [0, window.PYRMI_SELFTEST_CASE] : /[?&]case=([\w-]+)/.exec(location.search);
   if (m) { // a case frame: run an "after" trick, then report to the parent page
     var c = null, i;
     for (i = 0; i < C.length; i++) if (C[i].id === m[1]) c = C[i];
@@ -12,7 +12,7 @@
       var r = window.Pyrmi.report();
       out.tp = r.tp.slice(); out.wr = (r.wr || []).slice(); out.wd = r.wd;
     } catch (e) { out.error = String(e); }
-    parent.postMessage(out, location.origin);
+    parent.postMessage(out, location.origin === 'null' ? '*' : location.origin);
     return;
   }
   var $ = function (id) { return document.getElementById(id); };
@@ -48,7 +48,9 @@
     }
     window.addEventListener('message', onMsg);
     timer = setTimeout(function () { window.removeEventListener('message', onMsg); f.remove(); row(c, { error: 'timed out' }); next(); }, 8000);
-    f.className = 'case'; f.src = 'selftest.html?case=' + encodeURIComponent(c.id);
+    f.className = 'case';
+    if (window.PYRMI_SELFTEST_FRAME) f.srcdoc = window.PYRMI_SELFTEST_FRAME(c.id); // a single-file copy of this page
+    else f.src = 'selftest.html?case=' + encodeURIComponent(c.id);
     document.body.appendChild(f);
   }
   next();
