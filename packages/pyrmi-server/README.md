@@ -31,7 +31,10 @@ app.post('/claim-prize', async (req, res) => {
 
 `verify` returns a verdict (`accept`, `review` or `reject`), a risk score from 0 to 100, `client`
 (`corroborated`, `unverified` or `none`: whether the browser telemetry held up against what the server saw), and the
-reasons. `trusted(v)` is true only for an `accept` with a `corroborated` client. Browser telemetry is advisory, so a
+reasons. `trusted(v)` is true only for an `accept` with a `corroborated` client, a real key press or click seen by the
+browser, and no reason other than `wrapped_runtime`, `devtools_open`, `ip_changed` or `idle_input`; the server sets
+it as `v.trusted`, so it doesn't loosen when the site's thresholds are raised (an older server falls back to the same
+allow-list here). Browser telemetry is advisory, so a
 script that copies the real one closely enough can still pass; keep your own limits too. The
 browser half is one script tag; see the [docs](https://pyrmi.com/docs/).
 

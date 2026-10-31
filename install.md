@@ -80,8 +80,12 @@ rejected": only a corroborated accept.
 
 ```js
 const { Pyrmi, trusted } = require('pyrmi-server');
-if (!trusted(v)) return res.status(403).json({ error: 'not_verified' }); // accept AND client === 'corroborated'
+if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
 ```
+
+`trusted(v)` is true only for an `accept` with a `corroborated` client, a real key press or click seen by the
+browser, and no reason other than the harmless ones (`wrapped_runtime`, `devtools_open`, `ip_changed`,
+`idle_input`). The server works it out, so it doesn't loosen when the site's `reviewAt` or `rejectAt` is raised.
 
 Telemetry is advisory: a script that copies the real one closely enough can still pass, so keep your own limits too
 (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
