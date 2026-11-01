@@ -47,6 +47,8 @@
     <p>I've been building Pyrmi Security, an open-source (Apache 2.0) tool that checks whether a request came from a real page load in a real browser before your server trusts it. Sign-ups, votes, checkouts, coupon codes and scores on a game leaderboard are the kinds of requests I had in mind.</p>
     <p>The thing I kept running into is that a lot of web "anti-cheat" promises something it can't deliver. Whoever owns the browser can switch off any check that runs in it. You can't block devtools, and you can't stop code from running. So Pyrmi is built around a different idea: the browser collects evidence, and your server makes the call.</p>
 
+    <p>Full honesty: I built most of this with Claude. I came up with the idea and made the calls, and a friend and I spent a couple of weeks trying to break it, which found a bunch of holes that are now fixed.</p>
+
     <h2>How it works</h2>
     <ol>
       <li><strong>Add one script tag.</strong> On a real page load it gets a signed, single-use session from the server, then watches for signs of automation and tampering: webdriver and headless markers, scripted input events, typing and clicking that's too even to be human, replaced built-ins like <code>fetch</code> and <code>performance.now</code>, a page clock that doesn't keep pace with real time, and probably-open devtools.</li>
