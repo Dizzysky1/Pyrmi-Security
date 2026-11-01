@@ -10,26 +10,26 @@
 const accounts = require('../_lib/accounts');
 const core = require('../_lib/core');
 const turnstile = require('../_lib/turnstile');
+const C = require('../_lib/crypto');
 const { send, fail, readJson, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
   const ip = clientIp(req);
-  // A request carrying a well-formed session cookie triggers a KV lookup in requireUser, so cap those per IP with a
-  // separate, higher pre-auth bucket (F-20). A missing or malformed cookie never reaches KV (sessionSid returns null),
-  // so it stays free and isn't counted here. This is deliberately NOT the authenticated 'sites' bucket below, which
-  // stays behind auth so an anonymous flood can't lock out a shared network's signed-in users (F-11).
-  if (accounts.sessionSid(req)) await core.limitIp(ip, 'sitespre', 60, 'PYRMI_PREAUTH_CALLS_PER_MIN', 300);
-  // Authenticate first: the IP limiter below must not run for an anonymous request, or an attacker could burn a
-  // shared network's bucket (and pile up KV writes) without ever signing in (F-11).
-  const user = await accounts.requireUser(req);
-  await core.limitIp(ip, 'sites', 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
+  // Look the session up first. A well-formed cookie that opens nothing counts in a bucket of its own, and a real one
+  // counts against its account.
+  const user = await accounts.currentUser(req);
+  if (!user) {
+    if (accounts.sessionSid(req)) await core.limitIp(ip, 'mebad', 600, 'PYRMI_BAD_SESSIONS_PER_IP', 120);
+    return fail(res, 401, 'signed_out', 'Sign in to see your sites.');
+  }
+  await core.limitIp(ip, 'sites:' + C.sha256(user.uid).slice(0, 24), 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
   accounts.checkCsrf(req);
   const q = new URL(req.url, 'http://x').searchParams, pid = q.get('pid'), action = q.get('action');
 
   if (!pid && req.method === 'POST' && action === 'claim') {
     const body = await readJson(req, 4096);
     await turnstile.check(body.turnstileToken, ip, 'claim', req.headers.host);
-    return send(res, 200, { ok: true, site: await accounts.claimSite(user.uid, String(body.secretKey || '').trim()) });
+    return send(res, 200, { ok: true, site: await accounts.claimSite(user.uid, typeof body.secretKey === 'string' ? body.secretKey.trim() : '', { keepKey: body.keepKey === true }) });
   }
   if (!pid && req.method === 'POST') {
     const body = await readJson(req, 4096);

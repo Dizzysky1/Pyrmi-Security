@@ -61,10 +61,14 @@ async function requestKey(sid) {
 }
 // The same canonical form the browser script builds: JSON with object keys sorted at every level and undefined
 // values left out, so a server that parsed the JSON and a page that built the object agree byte for byte.
-function canon(v) {
-  if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x))).join(',') + ']';
+// Nesting is capped: past the cap canon throws CANON_TOO_DEEP.
+const CANON_MAX_DEPTH = 64;
+function canon(v, depth) {
+  const d = depth || 0;
+  if (d > CANON_MAX_DEPTH) throw Object.assign(new Error('nested too deep'), { code: 'CANON_TOO_DEEP' });
+  if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x, d + 1))).join(',') + ']';
   if (v && typeof v === 'object') {
-    return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+    return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k], d + 1)).join(',') + '}';
   }
   const j = JSON.stringify(v);
   return j === undefined ? 'null' : j;

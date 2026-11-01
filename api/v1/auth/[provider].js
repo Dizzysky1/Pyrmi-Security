@@ -7,6 +7,7 @@
 // POST /api/v1/auth/email?action=verify  {email, code}        -> signs in
 // Each way in is off until its env vars are set (see README).
 const accounts = require('../../_lib/accounts');
+const C = require('../../_lib/crypto');
 const core = require('../../_lib/core');
 const turnstile = require('../../_lib/turnstile');
 const { send, fail, readJson, clientIp, handle } = require('../../_lib/http');
@@ -39,13 +40,17 @@ module.exports = handle(async (req, res) => {
       await core.limitIp(ip, 'emailcode', 600, 'PYRMI_EMAIL_CODES_PER_IP', 10, 'Too many sign-in codes from your network. Try again in a few minutes.');
       await turnstile.check(body.turnstileToken, ip, 'signin', req.headers.host);
       await core.guardSite(body.pyrmiToken, ip);
-      await accounts.emailStart(body, ip, module.exports.mailer);
-      return send(res, 200, { ok: true });
+      // The code belongs to this browser (round 12): it gets a random id in a cookie, and only a verify with the same
+      // cookie can try the code. A browser that signed in before also sends its device mark (see accounts.js).
+      const ck = accounts.readCookies(req);
+      const rid = accounts.RID_RE.test(String(ck[accounts.EC_COOKIE] || '')) ? ck[accounts.EC_COOKIE] : C.randomId(16);
+      await accounts.emailStart(body, ip, module.exports.mailer, { rid, device: ck[accounts.DEV_COOKIE] });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': [accounts.cookie(accounts.EC_COOKIE, rid, accounts.CODE_TTL)] });
     }
     if (q.get('action') === 'verify') {
       await core.limitIp(ip, 'emailverify', 600, 'PYRMI_SIGNINS_PER_IP', 30);
-      const r = await accounts.emailVerify(body, ip);
-      return send(res, 200, { ok: true }, { 'Set-Cookie': r.setCookies });
+      const r = await accounts.emailVerify(body, ip, { rid: accounts.readCookies(req)[accounts.EC_COOKIE] });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': [...r.setCookies, accounts.cookie(accounts.EC_COOKIE, '', 0)] });
     }
     return fail(res, 400, 'bad_action');
   }

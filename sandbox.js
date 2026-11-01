@@ -25,9 +25,49 @@
     $('v-reasons').innerHTML = lines.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('');
   }
 
+  // The sandbox project has requireHumanCheck on, so `trusted` needs a human check Pyrmi confirms with Cloudflare itself,
+  // solved for this session on this page. The honest button runs it the way a site should: a Turnstile widget rendered with cdata set to the session
+  // id, its token sealed with the action. When the server has no Turnstile key (GET /me says), the check is skipped and
+  // the verdict says trusted is false. The cheat buttons skip it, as a script would.
+  var tsKey = null, tsLoad = null;
+  var tsInfo = fetch(api + '/me', { credentials: 'omit' }).then(function (r) { return r.json(); })
+    .then(function (j) { tsKey = (j && j.turnstile) || null; }, function () { tsKey = null; });
+  function turnstileReady() {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    if (!tsLoad) tsLoad = new Promise(function (resolve, reject) {
+      var sc = document.createElement('script');
+      sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true;
+      sc.onload = function () { if (window.turnstile) resolve(window.turnstile); else reject(new Error('The human check didn\'t load.')); };
+      sc.onerror = function () { tsLoad = null; reject(new Error('The human check didn\'t load.')); };
+      document.head.appendChild(sc);
+    });
+    return tsLoad;
+  }
+  function humanCheck() {
+    return tsInfo.then(function () {
+      if (!tsKey || !current || !current.session) return undefined;
+      return turnstileReady().then(function (ts) {
+        return new Promise(function (resolve, reject) {
+          var el = $('sb-ts'), old = el.getAttribute('data-wid');
+          if (old) { try { ts.remove(old); } catch (e) { /* already gone */ } }
+          var fail = function () { reject(new Error('The human check didn\'t finish. Try again.')); };
+          el.setAttribute('data-wid', ts.render(el, { sitekey: tsKey, action: 'sandbox', cData: current.session, appearance: 'interaction-only',
+            callback: resolve, 'error-callback': fail, 'timeout-callback': fail }));
+        });
+      });
+    });
+  }
+
   // The action is sealed by the browser script (Pyrmi.seal), the way a site's page should send anything that matters:
-  // { value, visitor, pyrmi: { token, ts, sig } }. Change any of it after sealing and the signature stops matching.
-  function seal(value) { return Pyrmi.flush().then(function () { return Pyrmi.seal({ value: value, visitor: visitor }); }); }
+  // { value, visitor, turnstile?, pyrmi: { token, ts, sig } }. Change any of it after sealing and the signature stops
+  // matching.
+  function seal(value, turnstile) {
+    return Pyrmi.flush().then(function () {
+      var action = { value: value, visitor: visitor };
+      if (turnstile) action.turnstile = turnstile;
+      return Pyrmi.seal(action);
+    });
+  }
   function post(body) {
     return fetch(api + '/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'omit', body: JSON.stringify(body) })
       .then(function (r) { return r.json(); });
@@ -39,8 +79,8 @@
     var lines = v.reasons.map(function (r) { return r.text + (r.detail ? ' (' + r.detail + ')' : ''); });
     if (!lines.length) lines.push('No warning signs. Your server would go ahead.');
     if (v.client) lines.push(v.trusted === true
-      ? 'Telemetry corroborated and the action signed by this browser: trusted(v) is true, so a sensitive action (a prize, a payout) would go ahead too.'
-      : 'trusted(v) is false: a sensitive action (a prize, a payout) would be refused.');
+      ? 'The action was signed by this browser and the human check passed for this session: trusted(v) is true, so a sensitive action (a prize, a payout) would go ahead too.'
+      : 'trusted(v) is false: a sensitive action (a prize, a payout) would be refused.' + (v.verdict === 'accept' && v.human !== 'ok' ? ' Without a passed human check, an accept is the best a verdict gets.' : ''));
     lines.unshift(what);
     show(v.verdict, label, v.risk, lines);
   }
@@ -50,7 +90,8 @@
   var ACTIONS = {
     honest: function () {
       if (!current) return Promise.resolve(show('info', 'offline', null, ['The browser script didn\'t load, so there\'s no session to send.']));
-      return seal(value()).then(function (b) { last = b; return post(b); }).then(function (v) { report('Sent like a normal page would.', v); });
+      return humanCheck().then(function (t) { return seal(value(), t); }).then(function (b) { last = b; return post(b); })
+        .then(function (v) { report(tsKey ? 'Sent like a normal page would, with the human check.' : 'Sent like a normal page would (the human check isn\'t set up on this server).', v); });
     },
     replay: function () {
       if (!last) return Promise.resolve(show('info', 'nothing yet', null, ['Send one normally first, then replay it.']));

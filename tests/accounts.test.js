@@ -149,7 +149,19 @@ test('a key-only project can be claimed with its secret key', async () => {
   const c = await call('POST', '/api/v1/sites?action=claim', { secretKey: k.body.project.secretKey }, as(bob));
   assert.equal(c.status, 200);
   assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: bob })).body.sites[0].name, 'Old project');
-  assert.equal((await call('POST', '/api/v1/sites?action=claim', { secretKey: k.body.project.secretKey }, as(alice))).status, 409);
+  // Round 12: claiming issues a new key, so whoever else held the old one loses the project.
+  assert.match(c.body.site.secretKey, /^sk_/);
+  assert.equal((await call('GET', '/api/v1/project', undefined, { Authorization: 'Bearer ' + k.body.project.secretKey })).status, 401);
+  assert.equal((await call('GET', '/api/v1/project', undefined, { Authorization: 'Bearer ' + c.body.site.secretKey })).status, 200);
+  assert.equal((await call('POST', '/api/v1/sites?action=claim', { secretKey: k.body.project.secretKey }, as(alice))).status, 404);
+  assert.equal((await call('POST', '/api/v1/sites?action=claim', { secretKey: c.body.site.secretKey }, as(alice))).status, 409);
+});
+
+test('claiming with keepKey: true keeps the old secret key working', async () => {
+  const k = await call('POST', '/api/v1/project', { name: 'Keep key', origins: ['https://t.example'], pyrmiToken: await siteToken() }, { 'X-Forwarded-For': '198.51.100.8' });
+  const site = await require('../api/_lib/accounts').claimSite('u_keep' + Date.now(), k.body.project.secretKey, { keepKey: true });
+  assert.equal(site.secretKey, undefined);
+  assert.equal((await call('GET', '/api/v1/project', undefined, { Authorization: 'Bearer ' + k.body.project.secretKey })).status, 200);
 });
 
 test('signing out ends the session for good', async () => {
@@ -164,6 +176,9 @@ test('signing out ends the session for good', async () => {
 
 const sent = [];
 const askCode = async (email, headers) => call('POST', '/api/v1/auth/email?action=start', { email, pyrmiToken: await siteToken() }, { 'X-Pyrmi-CSRF': '1', ...(headers || {}) });
+// Round 12: the code belongs to the browser that asked; verify sends that browser's cookie (ec = cookieOf(start, EC)).
+const EC = '__Host-pyrmi_ec';
+const tryCode = (email, code, ec, headers) => call('POST', '/api/v1/auth/email?action=verify', { email, code }, { 'X-Pyrmi-CSRF': '1', ...(ec ? { Cookie: ec } : {}), ...(headers || {}) });
 const lastCode = () => /\b(\d{6})\b/.exec(sent[sent.length - 1].text)[1];
 
 test('email sign-in: a one-time code, hashed, single use, and no clue whether the address has an account', async () => {
@@ -178,49 +193,70 @@ test('email sign-in: a one-time code, hashed, single use, and no clue whether th
   const fresh = await askCode('Carol@Example.com ');
   const known = await askCode('bob@example.com');
   assert.deepEqual(fresh.body, known.body);
+  const bobEc = cookieOf(known, EC);
+  assert.ok(bobEc && cookieOf(fresh, EC));
   assert.equal(sent.length, 2);
   assert.equal(sent[0].to, 'carol@example.com');
   const bobCode = lastCode();
   // the code is stored only as a hash
   const kv = require('../api/_lib/kv');
-  const stored = await kv.cmd('HGET', 'ps:ec:' + require('../api/_lib/crypto').sha256('bob@example.com'), 'h');
+  const C2 = require('../api/_lib/crypto');
+  const stored = await kv.cmd('HGET', 'ps:ec:' + C2.sha256('bob@example.com') + ':' + C2.sha256(decodeURIComponent(bobEc.split('=')[1])), 'h');
   assert.ok(stored && !stored.includes(bobCode));
   // one address is one account: bob's code signs in to the account he made with Google
-  const wrong = await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode === '000000' ? '111111' : '000000' }, { 'X-Pyrmi-CSRF': '1' });
+  const wrong = await tryCode('bob@example.com', bobCode === '000000' ? '111111' : '000000', bobEc);
   assert.equal(wrong.status, 400);
-  const ok = await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode }, { 'X-Pyrmi-CSRF': '1' });
+  assert.equal((await tryCode('bob@example.com', bobCode)).status, 400, 'the right code from a browser that did not ask for it');
+  const ok = await tryCode('bob@example.com', bobCode, bobEc);
   assert.equal(ok.status, 200);
+  assert.match(ok.headers.getSetCookie().join('\n'), /__Host-pyrmi_dev=/, 'the browser gets a device mark for this account');
   const c = cookieOf(ok, '__Host-pyrmi_session');
   assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: c })).body.sites[0].name, 'Old project');
   // and it can't be used twice
-  assert.equal((await call('POST', '/api/v1/auth/email?action=verify', { email: 'bob@example.com', code: bobCode }, { 'X-Pyrmi-CSRF': '1' })).status, 400);
+  assert.equal((await tryCode('bob@example.com', bobCode, bobEc)).status, 400);
 });
 
-test('email codes: wrong tries from one network lock only that network, and codes are capped per address', async () => {
+test('email codes: other people\'s guesses can\'t touch your code, and their requests can\'t lock you out (round 12)', async () => {
   const mine = { 'X-Forwarded-For': '203.0.113.9' }, theirs = { 'X-Forwarded-For': '198.51.100.77' };
-  await askCode('dave@example.com', mine);
+  const a = await askCode('dave@example.com', mine), ec = cookieOf(a, EC);
   const code = lastCode(), bad = code === '999999' ? '888888' : '999999';
-  const verify = (c, h) => call('POST', '/api/v1/auth/email?action=verify', { email: 'dave@example.com', code: c }, { 'X-Pyrmi-CSRF': '1', ...h });
-  // someone else guessing from their own network burns their tries, not the owner's
-  for (let i = 0; i < 5; i++) assert.equal((await verify(bad, theirs)).body.error, 'bad_code');
-  assert.equal((await verify(code, theirs)).body.error, 'too_many_tries');
-  assert.equal((await verify(code, mine)).status, 200, 'the owner can still use the code');
-  // the same five starts from somebody else's network no longer lock the owner out of new codes
+  // 40 wrong guesses from 8 other networks, with no cookie or a cookie of their own: none of them reach the code
+  for (let n = 0; n < 8; n++) {
+    const other = { 'X-Forwarded-For': '192.0.2.' + (60 + n) };
+    const theirEc = cookieOf(await askCode('dave@example.com', other), EC);
+    for (let i = 0; i < 5; i++) await tryCode('dave@example.com', i % 2 ? bad : code, i % 2 ? undefined : theirEc, other);
+  }
+  // (their own codes got a few tries each; the owner's got none)
+  assert.equal((await tryCode('dave@example.com', code, ec, mine)).status, 200, 'the owner can still use the code');
+  // the same five starts from somebody else's network don't lock the owner out of new codes
   for (let i = 0; i < 5; i++) await askCode('dave@example.com', theirs);
   assert.equal((await askCode('dave@example.com', theirs)).status, 429);
   assert.equal((await askCode('dave@example.com', mine)).status, 200);
-  // and there is still a cap on the address as a whole
+  // there is still a cap on the address as a whole, for a browser that never signed in to it...
   let last;
   for (let i = 0; i < 20; i++) last = await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.' + (100 + i) });
   assert.equal(last.status, 429);
+  // ...but a browser that signed in to it before carries a device mark and still gets a code
+  const signedIn = await (async () => {
+    const r = await askCode('frank@example.com', mine);
+    const v = await tryCode('frank@example.com', lastCode(), cookieOf(r, EC), mine);
+    return cookieOf(v, '__Host-pyrmi_dev');
+  })();
+  assert.ok(signedIn);
+  for (let i = 0; i < 25; i++) await askCode('frank@example.com', { 'X-Forwarded-For': '198.18.' + i + '.1' });
+  assert.equal((await askCode('frank@example.com', { 'X-Forwarded-For': '198.18.99.1' })).status, 429, 'a new browser is capped');
+  assert.equal((await askCode('frank@example.com', { 'X-Forwarded-For': '203.0.113.200', Cookie: signedIn })).status, 200, 'the owner\'s browser is not');
+  // a mark for one address doesn't work for another, and a made-up one doesn't work at all
+  assert.equal((await askCode('dave@example.com', { 'X-Forwarded-For': '203.0.113.201', Cookie: signedIn })).status, 429);
+  assert.equal((await askCode('frank@example.com', { 'X-Forwarded-For': '203.0.113.202', Cookie: '__Host-pyrmi_dev=' + 'A'.repeat(22) + '.' + 'B'.repeat(43) })).status, 429);
 });
 
-test('email codes are deleted after enough wrong tries from everywhere', async () => {
-  await askCode('erin@example.com', { 'X-Forwarded-For': '203.0.113.10' });
+test('email codes: the asking browser gets five tries, then the code is gone', async () => {
+  const r = await askCode('erin@example.com', { 'X-Forwarded-For': '203.0.113.10' }), ec = cookieOf(r, EC);
   const code = lastCode(), bad = code === '999999' ? '888888' : '999999';
-  for (let n = 0; n < 6; n++) for (let i = 0; i < 5; i++) await call('POST', '/api/v1/auth/email?action=verify', { email: 'erin@example.com', code: bad }, { 'X-Pyrmi-CSRF': '1', 'X-Forwarded-For': '192.0.2.' + (50 + n) });
-  const r = await call('POST', '/api/v1/auth/email?action=verify', { email: 'erin@example.com', code }, { 'X-Pyrmi-CSRF': '1', 'X-Forwarded-For': '203.0.113.10' });
-  assert.equal(r.body.error, 'too_many_tries');
+  for (let i = 0; i < 5; i++) assert.equal((await tryCode('erin@example.com', bad, ec)).body.error, 'bad_code');
+  const after = await tryCode('erin@example.com', code, ec);
+  assert.equal(after.status, 400, 'the code was deleted after five wrong tries');
 });
 
 // ---- GitHub ----

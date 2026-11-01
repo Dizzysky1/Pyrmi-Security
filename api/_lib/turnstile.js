@@ -17,6 +17,10 @@ const VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const TOKEN_TTL = 600; // Cloudflare tokens live 300 s; keep the used-token record for twice that
 
 function configured() { return !!(process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET_KEY); }
+// Only one of the two keys set leaves the human check off without a word. Say so once, at start-up (round 12).
+if (!configured() && (process.env.TURNSTILE_SITE_KEY || process.env.TURNSTILE_SECRET_KEY)) {
+  console.warn('pyrmi: only ' + (process.env.TURNSTILE_SITE_KEY ? 'TURNSTILE_SITE_KEY' : 'TURNSTILE_SECRET_KEY') + ' is set, so the Turnstile human check is OFF. Set both keys to turn it on.');
+}
 function siteKey() { return configured() ? process.env.TURNSTILE_SITE_KEY : null; }
 function hostnames(host) {
   const set = String(process.env.TURNSTILE_HOSTNAMES || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);

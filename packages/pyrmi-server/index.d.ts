@@ -29,6 +29,12 @@ export interface VerifyResult {
   signed?: 'ok' | 'bad' | 'none';
   /** The browser's context was forwarded (req or client) and checked against the browser that started the session. */
   bound?: boolean;
+  /**
+   * The Turnstile human check (round 12): 'ok' when Pyrmi confirmed a pass with Cloudflare for this session and page,
+   * 'failed' when it didn't hold (reason human_check_failed), 'unavailable' when Cloudflare couldn't be reached, 'none'
+   * when none was sent. trusted needs 'ok'.
+   */
+  human?: 'ok' | 'failed' | 'unavailable' | 'none';
   session?: string | null;
   player?: string;
   score?: number | null;
@@ -63,6 +69,12 @@ export interface VerifyInput {
   user?: string;
   /** Whatever a deterministic app records (inputs, moves). Only passed to simulate. */
   replay?: unknown;
+  /**
+   * The Turnstile token from your page (a widget rendered with cdata set to Pyrmi.start()'s session), or
+   * { token, action }. Sent with turnstileSecret so Pyrmi confirms it with Cloudflare; trusted needs it. With sealed,
+   * a string `turnstile` field in the sealed body is used when this is left out.
+   */
+  turnstile?: string | { token: string; action?: string };
   /** Re-run the app from the replay on your server. A different score means the result was faked. */
   simulate?: (replay: unknown) => { score: number; durationMs?: number } | Promise<{ score: number; durationMs?: number }>;
 }
@@ -74,9 +86,12 @@ export interface PyrmiOptions {
   timeoutMs?: number;
   /** When Pyrmi can't be reached: false (default) rejects the action, true accepts it unverified. */
   failOpen?: boolean;
-  /** Proxies of yours in front of this server, so req's address is read from the right X-Forwarded-For entry. */
+  /**
+   * Proxies in front of this server that write X-Forwarded-For, so req's address is read from the right entry. 0 (the
+   * default) ignores the header and uses the socket address. On Vercel, Netlify or behind Cloudflare, use 1.
+   */
   trustProxyHops?: number;
-  /** Your Cloudflare Turnstile widget's secret key, for verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
+  /** Your Cloudflare Turnstile widget's secret key, sent with verify()'s turnstile and used by verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
   turnstileSecret?: string;
   /** Override Cloudflare's siteverify URL (tests). */
   turnstileEndpoint?: string;

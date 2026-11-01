@@ -16,7 +16,7 @@ const B = require('./_browser');
 const { trusted } = require('../packages/pyrmi-server');
 
 let base, server;
-test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
+test.before(async () => { await B.fakeTurnstile(); server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
 test.after(() => server.close());
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let ipn = 1;
@@ -27,7 +27,7 @@ const rawCall = async (method, p, body, headers) => {
 const call = B.wrap(rawCall);
 
 // A project with the given thresholds, one session from a real-looking page, one beacon, then the server's verdict.
-async function verdict(settings, signals) {
+async function verdict(settings, signals, noHuman) {
   ipn++;
   const p = (await call('POST', '/api/v1/project', { name: 'tuned', origins: ['https://shop.example'] })).body.project;
   const auth = { Authorization: 'Bearer ' + p.secretKey };
@@ -38,7 +38,9 @@ async function verdict(settings, signals) {
   await wait(1300);
   // signed in the page and forwarded with the browser's context, the way pyrmi-server sends it (round 11)
   const client = { ua: 'test-ua', ip: '203.0.113.' + ipn, sfs: 'same-site' };
-  return (await call('POST', '/api/v1/verify', { token: s.token, player: 'p1', request: B.sign(s, { player: 'p1' }), client }, auth)).body;
+  // and with a Turnstile pass solved on the session's page for this session, which Pyrmi confirms itself (round 12)
+  const turnstile = noHuman ? undefined : B.human(s, 'shop.example');
+  return (await call('POST', '/api/v1/verify', { token: s.token, player: 'p1', request: B.sign(s, { player: 'p1' }), client, turnstile }, auth)).body;
 }
 const codes = (v) => v.reasons.map((r) => r.code);
 
@@ -85,13 +87,27 @@ test('default thresholds: a clean session, or one with only harmless reasons, is
   assert.equal(tamper.verdict, 'review'); assert.equal(tamper.trusted, false);
 });
 
-test('pyrmi-server trusted(): uses the server flag, and the same allow-list against an older server', () => {
+test('requireHumanCheck: off (the default), a clean session with no human check is trusted; on, it is an accept, never trusted', async () => {
+  const off = await verdict({}, {}, true);
+  assert.equal(off.verdict, 'accept', JSON.stringify(off)); assert.equal(off.human, 'none');
+  assert.equal(off.trusted, true); assert.equal(trusted(off), true);
+  const on = await verdict({ requireHumanCheck: true }, {}, true);
+  assert.equal(on.verdict, 'accept', JSON.stringify(on)); assert.equal(on.human, 'none');
+  assert.equal(on.trusted, false); assert.equal(trusted(on), false);
+  const passed = await verdict({ requireHumanCheck: true }, {});
+  assert.equal(passed.human, 'ok'); assert.equal(passed.trusted, true);
+});
+
+test('pyrmi-server trusted(): needs the server\'s own true and harmless reasons, whatever shape v arrives in', () => {
   const base = { ok: true, verdict: 'accept', client: 'corroborated' };
   assert.equal(trusted({ ...base, trusted: false, reasons: [] }), false, 'the server said no');
-  assert.equal(trusted({ ...base, reasons: [{ code: 'tampered_runtime' }] }), false);
-  assert.equal(trusted({ ...base, reasons: [{ code: 'automation' }] }), false);
-  assert.equal(trusted({ ...base, reasons: [{ code: 'wrapped_runtime' }, { code: 'ip_changed' }] }), true);
-  assert.equal(trusted({ ...base, reasons: [{ code: 'some_new_reason' }] }), false, 'unknown reasons are not trusted');
+  assert.equal(trusted({ ...base, trusted: true, reasons: [{ code: 'wrapped_runtime' }, { code: 'ip_changed' }] }), true);
+  // a reshaped or cached v can't get through
+  for (const t of ['true', 1, null, undefined]) assert.equal(trusted({ ...base, trusted: t, reasons: [] }), false, String(t));
+  assert.equal(trusted({ ...base, trusted: true, reasons: [{ code: 'tampered_runtime' }] }), false, 'a true next to bad reasons');
+  assert.equal(trusted({ ...base, trusted: true, reasons: [{ code: 'some_new_reason' }] }), false, 'unknown reasons are not trusted');
+  for (const r of ['oops', {}, null, undefined]) assert.equal(trusted({ ...base, trusted: true, reasons: r }), false);
+  assert.equal(trusted({ ...base, ok: undefined, trusted: true, reasons: [] }), false);
   assert.equal(trusted({ ...base, trusted: true, verdict: 'review' }), false);
   assert.equal(trusted({ ok: false, verdict: 'accept', client: 'corroborated', trusted: true, unverified: true }), false);
 });

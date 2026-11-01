@@ -7,6 +7,7 @@
 //   const v = await pyrmi.verify({ sealed: req.body, req, user }); // the page sent Pyrmi.seal({ ... }) as JSON
 //   (or the older form: pyrmi.verify({ token, user }); add score: n to check a number too)
 //   if (v.verdict !== 'reject') doTheThing(...);             // everyday actions: let review through, flagged
+//                                                            // (v.verdict is always accept, review or reject here)
 //   if (trusted(v)) payOut(...);                             // sensitive ones: only a corroborated accept
 //   const t = await pyrmi.verifyTurnstile(body.turnstileToken, { remoteip, action: 'payout' });
 //   if (trusted(v, t)) payOut(...);                          // ...plus Cloudflare Turnstile, a check that doesn't
@@ -18,7 +19,8 @@ class Pyrmi {
     this.secretKey = opts.secretKey || process.env.PYRMI_SECRET_KEY;
     this.endpoint = String(opts.endpoint || process.env.PYRMI_ENDPOINT || 'https://pyrmi.com/api/v1').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs || 8000;
-    this.failOpen = !!opts.failOpen; // if Pyrmi is unreachable: false = reject the action, true = accept it unverified
+    // If Pyrmi is unreachable: false = reject the action, true = accept it unverified. Only true or 'true' turns it on.
+    this.failOpen = opts.failOpen === true || opts.failOpen === 'true';
     this.trustProxyHops = opts.trustProxyHops || 0; // proxies of yours in front of this server (for the caller's address)
     // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
     this.turnstileSecret = opts.turnstileSecret || process.env.TURNSTILE_SECRET_KEY || null;
@@ -40,18 +42,34 @@ class Pyrmi {
   // handed to another client (a harvested token used by a script) is flagged (relayed_session). Or pass client: {...}.
   // Behind your own proxies, set trustProxyHops so the address is read from the right X-Forwarded-For entry.
   async verify(input) {
-    const { score, durationMs, replay, simulate } = input || {};
+    const { durationMs, replay, simulate } = input || {};
     const sealed = input && input.sealed && typeof input.sealed === 'object' ? input.sealed : null;
+    // With sealed, the score defaults to the sealed body's own `score`, so the value Pyrmi caps is the one the page
+    // signed. A different score passed here than the signed one is a reject (bad_signature).
+    let score = input && input.score !== undefined ? input.score : sealed && typeof sealed.score === 'number' ? sealed.score : undefined;
+    // NaN and Infinity have no JSON form, so they're sent as text, which Pyrmi rejects (bad_score).
+    if (typeof score === 'number' && !Number.isFinite(score)) score = String(score);
+    let dur = durationMs;
+    if (typeof dur === 'number' && !Number.isFinite(dur)) dur = String(dur);
     const seal = sealed && sealed.pyrmi && typeof sealed.pyrmi === 'object' ? sealed.pyrmi : null;
     const token = input && input.token !== undefined ? input.token : seal ? seal.token : undefined;
     let request;
     if (seal && seal.sig !== undefined) {
-      const fields = {};
+      // A null-prototype copy, so every key in the parsed body stays a field and is sent as one.
+      const fields = Object.create(null);
       for (const k of Object.keys(sealed)) if (k !== 'pyrmi') fields[k] = sealed[k];
       request = { fields, ts: seal.ts, sig: seal.sig };
     }
     const client = input && input.client ? input.client : input && input.req ? clientOf(input.req, this.trustProxyHops) : undefined;
     const player = input && input.player !== undefined ? input.player : input && input.user;
+    // The human check for trusted (round 12): the Turnstile token your page got from a widget rendered with
+    // cdata: session (the id Pyrmi.start() answers), sent along with your Turnstile secret key so Pyrmi can confirm it
+    // with Cloudflare itself. Pyrmi uses the key for that one call and never stores or logs it. Pass it as
+    // turnstile: token (or { token, action }); with sealed, a `turnstile` field in the sealed body is used by default.
+    let human;
+    const tin = input && input.turnstile !== undefined ? input.turnstile : sealed && typeof sealed.turnstile === 'string' ? sealed.turnstile : undefined;
+    const ttoken = tin && typeof tin === 'object' ? tin.token : tin;
+    if (typeof ttoken === 'string' && ttoken && this.turnstileSecret) human = { token: ttoken, secret: this.turnstileSecret, action: tin && typeof tin === 'object' && tin.action !== undefined ? tin.action : undefined };
     let replayCheck = { check: 'none' };
     if (typeof simulate === 'function') {
       try {
@@ -62,15 +80,25 @@ class Pyrmi {
         replayCheck = { check: 'mismatch', detail: 'replay failed: ' + String(e && e.message).slice(0, 80) };
       }
     }
+    // failOpen covers Pyrmi being down (no answer, a timeout, a 5xx), never something the caller can cause.
+    // An oversized or malformed action, or a 4xx answer to it (413 too large, 400, 403, 429), is a reject.
+    const refuse = (why) => ({ ok: false, verdict: 'reject', risk: null, reasons: [{ code: 'pyrmi_refused', text: 'Pyrmi refused the action: ' + why }], unverified: true });
+    let payload;
+    try { payload = JSON.stringify({ token, score, durationMs: dur, player, replay: replayCheck, request, client, turnstile: human }); } catch (e) { return refuse('it could not be sent (' + (e && e.message) + ')'); }
+    if (Buffer.byteLength(payload) > 16 * 1024) return refuse('it is larger than 16 KB');
     try {
       const res = await fetch(this.endpoint + '/verify', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + this.secretKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, score, durationMs, player, replay: replayCheck, request, client }),
+        body: payload,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw Object.assign(new Error(body.message || 'Pyrmi returned ' + res.status), { code: body.error || 'http_' + res.status, status: res.status });
+      const body = await res.json().catch(() => null);
+      if (res.status >= 400 && res.status < 500 && res.status !== 401) return refuse((body && (body.message || body.error)) || 'HTTP ' + res.status);
+      if (!res.ok) throw Object.assign(new Error((body && body.message) || 'Pyrmi returned ' + res.status), { code: (body && body.error) || 'http_' + res.status, status: res.status });
+      // Anything without a real verdict (an HTML page from a proxy, a wrong endpoint) is treated as Pyrmi being
+      // unreachable: reject, unless you chose failOpen.
+      if (!body || body.ok !== true || !['accept', 'review', 'reject'].includes(body.verdict)) throw new Error('Pyrmi sent something that isn\'t a verdict');
       return body;
     } catch (e) {
       if (e && e.status === 401) throw e; // a wrong key is a setup bug, not an outage
@@ -109,25 +137,30 @@ function clientOf(req, hops) {
   const h = (req && req.headers) || {};
   const get = (k) => { const v = typeof h.get === 'function' ? h.get(k) : h[k]; return Array.isArray(v) ? v[0] : v; };
   const xff = String(get('x-forwarded-for') || '').split(',').map((x) => x.trim()).filter(Boolean);
-  const ip = (hops > 0 ? xff[Math.max(0, xff.length - hops)] : xff[0]) || (req.socket && req.socket.remoteAddress) || req.ip || '';
+  // With no proxies of yours (trustProxyHops 0, the default) X-Forwarded-For is ignored, since the caller can type it. Behind
+  // your own proxies, the entry that many from the right is the one your nearest proxy wrote. On a platform that
+  // overwrites the header itself (Vercel, Netlify, Cloudflare), set trustProxyHops: 1.
+  // Fewer entries than hops means the request skipped your proxies (all of it is the caller's): use the socket.
+  const ip = (hops > 0 && xff.length >= hops ? xff[xff.length - hops] : '') || (req.socket && req.socket.remoteAddress) || '';
   return { ua: String(get('user-agent') || ''), ch: String(get('sec-ch-ua') || ''), sfs: String(get('sec-fetch-site') || ''), ip: String(ip) };
 }
 
 // The gate for anything that matters (payouts, prizes, leaderboards, account changes). Pyrmi works it out on the
-// server as `trusted`: an accept whose telemetry it corroborated, from a page a person really pressed or clicked on,
-// with no reason beyond the harmless ones below. It doesn't move with your reviewAt/rejectAt, so tuning those to cut
-// false positives can't make a tampered or webdriver session trusted. A review is never trusted, nor is the stand-in
-// verdict from failOpen when Pyrmi is down. This still isn't proof of a person: a script that copies the real one
-// closely enough can pass, so pair it with your own limits (maxScore, minDurationMs, rate limits), Turnstile, and,
-// for a deterministic game, simulate. Pass a Turnstile result (from verifyTurnstile) as the second argument to
-// require that too.
+// server as `trusted`: an accept whose telemetry it corroborated, sealed in the page and sent from the same browser,
+// with no reason beyond the harmless ones below, and, if the site turned on requireHumanCheck, a Turnstile pass Pyrmi
+// confirmed with Cloudflare itself for this session (send turnstile: to verify()). Everything else Pyrmi sees is
+// reported by the client, so treat trusted as "looks like a real browser" unless the human check is on. It doesn't
+// move with your reviewAt/rejectAt. A review is never trusted, nor is the stand-in verdict from failOpen when Pyrmi is
+// down. Pair it with your own limits (maxScore, minDurationMs, rate limits) and, for a deterministic game, simulate.
+// You can also pass a result from verifyTurnstile() as the second argument to require a check you ran yourself.
 const TRUST_ALLOWS = new Set(['wrapped_runtime', 'devtools_open', 'ip_changed', 'idle_input']);
 function trusted(v, turnstile) {
   if (arguments.length > 1 && !(turnstile && turnstile.success === true)) return false;
-  if (!v || v.ok === false || v.unverified || v.verdict !== 'accept' || v.client !== 'corroborated') return false;
-  if (typeof v.trusted === 'boolean') return v.trusted;
-  // An older Pyrmi server that doesn't send `trusted`: the same allow-list over the reasons.
-  return (v.reasons || []).every((r) => r && TRUST_ALLOWS.has(r.code));
+  if (!v || typeof v !== 'object' || v.ok !== true || v.unverified || v.verdict !== 'accept' || v.client !== 'corroborated') return false;
+  // Only the boolean true Pyrmi sends counts, and the reasons must still all be harmless. Pyrmi servers have sent
+  // `trusted` since round 9; an older one gets false here.
+  if (v.trusted !== true || !Array.isArray(v.reasons)) return false;
+  return v.reasons.every((r) => r && typeof r === 'object' && TRUST_ALLOWS.has(r.code));
 }
 
 module.exports = { Pyrmi, trusted, clientOf, TRUST_ALLOWS };

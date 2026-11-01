@@ -39,14 +39,22 @@ async function readJson(req, max) {
 
 function httpError(status, code, message) { const e = new Error(message || code); e.status = status; e.code = code; return e; }
 
-// The caller's address. On Vercel the platform writes X-Forwarded-For itself, so its first entry is the client. Behind
-// your own proxy (nginx, a load balancer) the first entry is whatever the client sent, so set PYRMI_PROXY_HOPS to the
-// number of proxies you run and the address is taken that many entries from the right instead.
+// The caller's address, which rate limits, quotas and the session's network binding are keyed on.
+//   - On Vercel (VERCEL_ENV is set) the platform writes X-Forwarded-For and x-vercel-forwarded-for itself, overwriting
+//     whatever the client sent, so the first entry is the client.
+//   - Behind your own proxies (nginx, a load balancer), set PYRMI_PROXY_HOPS to how many there are: the address is taken
+//     that many entries from the right, where your own proxy wrote it.
+//   - Anywhere else, X-Forwarded-For and X-Real-IP are ignored and the socket address is used, since the client can
+//     type them. PYRMI_PROXY_HOPS=0 means the same: no proxy, socket address only.
 function clientIp(req) {
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const hops = parseInt(process.env.PYRMI_PROXY_HOPS, 10);
-  const pick = Number.isFinite(hops) && hops > 0 ? xff[Math.max(0, xff.length - hops)] : xff[0];
-  return pick || String(req.headers['x-real-ip'] || '') || (req.socket && req.socket.remoteAddress) || '0.0.0.0';
+  const raw = process.env.PYRMI_PROXY_HOPS;
+  const hops = parseInt(raw, 10);
+  let pick = '';
+  // Fewer entries than hops means the request skipped your proxies, so every entry is the caller's own: use the socket.
+  if (raw !== undefined && raw !== '' && Number.isFinite(hops) && hops >= 0) pick = hops > 0 && xff.length >= hops ? xff[xff.length - hops] : '';
+  else if (process.env.VERCEL_ENV) pick = String(req.headers['x-vercel-forwarded-for'] || '').split(',')[0].trim() || xff[0];
+  return pick || (req.socket && req.socket.remoteAddress) || '0.0.0.0';
 }
 
 function bearer(req) {
@@ -63,6 +71,9 @@ function cors(req, res, allowed) {
   const origin = String(req.headers.origin || '');
   res.setHeader('Vary', 'Origin');
   if (!origin) return true;
+  // "null" is what sandboxed iframes, data: and file: pages send. Echoing it would let any such page read the answer,
+  // whoever made it, so it's never echoed.
+  if (origin === 'null') return !allowed || !allowed.length;
   const ok = !allowed || !allowed.length || allowed.includes(origin);
   if (ok) {
     res.setHeader('Access-Control-Allow-Origin', origin);

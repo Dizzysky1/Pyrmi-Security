@@ -1,6 +1,6 @@
 /* Pyrmi Security dashboard. Two ways in: signed in (by email code, GitHub or Google; a session cookie this script never sees; every change
-   also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in sessionStorage (or localStorage if
-   "remember" is ticked) and is only ever sent to this site's own API. Everything shown is escaped: user names come
+   also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in this tab's sessionStorage only
+   (round 12: never localStorage) and is only ever sent to this site's own API. Everything shown is escaped: user names come
    from your users. */
 (function () {
   'use strict';
@@ -45,7 +45,7 @@
     });
   }
   function whyFailed(e) { return e && e.message === 'human_check' ? HUMAN_ERR : 'Could not reach the server.'; }
-  try { sk = sessionStorage.getItem(KEY) || localStorage.getItem(KEY); } catch (e) { /* storage blocked */ }
+  try { sk = sessionStorage.getItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function show(id) { ['gate', 'keys', 'dash', 'account'].forEach(function (x) { $(x).hidden = x !== id; }); }
@@ -62,8 +62,10 @@
     if (s < 60) return Math.floor(s) + 's ago'; if (s < 3600) return Math.floor(s / 60) + 'm ago';
     if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago';
   }
-  function save(k, remember) {
-    try { sessionStorage.setItem(KEY, k); if (remember) localStorage.setItem(KEY, k); else localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+  // The key lives in this tab's sessionStorage only, never localStorage, so it doesn't outlive the tab; a copy saved by
+  // an older version is removed.
+  function save(k) {
+    try { sessionStorage.setItem(KEY, k); localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
   }
   function forget() { try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* ignore */ } sk = null; }
   function lines(v) { return String(v || '').split(/[\s,]+/).filter(Boolean); }
@@ -81,8 +83,8 @@
       btn.disabled = false;
       guardStart(); // tokens are single use
       if (!r.ok) { $('create-err').textContent = r.message || r.error; return; }
-      $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey;
-      sk = r.project.secretKey; save(sk, false); show('keys');
+      $('k-pk').textContent = r.project.publicKey; $('k-title').textContent = 'Project created'; $('k-sk').textContent = r.project.secretKey;
+      sk = r.project.secretKey; save(sk); show('keys');
     }, function (e) { btn.disabled = false; $('create-err').textContent = whyFailed(e); });
   });
   $('k-saved').addEventListener('change', function () { $('k-go').disabled = !this.checked; });
@@ -92,7 +94,7 @@
     var f = e.target; sk = f.sk.value.trim(); $('login-err').textContent = '';
     api('GET', 'project').then(function (r) {
       if (!r.ok) { $('login-err').textContent = r._status === 401 ? 'That key didn\'t work.' : (r.message || r.error); sk = null; return; }
-      save(sk, f.remember.checked); f.sk.value = ''; load(true);
+      save(sk); f.sk.value = ''; load(true);
     });
   });
   $('signout').addEventListener('click', function () {
@@ -136,6 +138,7 @@
   });
   $('code-back').addEventListener('click', function () { $('signin-err').textContent = ''; codeStep(false); });
   function signOut() {
+    forget(); // a key saved from key-only mode goes too
     api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; clearInterval(timer); timer = null; history.replaceState(null, '', '/dashboard/'); boot(); });
   }
   $('a-signout').addEventListener('click', signOut);
@@ -165,15 +168,18 @@
       btn.disabled = false; guardStart();
       if (!r.ok) { $('add-err').textContent = r.message || r.error; return; }
       f.reset(); pid = r.project.pid;
-      $('k-pk').textContent = r.project.publicKey; $('k-sk').textContent = r.project.secretKey; show('keys');
+      $('k-pk').textContent = r.project.publicKey; $('k-title').textContent = 'Project created'; $('k-sk').textContent = r.project.secretKey; show('keys');
     }, function (e) { btn.disabled = false; $('add-err').textContent = whyFailed(e); });
   });
   $('claim').addEventListener('submit', function (e) {
     e.preventDefault();
     var f = e.target; $('claim-err').textContent = '';
-    human('claim', 'ts-claim').then(function (t) { return api('POST', 'sites?action=claim', { secretKey: f.sk.value.trim(), turnstileToken: t }); }).then(function (r) {
+    human('claim', 'ts-claim').then(function (t) { return api('POST', 'sites?action=claim', { secretKey: f.sk.value.trim(), keepKey: f.keep.checked, turnstileToken: t }); }).then(function (r) {
       if (!r.ok) { $('claim-err').textContent = r.message || r.error; return; }
-      f.reset(); location.hash = 'site=' + r.site.pid;
+      f.reset();
+      if (!r.site.secretKey) { location.hash = 'site=' + r.site.pid; return; }
+      pid = r.site.pid; $('k-title').textContent = 'Project added: new secret key';
+      $('k-pk').textContent = r.site.publicKey; $('k-sk').textContent = r.site.secretKey; show('keys');
     }, function (e) { $('claim-err').textContent = whyFailed(e); });
   });
   $('g-check').addEventListener('click', function () { $('g-note').textContent = 'checking…'; load().then(function () { $('g-note').textContent = 'checked ' + new Date().toLocaleTimeString(); }); });
@@ -181,7 +187,7 @@
     var p = d.project, st = d.status, origin = location.origin;
     $('guide').hidden = false;
     $('g1').textContent = sdkTag(origin, p.publicKey) + '\n<script>\n  let pyrmi = null;\n  Pyrmi.start().then((s) => { pyrmi = s; });\n  // right before a protected request (sign-up, vote, checkout...):\n  //   await Pyrmi.flush(); const body = await Pyrmi.seal({ ...yourFields });\n  //   POST body as JSON, unchanged, then call Pyrmi.start() again for the next one\n</script>';
-    $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\n// req.body: what the page sent from Pyrmi.seal(); req: this request (checks it's the same browser)\nconst v = await pyrmi.verify({ sealed: req.body, req, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });";
+    $('g2').textContent = "// npm install pyrmi-server\nconst { Pyrmi } = require('pyrmi-server');\nconst pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY" + (origin === 'https://pyrmi.com' ? '' : ", endpoint: '" + origin + "/api/v1'") + " });\n\n// req.body: what the page sent from Pyrmi.seal(); req: this request (checks it's the same browser)\n// user: from your own sign-in, never from req.body. A sealed `score` is checked against your caps; a value under\n// another name, pass as score: too.\nconst v = await pyrmi.verify({ sealed: req.body, req, user: userId });\nif (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });\n\n// Payouts, prizes, leaderboards: use trusted(v). For a stronger trusted, add a Turnstile pass (install.md, requireHumanCheck).\n// Behind Vercel, Netlify or Cloudflare add trustProxyHops: 1 to new Pyrmi({...}).";
     $('g3').textContent = 'Read ' + origin + '/install.md and add Pyrmi Security to this site. My public key is ' + p.publicKey + ' and my secret key is in the PYRMI_SECRET_KEY environment variable (don\'t write it into any file). Protect the requests worth protecting (sign-ups, logins, votes, checkouts, scores) and tell me which files you changed.';
     $('g-page').className = st.page ? 'done' : ''; $('g-server').className = st.server ? 'done' : '';
     var c = $('g-state');
@@ -250,7 +256,7 @@
       if (document.activeElement.form !== f) {
         f.name.value = p.name; f.maxScore.value = s.maxScore == null ? '' : s.maxScore; f.maxScorePerSec.value = s.maxScorePerSec == null ? '' : s.maxScorePerSec;
         f.minDurationMs.value = s.minDurationMs; f.reviewAt.value = s.reviewAt; f.rejectAt.value = s.rejectAt;
-        f.origins.value = (s.origins || []).join('\n'); f.strictClock.checked = !!s.strictClock; f.signedTrust.checked = !!s.signedTrust; f.requireSignedRequests.checked = !!s.requireSignedRequests;
+        f.origins.value = (s.origins || []).join('\n'); f.strictClock.checked = !!s.strictClock; f.requireSignedRequests.checked = !!s.requireSignedRequests; f.requireHumanCheck.checked = !!s.requireHumanCheck;
       }
       $('i-snippet').textContent = sdkTag(location.origin, p.publicKey);
     }
@@ -274,7 +280,7 @@
     msg.className = 'err'; msg.textContent = 'saving…';
     api('PATCH', me ? 'sites?pid=' + pid : 'project', { name: f.name.value, settings: {
       maxScore: f.maxScore.value.trim(), maxScorePerSec: f.maxScorePerSec.value.trim(), minDurationMs: f.minDurationMs.value.trim(),
-      reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked, signedTrust: f.signedTrust.checked, requireSignedRequests: f.requireSignedRequests.checked } })
+      reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked, requireSignedRequests: f.requireSignedRequests.checked, requireHumanCheck: f.requireHumanCheck.checked } })
       .then(function (r) { if (!r.ok) { msg.textContent = r.message || r.error; return; } msg.className = 'err good'; msg.textContent = 'saved'; document.activeElement.blur(); load(); });
   });
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });
@@ -287,8 +293,7 @@
       if (!r.ok) { $('rotate-err').textContent = r.message || r.error; return; }
       $('rotate-confirm').hidden = true;
       if (me) { $('r-sk').textContent = r.secretKey; $('rotate-out').hidden = false; return; }
-      sk = r.secretKey; var remembered = false; try { remembered = !!localStorage.getItem(KEY); } catch (e) { /* ignore */ }
-      save(sk, remembered); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
+      sk = r.secretKey; save(sk); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
     }, function (e) { $('rotate-err').textContent = whyFailed(e); });
   });
 

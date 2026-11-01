@@ -139,11 +139,21 @@ test('CSRF check: Origin null and a different scheme or port are refused', () =>
   refused(req('http://pyrmi.com', 'pyrmi.com'));
 });
 
-test('client address: the first X-Forwarded-For entry on Vercel, counted from the right behind your own proxies', () => {
-  const req = { headers: { 'x-forwarded-for': '6.6.6.6, 198.51.100.4' }, socket: {} };
-  assert.equal(clientIp(req), '6.6.6.6');
-  process.env.PYRMI_PROXY_HOPS = '1';
-  try { assert.equal(clientIp(req), '198.51.100.4'); } finally { delete process.env.PYRMI_PROXY_HOPS; }
+test('client address: the first X-Forwarded-For entry on Vercel, counted from the right behind your own proxies, the socket otherwise', () => {
+  const req = { headers: { 'x-forwarded-for': '6.6.6.6, 198.51.100.4', 'x-real-ip': '7.7.7.7' }, socket: { remoteAddress: '192.0.2.50' } };
+  const saved = { hops: process.env.PYRMI_PROXY_HOPS, env: process.env.VERCEL_ENV };
+  const set = (k, v) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  try {
+    set('PYRMI_PROXY_HOPS', undefined); set('VERCEL_ENV', undefined);
+    assert.equal(clientIp(req), '192.0.2.50', 'self-hosted with no proxy: a client-typed X-Forwarded-For or X-Real-IP is ignored (round 12)');
+    set('PYRMI_PROXY_HOPS', '0');
+    assert.equal(clientIp(req), '192.0.2.50');
+    set('PYRMI_PROXY_HOPS', '1');
+    assert.equal(clientIp(req), '198.51.100.4');
+    set('PYRMI_PROXY_HOPS', undefined); set('VERCEL_ENV', 'production');
+    assert.equal(clientIp(req), '6.6.6.6', 'Vercel overwrites X-Forwarded-For itself');
+    assert.equal(clientIp({ ...req, headers: { ...req.headers, 'x-vercel-forwarded-for': '203.0.113.9' } }), '203.0.113.9');
+  } finally { set('PYRMI_PROXY_HOPS', saved.hops); set('VERCEL_ENV', saved.env); }
 });
 
 test('an account sees all of its sites when the per-account cap is raised', async () => {

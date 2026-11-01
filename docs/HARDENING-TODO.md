@@ -130,8 +130,9 @@ item off in the PR that fixes it, and add new ones in the PR that finds them.
 - [ ] **A relay that copies everything still passes** (round 11, by design). A real browser driven over CDP can seal
   any action in the page and send it from a script with the same headers on the same network. No client-side check
   can see that; the server gate (single use, minimum time, caps, replay, Turnstile) is what holds.
-- [ ] **Customer servers behind their own proxies** must set `trustProxyHops` in pyrmi-server, or the forwarded
-  address is the proxy's. A wrong address only costs `ip_changed` (+10), never trust, so it fails soft.
+- [x] **Customer servers behind their own proxies** set `trustProxyHops` in pyrmi-server (`PYRMI_PROXY_HOPS` for a
+  self-hosted API).
+- [x] **Security hardening** (round 12): see PROGRESS.md.
 - [x] **Player labels collided.** A label that needs cleaning gets a short hash of the original on the end, so `a<b`,
   `a>b` and `a/b` are three players. Ordinary labels are unchanged.
 - [ ] **DMARC is `p=none`.** Move to `quarantine`, then `reject`, and SPF to `-all` once the reports look right.

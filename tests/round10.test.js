@@ -56,7 +56,7 @@ test('a new project must name the pages that will run the script', async () => {
 
 test('a new project rejects an instant action and a value with no limit, until it is set up', async () => {
   const p = await core.createProject({ name: 'Game', origins: [ORIGIN] }, nextIp(), 'owner-r10');
-  let project = await core.loadProject(p.pid);
+  let project = await core.updateSettings(await core.loadProject(p.pid), { requireSignedRequests: false }); // about the gate, not sealing
   const ip = nextIp();
   const quick = await core.startSession(project, page(ip), { pt: 0 });
   assert.ok(codes(await core.verify(project, { token: quick.token, player: 'p' }, { ip })).includes('too_short'));
@@ -84,7 +84,7 @@ test('a project made before secure defaults keeps working exactly as it did, and
   await core.recordSignals({ token: s.token, ...order(s), signals: signals() }, page(ip, 'https://anywhere.example'));
   const v = await core.verify(project, { token: s.token, score: 10, player: 'x' }, { ip });
   assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
-  assert.deepEqual((await core.dashboard(project)).warnings.map((w) => w.code), ['open', 'instant']);
+  assert.deepEqual((await core.dashboard(project)).warnings.map((w) => w.code), ['open', 'instant', 'no_score_limit']);
   // a server that wants every project bound can still say so
   await withEnv({ PYRMI_REQUIRE_ORIGINS: 'all' }, () => assert.rejects(core.startSession(project, page(nextIp()), { pt: 0 }), (e) => e.code === 'origin_required'));
   // and one that wants none can turn the rule off
