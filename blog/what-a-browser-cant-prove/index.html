@@ -44,8 +44,8 @@
     <h1>What a browser can't prove: building an open-source bot and tamper check</h1>
     <p class="byline">Luke (Dizzysky1) · November 2026</p>
 
-    <p>I've been building Pyrmi Security, an open-source (Apache 2.0) tool that checks whether a request came from a real page load in a real browser before your server trusts it. Sign-ups, votes, checkouts, coupon codes and scores on a game leaderboard are the kinds of requests I had in mind.</p>
-    <p>The thing I kept running into is that a lot of web "anti-cheat" promises something it can't deliver. Whoever owns the browser can switch off any check that runs in it. You can't block devtools, and you can't stop code from running. So Pyrmi is built around a different idea: the browser collects evidence, and your server makes the call.</p>
+    <p>Pyrmi Security is open-source (Apache 2.0) bot and tamper detection for your site: one script tag in the page and three lines on your server. It catches bots, scrapers, replayed requests and tampered pages before your server trusts a sign-up, a login, a vote, a checkout, a coupon code or a score.</p>
+    <p>The thing I kept running into is that a lot of bot and tamper protection for the web promises something it can't deliver. Whoever owns the browser can switch off any check that runs in it. You can't block devtools, and you can't stop code from running. So Pyrmi is built around a different idea: the browser collects evidence, and your server makes the call.</p>
 
     <p>Full honesty: I built this with Claude. I came up with the idea and made the calls, and a friend and I spent a couple of weeks trying to break it, which found a bunch of holes that are now fixed.</p>
 
@@ -68,6 +68,16 @@ const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 const v = await pyrmi.verify({ sealed: req.body, req });
 if (v.verdict === 'reject') return res.status(403).end();</pre></div>
 
+    <h2>What it catches</h2>
+    <ul>
+      <li>Bots and headless browsers: webdriver flags and Playwright, Puppeteer, Selenium and Cypress markers.</li>
+      <li>Scrapers and direct API calls: a request with no signed session from a real page gets flagged.</li>
+      <li>Replayed requests and forged or edited tokens.</li>
+      <li>Tampered pages: replaced <code>fetch</code>, <code>performance.now</code> and other built-ins, plus probably-open devtools.</li>
+      <li>Scripted input: synthetic events, and typing or clicking that's too even or too fast for a person.</li>
+      <li>Impossible values: actions sent faster than a person could, or numbers past your caps.</li>
+    </ul>
+
     <h2>What it actually stops</h2>
     <p>These checks live on the server, so they don't depend on the browser telling the truth:</p>
     <ul>
@@ -82,7 +92,7 @@ if (v.verdict === 'reject') return res.status(403).end();</pre></div>
     <h2>What it only makes harder</h2>
     <p>Anything the browser reports. A careless bot, a lazy edit of the script, or a Puppeteer script with default settings gets caught. A determined person running a real browser they control can send exactly what the real script sends. So treat the risk score as a reason to flag or review, not as proof. I'd rather say that up front than have someone find out the hard way.</p>
 
-    <h2>For browser games</h2>
+    <h2>For games and anything with a score</h2>
     <p>If your game is deterministic (same seed plus same inputs gives the same result), Pyrmi hands the page a seed, and your server can re-run the recorded inputs with a <code>simulate</code> function. Inputs that don't reproduce the claimed score are rejected. That's the one anti-cheat check that doesn't rely on the client at all, and it's the one I'd lean on for leaderboards. The <a href="/docs/#replay">replay docs</a> show how.</p>
 
     <h2>Try to break it</h2>
