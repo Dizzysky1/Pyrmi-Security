@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What a browser can't prove · Pyrmi Security</title>
+<meta name="description" content="Why Pyrmi Security treats browser signals as evidence and lets the server decide, what it stops, and what it only makes harder.">
+<link rel="canonical" href="https://pyrmi.com/blog/what-a-browser-cant-prove/">
+<meta property="og:title" content="What a browser can't prove: building an open-source bot and tamper check">
+<meta property="og:description" content="Why Pyrmi Security treats browser signals as evidence and lets the server decide.">
+<meta property="og:image" content="https://pyrmi.com/og.png">
+<meta property="og:url" content="https://pyrmi.com/blog/what-a-browser-cant-prove/">
+<meta property="og:type" content="article">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<meta name="theme-color" content="#07070c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
+<style>
+  .doc{max-width:760px;margin:30px 0 0;padding:6px 30px 30px;border-radius:22px}
+  @media(max-width:560px){.doc{padding:4px 18px 22px}}
+  .doc h1{font-family:var(--display);font-weight:700;font-size:32px;margin:22px 0 8px;letter-spacing:-.02em;line-height:1.2}
+  .doc h2{font-family:var(--display);font-weight:500;font-size:21px;margin:38px 0 10px;letter-spacing:-.01em}
+  .doc p,.doc li{color:#d6d3f0;line-height:1.7}
+  .doc li{margin:4px 0}
+  .doc .code{margin:14px 0}
+  .byline{color:var(--muted);font-size:14px;margin:0 0 18px}
+  .note{border:1px dashed rgba(255,225,77,.35);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:14px;line-height:1.55}
+</style>
+</head>
+<body>
+<div id="bg-fallback" class="quiet"></div>
+<canvas id="gl" data-mode="quiet" aria-hidden="true"></canvas>
+<div class="veil"></div>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
+    <nav><a href="/#demo">sandbox</a><a href="/docs/">docs</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
+  </header>
+
+  <main class="doc glass">
+    <h1>What a browser can't prove: building an open-source bot and tamper check</h1>
+    <p class="byline">Luke (Dizzysky1) · November 2026</p>
+
+    <p>Pyrmi Security is open-source (Apache 2.0) bot and tamper detection for your site: one script tag in the page and three lines on your server. It catches bots, scrapers, replayed requests and tampered pages before your server trusts a sign-up, a login, a vote, a checkout, a coupon code or a score.</p>
+    <p>The thing I kept running into is that a lot of bot and tamper protection for the web promises something it can't deliver. Whoever owns the browser can switch off any check that runs in it. You can't block devtools, and you can't stop code from running. So Pyrmi is built around a different idea: the browser collects evidence, and your server makes the call.</p>
+
+    <p>Full honesty: I built this with Claude. I came up with the idea and made the calls, and a friend and I spent a couple of weeks trying to break it, which found a bunch of holes that are now fixed.</p>
+
+    <h2>How it works</h2>
+    <ol>
+      <li><strong>Add one script tag.</strong> On a real page load it gets a signed, single-use session from the server, then watches for signs of automation and tampering: webdriver and headless markers, scripted input events, typing and clicking that's too even to be human, replaced built-ins like <code>fetch</code> and <code>performance.now</code>, a page clock that doesn't keep pace with real time, and probably-open devtools.</li>
+      <li><strong>Seal the request.</strong> Right before the page sends a protected action, <code>Pyrmi.seal()</code> signs the exact fields with a per-session key, so a body that's changed on the way gets rejected.</li>
+      <li><strong>Ask for a verdict.</strong> Your server calls <code>pyrmi.verify()</code> and gets back accept, review or reject, a risk score from 0 to 100, and the reasons.</li>
+      <li><strong>Watch the dashboard.</strong> Every verdict, which checks fired, and which users keep getting flagged.</li>
+    </ol>
+    <div class="code"><div class="code-h">in your page <button class="copy" data-copy="b1">copy</button></div>
+<pre id="b1">const s = await Pyrmi.start();                // on page load
+await Pyrmi.flush();                          // right before the protected request
+const body = await Pyrmi.seal({ email });     // signed: changed on the way = rejected
+await fetch('/signup', { method: 'POST',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });</pre></div>
+    <div class="code"><div class="code-h">on your server · npm install pyrmi-server <button class="copy" data-copy="b2">copy</button></div>
+<pre id="b2">const { Pyrmi } = require('pyrmi-server');
+const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
+const v = await pyrmi.verify({ sealed: req.body, req });
+if (v.verdict === 'reject') return res.status(403).end();</pre></div>
+
+    <h2>What it catches</h2>
+    <ul>
+      <li>Bots and headless browsers: webdriver flags and Playwright, Puppeteer, Selenium and Cypress markers.</li>
+      <li>Scrapers and direct API calls: a request with no signed session from a real page gets flagged.</li>
+      <li>Replayed requests and forged or edited tokens.</li>
+      <li>Tampered pages: replaced <code>fetch</code>, <code>performance.now</code> and other built-ins, plus probably-open devtools.</li>
+      <li>Scripted input: synthetic events, and typing or clicking that's too even or too fast for a person.</li>
+      <li>Impossible values: actions sent faster than a person could, or numbers past your caps.</li>
+    </ul>
+
+    <h2>What it actually stops</h2>
+    <p>These checks live on the server, so they don't depend on the browser telling the truth:</p>
+    <ul>
+      <li>Replayed requests. Each token works once and expires.</li>
+      <li>Forged or edited tokens. Sessions are HMAC-signed, so changing one byte is a reject.</li>
+      <li>Actions sent faster than a person could. The minimum time is measured from when the server issued the token, not from a number the page claims.</li>
+      <li>Impossible values. You set a max score, or a max score per second.</li>
+      <li>Direct API calls and scrapers that never loaded a real page.</li>
+      <li>Floods. Every endpoint is rate limited per network and per project.</li>
+    </ul>
+
+    <h2>What it only makes harder</h2>
+    <p>Anything the browser reports. A careless bot, a lazy edit of the script, or a Puppeteer script with default settings gets caught. A determined person running a real browser they control can send exactly what the real script sends. So treat the risk score as a reason to flag or review, not as proof. I'd rather say that up front than have someone find out the hard way.</p>
+
+    <h2>For games and anything with a score</h2>
+    <p>If your game is deterministic (same seed plus same inputs gives the same result), Pyrmi hands the page a seed, and your server can re-run the recorded inputs with a <code>simulate</code> function. Inputs that don't reproduce the claimed score are rejected. That's the one anti-cheat check that doesn't rely on the client at all, and it's the one I'd lean on for leaderboards. The <a href="/docs/#replay">replay docs</a> show how.</p>
+
+    <h2>Try to break it</h2>
+    <p>The <a href="/#demo">homepage sandbox</a> stands in for a form on your site. You can send an action normally, replay it, edit its token, send an impossible value, change it on the wire, or skip the page and call the API directly, and see the verdict your server would get. You can also open devtools and paste <code>performance.now = () =&gt; 0</code> into the console. Everything you do shows up on the <a href="/dashboard/?demo=1">public sandbox dashboard</a>.</p>
+
+    <h2>Setting it up</h2>
+    <p>It's free to use on pyrmi.com while it's in early access, or you can self-host it on Vercel with a free Upstash Redis. There are no dependencies, just Node 18+. If you use Claude Code, Cursor or another coding agent, there's an <a href="/install.md">install guide written for agents</a>: paste one prompt and it wires up the script tag and the server check. For high-value actions like payouts there's an optional switch that also requires a Cloudflare Turnstile pass.</p>
+
+    <h2>What I'd love feedback on</h2>
+    <ul>
+      <li>Does the threat model make sense, and is anything in it wrong?</li>
+      <li>False positives on real sites. Error trackers like Sentry and frameworks like zone.js wrap built-ins, so Pyrmi scores those much lower than a real tamper, but I'd like to hear about anything else that trips it.</li>
+      <li>What would make you actually drop it into a project?</li>
+    </ul>
+    <p class="note">The source is on <a href="https://github.com/Dizzysky1/Pyrmi-Security">GitHub</a>, and issues and pull requests are welcome. The full threat model is in the README and the <a href="/docs/#limits">docs</a>.</p>
+  </main>
+  <footer>Pyrmi Security · open source, Apache 2.0 · <a href="/">home</a> · <a href="/docs/">docs</a> · <a href="/dashboard/">dashboard</a></footer>
+</div>
+<script src="/site.js"></script>
+<script type="module" src="/bg/singularity.js?v=2"></script>
+</body>
+</html>
