@@ -143,7 +143,8 @@ async function emailStart(body, ip, mailer, opts) {
   const ah = C.sha256(email), ipf = await C.fingerprint('ip', core.network(ip));
   const tooMany = () => { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; return e; };
   if (await hourly('ps:rl:emailto:' + ah + ':' + ipf) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw tooMany();
-  if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20) && !(await knownDevice(email, o.device))) throw tooMany();
+  const device = await knownDevice(email, o.device);
+  if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20) && !device) throw tooMany();
   const day = core.ymd(Date.now());
   // One network's share of the day's codes, whatever addresses it asks for.
   if (await core.hit('ps:rl:emailnet:' + ipf + ':' + day, 2 * 86400) > intEnv('PYRMI_EMAIL_CODES_PER_IP_PER_DAY', 30)) {
@@ -160,7 +161,8 @@ async function emailStart(body, ip, mailer, opts) {
   if (known) {
     const n = await core.hit('ps:rl:emailknown:' + day, 2 * 86400), cap = intEnv('PYRMI_EMAIL_KNOWN_PER_DAY', 5000);
     await core.nearLimit('email-known', n, cap, day);
-    if (n > cap) { const e = httpError(429, 'rate_limited', 'Email sign-in is busy right now. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
+    // A browser that signed in to this account before still gets its code past the cap.
+    if (n > cap && !device) { const e = httpError(429, 'rate_limited', 'Email sign-in is busy right now. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
   } else {
     const hour = new Date().toISOString().slice(0, 13).replace(/\D/g, '');
     const [d, h] = await Promise.all([core.hit('ps:rl:emailstart:' + day, 2 * 86400), core.hit('ps:rl:emailnew:' + hour, 7200)]);
@@ -434,27 +436,31 @@ async function createSite(uid, body, ip) {
 // owner holds one.
 // keepKey: true skips that, for an owner who knows no one else has the key and can't redeploy right away.
 async function claimSite(uid, sk, opts) {
-  const p = await core.projectBySecretKey(sk);
-  if (!p || p.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
-  if (p.owner && p.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
+  const found = await core.projectBySecretKey(sk);
+  if (!found || found.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
+  if (found.owner && found.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
   if (num(await kv.cmd('ZCARD', 'ps:us:' + uid)) >= intEnv('PYRMI_SITES_PER_USER', MAX_SITES)) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
-  // Take ownership atomically. The old read-check-then-HSET let two concurrent claims both pass the owner check and
-  // both write owner, so the last writer won and the loser's site silently vanished — the loser got a 200 but then
-  // ownedSite 404, leaving a dangling index entry and no audit. HSETNX sets owner only while the project is still
-  // unowned, so exactly one racing claim wins; only that winner adds the per-user index entry. (M10)
-  const won = num(await kv.cmd('HSETNX', 'ps:p:' + p.pid, 'owner', uid), 0);
-  if (!won) {
-    const current = await core.loadProject(p.pid);
-    if (current && current.owner === uid) return { pid: p.pid, name: p.name, publicKey: p.publicKey }; // already ours (idempotent)
-    throw httpError(409, 'owned', 'That project already belongs to another account.');
-  }
-  await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
-  // It now belongs to an account, so it stops counting against the key-only project cap.
-  if (Number(await kv.cmd('HDEL', 'ps:p:' + p.pid, 'anon')) > 0) await core.releaseAnon();
-  const secretKey = opts && opts.keepKey === true ? undefined : await core.rotateSecret(p, sk);
-  // A claim ends the sessions started before it either way; rotateSecret already did when it ran.
-  if (!secretKey) await kv.cmd('HINCRBY', 'ps:p:' + p.pid, 'ep', 1);
-  return { pid: p.pid, name: p.name, publicKey: p.publicKey, ...(secretKey ? { secretKey } : {}) };
+  // The whole claim runs under the project's key lock, the same one a rotation takes, and checks the key again there,
+  // so a claim either completes with a key only the new owner has, or changes nothing.
+  return core.withKeyLock(found.pid, async () => {
+    const p = await core.projectBySecretKey(sk);
+    if (!p || p.pid !== found.pid) throw httpError(404, 'not_found', 'No project has that secret key.');
+    // Take ownership atomically. HSETNX sets owner only while the project is still unowned, so exactly one racing claim
+    // wins; only that winner adds the per-user index entry. (M10)
+    const won = num(await kv.cmd('HSETNX', 'ps:p:' + p.pid, 'owner', uid), 0);
+    if (!won) {
+      const current = await core.loadProject(p.pid);
+      if (current && current.owner === uid) return { pid: p.pid, name: p.name, publicKey: p.publicKey }; // already ours (idempotent)
+      throw httpError(409, 'owned', 'That project already belongs to another account.');
+    }
+    await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
+    // It now belongs to an account, so it stops counting against the key-only project cap.
+    if (Number(await kv.cmd('HDEL', 'ps:p:' + p.pid, 'anon')) > 0) await core.releaseAnon();
+    const secretKey = opts && opts.keepKey === true ? undefined : await core.rotateLocked(p, sk);
+    // A claim ends the sessions started before it either way; the rotation already did when it ran.
+    if (!secretKey) await kv.cmd('HINCRBY', 'ps:p:' + p.pid, 'ep', 1);
+    return { pid: p.pid, name: p.name, publicKey: p.publicKey, ...(secretKey ? { secretKey } : {}) };
+  });
 }
 
 async function ownedSite(uid, pid) {

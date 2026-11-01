@@ -548,31 +548,39 @@ async function updateSettings(project, patch) {
   return loadProject(project.pid);
 }
 
-// One rotation at a time per project, and a rotation with the old key only succeeds if that key is still the current
-// one. Before, two rotations racing each other (the owner and someone with a stolen key) both read, then both wrote,
-// and whichever wrote last kept a working key. Now the second one gets a 409 and its key is never stored.
-async function rotateSecret(project, oldSk) {
-  if (project.demo) throw httpError(403, 'demo_locked');
-  const lock = 'ps:rot:' + project.pid, token = C.randomId(12);
-  if (await kv.cmd('SET', lock, token, 'NX', 'EX', 10) !== 'OK') throw httpError(409, 'rotate_in_progress', 'This project\'s key is being rotated right now. Try again in a few seconds.');
-  try {
-    const sk = 'sk_' + C.randomId(30);
-    // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
-    const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
-    const oldHash = oldSk ? C.sha256(oldSk) : stored;
-    if (oldSk && stored && oldHash !== stored) throw httpError(409, 'key_changed', 'That secret key was already rotated.');
-    await kv.pipeline([
-      ['DEL', 'ps:sk:' + oldHash],
-      ...(stored && stored !== oldHash ? [['DEL', 'ps:sk:' + stored]] : []), // one key per DEL: kv only prefixes the first
-      ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
-      ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
-      // A new epoch ends every session started before now.
-      ['HINCRBY', 'ps:p:' + project.pid, 'ep', 1],
-    ]);
-    return sk;
-  } finally {
+// One key change at a time per project (a rotation, or a claim and the rotation that comes with it), and a rotation
+// with the old key only succeeds if that key is still the current one. Before, two rotations racing each other (the
+// owner and someone with a stolen key) both read, then both wrote, and whichever wrote last kept a working key. Now the
+// second one gets a 409 and its key is never stored.
+async function withKeyLock(pid, fn) {
+  const lock = 'ps:rot:' + pid, token = C.randomId(12);
+  if (await kv.cmd('SET', lock, token, 'NX', 'EX', 10) !== 'OK') throw httpError(409, 'rotate_in_progress', 'This project\'s key is being changed right now. Try again in a few seconds.');
+  try { return await fn(); } finally {
     if (await kv.cmd('GET', lock) === token) await kv.cmd('DEL', lock);
   }
+}
+
+// The rotation itself; the caller holds the key lock.
+async function rotateLocked(project, oldSk) {
+  const sk = 'sk_' + C.randomId(30);
+  // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
+  const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  const oldHash = oldSk ? C.sha256(oldSk) : stored;
+  if (oldSk && stored && oldHash !== stored) throw httpError(409, 'key_changed', 'That secret key was already rotated.');
+  await kv.pipeline([
+    ['DEL', 'ps:sk:' + oldHash],
+    ...(stored && stored !== oldHash ? [['DEL', 'ps:sk:' + stored]] : []), // one key per DEL: kv only prefixes the first
+    ['SET', 'ps:sk:' + C.sha256(sk), project.pid],
+    ['HSET', 'ps:p:' + project.pid, 'skh', C.sha256(sk)],
+    // A new epoch ends every session started before now.
+    ['HINCRBY', 'ps:p:' + project.pid, 'ep', 1],
+  ]);
+  return sk;
+}
+
+async function rotateSecret(project, oldSk) {
+  if (project.demo) throw httpError(403, 'demo_locked');
+  return withKeyLock(project.pid, () => rotateLocked(project, oldSk));
 }
 
 // Give back a slot of the key-only project cap (the project was deleted, or claimed into an account).
@@ -793,7 +801,11 @@ async function checkSigned(request, t, now) {
   // No page can sign a "__proto__" field, so one is refused.
   if (Object.prototype.hasOwnProperty.call(request.fields, '__proto__')) return { state: 'bad', detail: 'forbidden key __proto__' };
   let fields;
-  try { fields = C.canon(request.fields); } catch (e) { if (e && e.code === 'CANON_TOO_DEEP') return { state: 'bad', detail: 'nested too deep' }; throw e; }
+  try { fields = C.canon(request.fields); } catch (e) {
+    if (e && e.code === 'CANON_TOO_DEEP') return { state: 'bad', detail: 'nested too deep' };
+    if (e && e.code === 'CANON_BAD_NUMBER') return { state: 'bad', detail: 'a number that can\'t be checked exactly (infinite, -0 or past 2^53)' };
+    throw e;
+  }
   if (fields.length > SIGNED_MAX_FIELDS) return { state: 'bad', detail: 'too large' };
   const want = C.requestMac(await C.requestKey(t.s), t.s, ts, fields);
   if (!C.safeEqual(sig, want)) return { state: 'bad', detail: 'does not match the action' };
@@ -951,7 +963,7 @@ async function verify(project, body, ctx) {
   // trusted also needs the browser's own word that a person pressed a key or clicked (ac === true from the current
   // script), whatever the user agent says: a script claiming an old Safari could otherwise send ac: null.
   const trusted = isTrusted(verdict, client, reasons, activated, { inputs, signed, bound, human, requireHuman: s.requireHumanCheck === true, network: netMoved, open: !project.demo && !s.origins.length });
-  return { ok: true, verdict, risk, client, trusted, signed, bound, human, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
+  return { ok: true, verdict, risk, client, trusted, signed, bound, human, seed: genuine && Number.isFinite(t.seed) ? t.seed : null, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
 async function logVerdict(pid, ev, genuine) {
@@ -1051,6 +1063,6 @@ async function dashboard(project) {
 module.exports = {
   TRUST_ALLOWS, isTrusted,
   SK_RE, DEFAULTS, LEGACY_DEFAULTS, checkSigned, checkHuman, relayed, sendsFetchMetadata, trustedMinInputs, DEMO, SITE, WEIGHTS, REASONS, HARD,
-  createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
+  createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, withKeyLock, rotateLocked, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
   startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
 };

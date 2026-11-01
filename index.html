@@ -98,9 +98,9 @@
 <pre id="c2">const { Pyrmi, trusted } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
-const v = await pyrmi.verify({ sealed: req.body, req, user: email });
+const v = await pyrmi.verify({ sealed: req.body, req }); // user: your own signed-in user, never req.body
 if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review goes through, flagged
-// a payout or a prize instead: if (!trusted(v)) return res.status(403).end();</pre>
+// a payout or a prize instead: if (!trusted(v)) return res.status(403).end(); (with requireHumanCheck on, see docs)</pre>
       </div>
     </div>
   </section>
