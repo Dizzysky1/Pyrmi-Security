@@ -75,8 +75,11 @@ export interface VerifyInput {
    * a string `turnstile` field in the sealed body is used when this is left out.
    */
   turnstile?: string | { token: string; action?: string };
-  /** Re-run the app from the replay on your server. A different score means the result was faked. */
-  simulate?: (replay: unknown) => { score: number; durationMs?: number } | Promise<{ score: number; durationMs?: number }>;
+  /**
+   * Re-run the app from the replay on your server. A different score means the result was faked. The second argument
+   * is the session's own seed and id, read from the token: seed your run with it, never with a seed from the body.
+   */
+  simulate?: (replay: unknown, session: { seed: number | null; session: string | null }) => { score: number; durationMs?: number } | Promise<{ score: number; durationMs?: number }>;
 }
 
 export interface PyrmiOptions {

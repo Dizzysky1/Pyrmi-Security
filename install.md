@@ -192,6 +192,10 @@ Content-Type: application/json
 ```
 
 Response: `{"ok":true,"verdict":"accept"|"review"|"reject","risk":0-100,"client":"corroborated"|"unverified"|"none","reasons":[{"code":"...","text":"...","weight":..}]}`.
+`fields` must be the sealed body exactly as your server parsed it. If your language reads numbers exactly (Python,
+Go, Java), keep sealed whole numbers below 2^53: Pyrmi refuses a bigger one (or Infinity, NaN, -0) as
+`bad_signature`, since it can't check that it's the value you read. The response also carries the session's `seed`,
+for a replay check.
 For a sensitive action, require `trusted == true` (set by the server: a corroborated accept with a real key press or
 click, input counted on the page, a valid seal and matching client on new projects, and no reason beyond the
 harmless ones).
@@ -202,13 +206,15 @@ Cloudflare Workers, Supabase Edge Functions) that calls verify and then does the
 
 ## 5. Optional: server-side replay (deterministic apps)
 
-If the app is deterministic (same seed + same inputs = same result), record inputs, send them with the request, and
-pass `replay` plus a `simulate` function that re-runs it on the server:
+If the app is deterministic (same seed + same inputs = same result), seed the page's RNG with the `seed` that
+`Pyrmi.start()` answers, record inputs, seal them with the request, and pass `replay` plus a `simulate` function that
+re-runs it on the server. `simulate` gets the session's own seed as its second argument (read from the token): use
+that one, never a seed from the request body, which the player writes (a cheater could pick a seed they rehearsed).
 
 ```js
 const v = await pyrmi.verify({
-  token, score, durationMs, user, replay: body.inputs,
-  simulate: (inputs) => runHeadless(seed, inputs), // must return { score, durationMs? }
+  sealed: req.body, req, user: req.user.id, replay: req.body.inputs,
+  simulate: (inputs, { seed }) => runHeadless(seed, inputs), // must return { score, durationMs? }
 });
 ```
 

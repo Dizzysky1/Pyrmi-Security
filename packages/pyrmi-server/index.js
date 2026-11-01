@@ -31,8 +31,9 @@ class Pyrmi {
 
   // Returns { verdict: 'accept'|'review'|'reject', risk, client: 'corroborated'|'unverified'|'none', trusted, reasons, session, player, score }.
   // user is an alias for player. score is optional: send it when the action carries a number you want capped.
-  // simulate (optional): (replay) => ({ score, durationMs }) re-runs a deterministic app from its recorded inputs on
-  // your server. If it gives a different score, the verdict is 'reject' with reason replay_mismatch.
+  // simulate (optional): (replay, { seed, session }) => ({ score, durationMs }) re-runs a deterministic app from its
+  // recorded inputs on your server, seeded with the session's own seed (from the token, never from the body). If it
+  // gives a different score, the verdict is 'reject' with reason replay_mismatch.
   //
   // sealed (recommended): the parsed JSON body your page sent, made by Pyrmi.seal({ ... }) in the browser. Its pyrmi
   // part carries the token and the signature, and Pyrmi checks the rest arrived exactly as the page signed it, so a
@@ -70,10 +71,14 @@ class Pyrmi {
     const tin = input && input.turnstile !== undefined ? input.turnstile : sealed && typeof sealed.turnstile === 'string' ? sealed.turnstile : undefined;
     const ttoken = tin && typeof tin === 'object' ? tin.token : tin;
     if (typeof ttoken === 'string' && ttoken && this.turnstileSecret) human = { token: ttoken, secret: this.turnstileSecret, action: tin && typeof tin === 'object' && tin.action !== undefined ? tin.action : undefined };
+    // A sealed number JSON can't carry exactly (Infinity, NaN, -0, a whole number past 2^53) is refused here.
+    if (request) { const bad = badNumber(request.fields); if (bad) return refusal('the sealed field ' + bad + ' is a number that can\'t be checked exactly'); }
     let replayCheck = { check: 'none' };
     if (typeof simulate === 'function') {
       try {
-        const r = await simulate(replay);
+        // The session's own seed and id, read from the token (never take the seed from the request body). The token isn't
+        // checked here; Pyrmi checks it in this same call.
+        const r = await simulate(replay, sessionOf(token));
         const same = r && Number(r.score) === Number(score) && (durationMs == null || r.durationMs == null || Math.abs(r.durationMs - durationMs) <= 50);
         replayCheck = same ? { check: 'match' } : { check: 'mismatch', detail: 'replay gave ' + (r ? r.score : 'nothing') + ', claimed ' + score };
       } catch (e) {
@@ -82,7 +87,7 @@ class Pyrmi {
     }
     // failOpen covers Pyrmi being down (no answer, a timeout, a 5xx), never something the caller can cause.
     // An oversized or malformed action, or a 4xx answer to it (413 too large, 400, 403, 429), is a reject.
-    const refuse = (why) => ({ ok: false, verdict: 'reject', risk: null, reasons: [{ code: 'pyrmi_refused', text: 'Pyrmi refused the action: ' + why }], unverified: true });
+    const refuse = refusal;
     let payload;
     try { payload = JSON.stringify({ token, score, durationMs: dur, player, replay: replayCheck, request, client, turnstile: human }); } catch (e) { return refuse('it could not be sent (' + (e && e.message) + ')'); }
     if (Buffer.byteLength(payload) > 16 * 1024) return refuse('it is larger than 16 KB');
@@ -131,6 +136,27 @@ class Pyrmi {
   }
 }
 
+const refusal = (why) => ({ ok: false, verdict: 'reject', risk: null, reasons: [{ code: 'pyrmi_refused', text: 'Pyrmi refused the action: ' + why }], unverified: true });
+
+// The first sealed field (by path) holding a number JSON can't carry exactly, or null.
+function badNumber(v, path, depth) {
+  path = path || ''; depth = depth || 0;
+  if (depth > 64) return null; // Pyrmi refuses deeper nesting itself
+  if (typeof v === 'number') return !Number.isFinite(v) || Object.is(v, -0) || (Number.isInteger(v) && !Number.isSafeInteger(v)) ? (path || 'value') : null;
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v)) { const b = badNumber(v[k], path ? path + '.' + k : k, depth + 1); if (b) return b; }
+  }
+  return null;
+}
+
+// { seed, session } from a session token's payload (base64url JSON before the dot), for simulate. Not checked here.
+function sessionOf(token) {
+  try {
+    const t = JSON.parse(Buffer.from(String(token).split('.')[0], 'base64url').toString('utf8'));
+    return { seed: Number.isFinite(t.seed) ? t.seed : null, session: typeof t.s === 'string' ? t.s : null };
+  } catch (_) { return { seed: null, session: null }; }
+}
+
 // What a browser's request says about the browser: forwarded to Pyrmi so it can tell whether the action comes from the
 // browser that started the session. Works with Node's IncomingMessage and anything shaped like it (Express, Next.js).
 function clientOf(req, hops) {
@@ -163,5 +189,5 @@ function trusted(v, turnstile) {
   return v.reasons.every((r) => r && typeof r === 'object' && TRUST_ALLOWS.has(r.code));
 }
 
-module.exports = { Pyrmi, trusted, clientOf, TRUST_ALLOWS };
+module.exports = { Pyrmi, trusted, clientOf, sessionOf, TRUST_ALLOWS };
 module.exports.default = Pyrmi;

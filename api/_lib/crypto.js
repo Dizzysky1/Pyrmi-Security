@@ -61,7 +61,7 @@ async function requestKey(sid) {
 }
 // The same canonical form the browser script builds: JSON with object keys sorted at every level and undefined
 // values left out, so a server that parsed the JSON and a page that built the object agree byte for byte.
-// Nesting is capped: past the cap canon throws CANON_TOO_DEEP.
+// Nesting is capped: past the cap canon throws CANON_TOO_DEEP. A number it can't check exactly throws CANON_BAD_NUMBER.
 const CANON_MAX_DEPTH = 64;
 function canon(v, depth) {
   const d = depth || 0;
@@ -69,6 +69,10 @@ function canon(v, depth) {
   if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x, d + 1))).join(',') + ']';
   if (v && typeof v === 'object') {
     return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k], d + 1)).join(',') + '}';
+  }
+  // Only numbers that read the same everywhere are checked: finite, not -0, and whole numbers within 2^53.
+  if (typeof v === 'number' && (!Number.isFinite(v) || Object.is(v, -0) || (Number.isInteger(v) && !Number.isSafeInteger(v)))) {
+    throw Object.assign(new Error('number cannot be checked exactly'), { code: 'CANON_BAD_NUMBER' });
   }
   const j = JSON.stringify(v);
   return j === undefined ? 'null' : j;

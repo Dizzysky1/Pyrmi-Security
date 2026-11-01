@@ -69,7 +69,7 @@
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
 // req.body is what the page sent from Pyrmi.seal(); req lets Pyrmi check it came from the same browser
-const v = await pyrmi.verify({ sealed: req.body, req, user: email });
+const v = await pyrmi.verify({ sealed: req.body, req }); // user: your signed-in user's id, never from req.body
 if (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });
 createAccount(email, { flagged: v.verdict === 'review' });
 
@@ -84,7 +84,10 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
 <pre id="d3">curl https://pyrmi.com/api/v1/verify \
   -H "Authorization: Bearer $PYRMI_SECRET_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"token":"...","user":"alice@example.com"}'</pre></div>
+  -d '{"token":"<pyrmi.token>","user":"<your signed-in user id>",
+       "request":{"fields":{...the sealed body without pyrmi...},"ts":<pyrmi.ts>,"sig":"<pyrmi.sig>"},
+       "client":{"ua":"<User-Agent>","ch":"<Sec-CH-UA>","sfs":"<Sec-Fetch-Site>","ip":"<visitor address>"}}'</pre></div>
+    <p>Send <code>fields</code> exactly as your server parsed them. A server that reads numbers exactly (Python, Go, Java) should keep sealed whole numbers below 2<sup>53</sup>: Pyrmi refuses bigger ones, since it can't check them exactly.</p>
     <p>If Pyrmi can't be reached, <code>pyrmi-server</code> rejects by default. Pass <code>failOpen: true</code> to let requests through unverified instead.</p>
 
     <h2 id="verdicts">Verdicts and reasons</h2>
@@ -118,11 +121,11 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
     <p>If a request carries a number you'd hate to see faked, such as points, a quantity or a game score, send it as <code>score</code> and set a max value and a max value per second on the dashboard. If your page has its own clock, call <code>Pyrmi.mark(seconds)</code> as it runs and Pyrmi checks it against real time.</p>
 
     <h2 id="replay">Replay check (deterministic apps)</h2>
-    <p>If your app is deterministic, meaning the same seed and the same inputs always give the same result, record the inputs and send them along. Seed your RNG with the session's <code>seed</code> so nobody can rehearse in advance. On the server, pass a <code>simulate</code> function that re-runs it:</p>
+    <p>If your app is deterministic, meaning the same seed and the same inputs always give the same result, record the inputs and seal them with the action. Seed your RNG with the <code>seed</code> that <code>Pyrmi.start()</code> answers so nobody can rehearse in advance. On the server, pass a <code>simulate</code> function that re-runs it with the session's own seed, which pyrmi-server reads from the token and hands to <code>simulate</code>. Never take the seed from the request body: the player writes that.</p>
     <div class="code"><div class="code-h">node</div>
 <pre>const v = await pyrmi.verify({
-  token, score, durationMs, user, replay: inputs,
-  simulate: (inputs) => runApp(seed, inputs),   // returns { score, durationMs }
+  sealed: req.body, req, user: req.user.id, replay: req.body.inputs,
+  simulate: (inputs, { seed }) => runApp(seed, inputs),   // returns { score, durationMs }
 });</pre></div>
     <p>A memory edit or a typed-in result won't reproduce, so the verdict is <code>reject</code> with <code>replay_mismatch</code>.</p>
 

@@ -5,9 +5,10 @@
 // GET   /api/v1/project   Bearer sk_...                          -> project info + settings
 // PATCH /api/v1/project   Bearer sk_...      { name?, settings }  -> updated project
 // POST  /api/v1/project?action=rotate  Bearer sk_...            -> new secret key (old one stops working)
+// DELETE /api/v1/project  Bearer sk_...                           -> deletes a key-only project (one not in an account)
 const core = require('../_lib/core');
 const turnstile = require('../_lib/turnstile');
-const { send, fail, readJson, bearer, clientIp, handle } = require('../_lib/http');
+const { send, fail, readJson, bearer, clientIp, handle, httpError } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -38,5 +39,18 @@ module.exports = handle(async (req, res) => {
     return send(res, 200, { ok: true, project: core.view(await core.updateSettings(project, { ...(body.settings || {}), ...('name' in body ? { name: body.name } : {}) })) });
   }
   if (req.method === 'POST') return send(res, 200, { ok: true, secretKey: await core.rotateSecret(project, sk) });
-  fail(res, 405, 'method_not_allowed', undefined, { Allow: 'GET, POST, PATCH' });
+  if (req.method === 'DELETE') {
+    // A project in an account is deleted from the signed-in dashboard (with its human check), never with the key alone.
+    // Runs under the key lock, with the key and owner checked again there.
+    const owned = () => httpError(403, 'owned', 'This project belongs to an account. Delete it from the dashboard while signed in.');
+    if (project.owner) throw owned();
+    await core.withKeyLock(project.pid, async () => {
+      const now = await core.projectBySecretKey(sk);
+      if (!now || now.pid !== project.pid) throw httpError(401, 'bad_secret_key', 'Missing or wrong secret key.');
+      if (now.owner) throw owned();
+      await core.deleteProject(now);
+    });
+    return send(res, 200, { ok: true });
+  }
+  fail(res, 405, 'method_not_allowed', undefined, { Allow: 'GET, POST, PATCH, DELETE' });
 });

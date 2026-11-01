@@ -15,16 +15,19 @@ const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 // Pyrmi checks nothing changed on the way and that it came from the browser that started the session.
 app.post('/signup', async (req, res) => {
   const { email } = req.body;
-  const v = await pyrmi.verify({ sealed: req.body, req, user: email });
+  const v = await pyrmi.verify({ sealed: req.body, req }); // no signed-in user yet, so no user label
+
   if (v.verdict === 'reject') return res.status(403).json({ error: 'blocked', reasons: v.reasons });
   await db.createUser(email, { flagged: v.verdict === 'review' });
   res.json({ ok: true });
 });
 
-// A sensitive action: only an accept whose telemetry the server corroborated.
+// A sensitive action: only an accept whose telemetry the server corroborated. With requireHumanCheck off (the
+// default) trusted means "looks like a real browser", which a script can fake: for real money turn it on (below) and
+// keep your own limits too (one prize per account, a daily cap).
 const { trusted } = require('pyrmi-server');
 app.post('/claim-prize', async (req, res) => {
-  const v = await pyrmi.verify({ sealed: req.body, req, user: req.user.id, score: req.body.score });
+  const v = await pyrmi.verify({ sealed: req.body, req, user: req.user.id }); // a sealed `score` is checked against your caps
   if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
   await payPrize(req.user.id);
   res.json({ ok: true });
@@ -50,7 +53,8 @@ action.
 
 If the request carries a number worth capping (points, a quantity, a score), pass it as `score` and set limits on
 the dashboard. If your app is deterministic (a seed plus recorded inputs always gives the same result), pass
-`replay` and a `simulate(replay)` function, and Pyrmi rejects any result the inputs don't reproduce.
+`replay` and a `simulate(replay, { seed })` function, and Pyrmi rejects any result the inputs don't reproduce. Seed
+the run with the `seed` simulate is given (the session's own, from the token), never one from the request body.
 
 A site can turn on `requireHumanCheck` (off by default) so `v.trusted` also needs a Turnstile pass for the session:
 render the widget with `cData` set to the session id from `Pyrmi.start()`, seal its token into the body as

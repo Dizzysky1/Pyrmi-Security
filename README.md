@@ -155,6 +155,7 @@ doesn't offer STARTTLS is refused.
 | POST | `/api/v1/project` | a clean Pyrmi token from the dashboard page (rate limited) | `{name, origins?, pyrmiToken}` → `{project: {pid, publicKey, secretKey}}` (secret shown once) |
 | GET / PATCH | `/api/v1/project` | `Bearer sk_` | project info / `{name?, settings}` |
 | POST | `/api/v1/project?action=rotate` | `Bearer sk_` | new secret key, old one stops working |
+| DELETE | `/api/v1/project` | `Bearer sk_` | deletes a key-only project and its data (a project in an account is deleted from the dashboard) |
 | POST | `/api/v1/session` | public key in body, origin checked | `{site, pt?}` (pt: the page clock) → `{token, session, seed, expiresAt, issuedAt, bn, rk}` (rk: the session's request key, used by `Pyrmi.seal`; never in the token) |
 | POST | `/api/v1/signal` | session token | `{token, bn, n, signals}` (plain JSON, text/plain so there's no preflight; `bn` from the session, `n` counts up) |
 | POST | `/api/v1/verify` | `Bearer sk_`, server only | `{token, user?, score?, durationMs?, replay?, request?: {fields, ts, sig}, client?: {ua, ip, ch, sfs}}` → `{verdict, risk, client, trusted, signed, bound, reasons}`. `score` must be a JSON number |
