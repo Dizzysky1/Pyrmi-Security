@@ -18,7 +18,8 @@ const UA = 'audit-ua';
 async function freshProject(settings) {
   const ip = nextIp();
   const p = await core.createProject({ name: 'Audit', origins: ['https://audit.example'] }, ip, 'owner-audit');
-  const project = settings ? await core.updateSettings(await core.loadProject(p.pid), settings) : await core.loadProject(p.pid);
+  // These tests send unsealed tokens on purpose; signed actions (the round 12 default) are covered in round11/12.
+  const project = await core.updateSettings(await core.loadProject(p.pid), { requireSignedRequests: false, ...(settings || {}) });
   return { ...p, project, ip };
 }
 async function cleanSession(project, ip) {

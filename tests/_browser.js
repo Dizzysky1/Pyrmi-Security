@@ -46,4 +46,35 @@ function sign(s, fields, ts) {
   return { fields: fields || {}, ts: at, sig: C.requestMac(s.rk, sid, at, C.canon(fields || {})) };
 }
 
-module.exports = { wrap, beacon, signals, order, sign, SDK };
+// A stand-in for Cloudflare's siteverify (round 12), so trusted can be tested without the network. A token made by
+// human() carries the answer Cloudflare would give; the fake only says success when the secret is the test one.
+const TS_SECRET = '0x-test-turnstile-secret';
+let fake = null;
+async function fakeTurnstile() {
+  if (fake) return fake;
+  const http = require('http');
+  const server = http.createServer((req, res) => {
+    let raw = ''; req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const f = new URLSearchParams(raw);
+      let ans = { success: false, 'error-codes': ['invalid-input-response'] };
+      try { if (f.get('secret') === TS_SECRET) ans = JSON.parse(Buffer.from(String(f.get('response')).split('.')[1] || '', 'base64url').toString()); } catch (_) { /* bad token */ }
+      if (f.get('secret') !== TS_SECRET) ans = { success: false, 'error-codes': ['invalid-input-secret'] };
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(ans));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  server.unref();
+  require('../api/_lib/turnstile').endpoint = 'http://127.0.0.1:' + server.address().port + '/siteverify';
+  fake = server;
+  return server;
+}
+// The `turnstile` part of a /verify call: a pass solved on `hostname` for session s (cdata = its id), unless `over`
+// changes something.
+function human(s, hostname, over) {
+  const sid = s.session || JSON.parse(Buffer.from(s.token.split('.')[0], 'base64url').toString()).s;
+  const ans = { success: true, cdata: sid, hostname, challenge_ts: new Date().toISOString(), action: 'test', ...(over || {}) };
+  return { token: 'fake.' + Buffer.from(JSON.stringify(ans)).toString('base64url') + '.' + Math.random().toString(36).slice(2), secret: TS_SECRET };
+}
+
+module.exports = { wrap, beacon, signals, order, sign, SDK, fakeTurnstile, human, TS_SECRET };

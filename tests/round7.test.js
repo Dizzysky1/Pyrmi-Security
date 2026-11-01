@@ -67,7 +67,10 @@ test('old build fingerprints stop being a free pass after their grace period; th
     const v = await verdict(s.token, ip, 5);
     assert.match(detail(v, 'tampered_runtime'), /pyrmi\.js:outdated/, JSON.stringify(v.reasons));
   } finally { SDK.retired = saved; }
-  const env = process.env.VERCEL_ENV;
+  const env = process.env.VERCEL_ENV, pre = process.env.PYRMI_KV_PREFIX;
+  // Pretending to be production must not move the store: the KV key prefix follows VERCEL_ENV unless it's pinned, and
+  // the sandbox project set up under the old prefix would vanish mid-run (a crash when run without CI's settings).
+  if (pre === undefined) process.env.PYRMI_KV_PREFIX = env === 'production' ? 'live:' : env ? env + ':' : '';
   process.env.VERCEL_ENV = 'production';
   try {
     const ip = '192.0.2.' + ipn++;
@@ -77,7 +80,10 @@ test('old build fingerprints stop being a free pass after their grace period; th
     await wait(1600);
     const v = await verdict(s.token, ip, 5);
     assert.ok(/pyrmi\.js/.test(detail(v, 'tampered_runtime')), JSON.stringify(v.reasons));
-  } finally { if (env === undefined) delete process.env.VERCEL_ENV; else process.env.VERCEL_ENV = env; }
+  } finally {
+    if (env === undefined) delete process.env.VERCEL_ENV; else process.env.VERCEL_ENV = env;
+    if (pre === undefined) delete process.env.PYRMI_KV_PREFIX; else process.env.PYRMI_KV_PREFIX = pre;
+  }
 });
 
 test('a clean beacon captured from one session and re-posted under a fresh token is refused', async () => {

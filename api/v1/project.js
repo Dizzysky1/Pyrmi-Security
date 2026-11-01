@@ -17,16 +17,21 @@ module.exports = handle(async (req, res) => {
 
   const ip = clientIp(req);
   if (req.method === 'POST' && url.searchParams.get('action') !== 'rotate') {
+    // A per-minute cap ahead of the human check and the site guard, so junk sign-ups can't run them freely (round 12).
+    await core.limitIp(ip, 'projnew', 60, 'PYRMI_PROJECT_CREATES_PER_MIN', 10);
     const body = await readJson(req, 4096);
     await turnstile.check(body.turnstileToken, ip, 'new-project', req.headers.host);
     await core.guardSite(body.pyrmiToken, ip);
     const p = await core.createProject(body, ip);
     return send(res, 201, { ok: true, project: p });
   }
-  await core.limitIp(ip, 'proj', 60, 'PYRMI_PROJECT_CALLS_PER_MIN', 30);
+  // The key is checked first and the allowance is per site. A missing or malformed key costs no lookup and counts in
+  // its own bucket; a well-formed wrong one counts toward the wrong-key cap (the right key always works, see projectForKey).
   const sk = bearer(req);
+  if (!core.SK_RE.test(sk)) { await core.limitIp(ip, 'keyless', 60, 'PYRMI_KEYLESS_PER_MIN', 120); return fail(res, 401, 'bad_secret_key', 'Missing or wrong secret key.'); }
   const project = await core.projectForKey(sk, ip);
   if (!project) return fail(res, 401, 'bad_secret_key', 'Missing or wrong secret key.');
+  await core.limitIp(ip, 'proj:' + project.pid, 60, 'PYRMI_PROJECT_CALLS_PER_MIN', 30);
   if (req.method === 'GET') return send(res, 200, { ok: true, project: core.view(project) });
   if (req.method === 'PATCH') {
     const body = await readJson(req, 8192);

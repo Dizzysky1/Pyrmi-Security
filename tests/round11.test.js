@@ -10,6 +10,10 @@
 //   node --test tests/*.test.js
 process.env.PYRMI_KV = 'memory';
 process.env.PYRMI_SECRET = 'test-secret-test-secret-test-secret-1234';
+// The sandbox has requireHumanCheck on, so trusted needs a Turnstile pass Pyrmi confirms itself. Its endpoint uses pyrmi.com's own keys; here
+// they point at a stand-in for Cloudflare (tests/_browser.js fakeTurnstile).
+process.env.TURNSTILE_SITE_KEY = 'test-site-key';
+process.env.TURNSTILE_SECRET_KEY = '0x-test-turnstile-secret';
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
@@ -21,7 +25,7 @@ const core = require('../api/_lib/core');
 const { trusted } = require('../packages/pyrmi-server');
 
 let base, server;
-test.before(async () => { server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
+test.before(async () => { await B.fakeTurnstile(); server = http.createServer(serve); await new Promise((r) => server.listen(0, r)); base = 'http://127.0.0.1:' + server.address().port; });
 test.after(() => server.close());
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let ipn = 1;
@@ -47,12 +51,15 @@ async function harvest(ip, sig) {
   return s;
 }
 const sealed = (s, fields) => { const q = B.sign(s, fields); return { ...q.fields, pyrmi: { token: s.token, ts: q.ts, sig: q.sig } }; };
+// ...with the sandbox's human check solved on the page for this session (round 12), sealed in with the rest
+const HOST = () => new URL(base).hostname;
+const sealedH = (s, fields) => sealed(s, { ...fields, turnstile: B.human(s, HOST(), { action: 'sandbox' }).token });
 
 test('1. the honest page (clean browser, real input, sealed action) is still a trusted accept', async () => {
   const ip = nextIp(), s = await harvest(ip, { k: 1, p: 3 });
-  const v = (await post('/demo', sealed(s, { value: 77, visitor: 'visitor-f7e71e' }), tab(ip))).body;
+  const v = (await post('/demo', sealedH(s, { value: 77, visitor: 'visitor-f7e71e' }), tab(ip))).body;
   assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons));
-  assert.equal(v.signed, 'ok'); assert.equal(v.bound, true);
+  assert.equal(v.signed, 'ok'); assert.equal(v.bound, true); assert.equal(v.human, 'ok');
   assert.equal(v.trusted, true); assert.equal(trusted(v), true);
 });
 
@@ -79,11 +86,14 @@ test('2b. a relay that copies the user agent but not the client hints, or drops 
   assert.equal(v.trusted, false);
 });
 
-test('2c. the known limit: a relay that copies every browser header from the same network and signs in the page passes', async () => {
-  // e.g. CDP Runtime.evaluate("Pyrmi.seal(...)") in the decoy tab, then curl with Chrome's exact headers. Only the
-  // server gate (single use, minimum time, caps, replay, Turnstile) stands in the way of this one. README says so.
-  const ip = nextIp(), s = await harvest(ip, { k: 1, p: 3 });
-  const v = (await post('/demo', sealed(s, { value: 42, visitor: 'visitor' }), tab(ip))).body;
+test('2c. a relay that copies every browser header and signs in the page is bound and signed, but not trusted without the human check', async () => {
+  // The sandbox has requireHumanCheck on, so trusted also needs a Turnstile pass solved for this session on its page.
+  let ip = nextIp(), s = await harvest(ip, { k: 1, p: 3 });
+  let v = (await post('/demo', sealed(s, { value: 42, visitor: 'visitor' }), tab(ip))).body;
+  assert.equal(v.signed, 'ok'); assert.equal(v.bound, true); assert.equal(v.human, 'none');
+  assert.equal(v.trusted, false);
+  ip = nextIp(); s = await harvest(ip, { k: 1, p: 3 });
+  v = (await post('/demo', sealedH(s, { value: 42, visitor: 'visitor' }), tab(ip))).body;
   assert.equal(v.trusted, true);
 });
 
@@ -122,18 +132,19 @@ test('3b. a stale or malformed signature is a reject; an unsigned action on a se
   s = await mint();
   v = await core.verify(project, { token: s.token, request: { fields: { a: 1 }, ts: Date.now(), sig: 'x' }, client }, { ip });
   assert.ok(codes(v).includes('bad_signature'));
-  // unsigned is still an ordinary verdict on a default project, just never trusted
-  s = await mint();
-  v = await core.verify(project, { token: s.token, client }, { ip });
-  assert.equal(v.verdict, 'accept'); assert.equal(v.trusted, false);
-  // and a reject once the project takes sealed actions only
-  project = await core.updateSettings(project, { requireSignedRequests: true });
+  // a new project takes sealed actions only (round 12 default): unsigned is a reject
+  assert.equal(project.settings.requireSignedRequests, true);
   s = await mint();
   v = await core.verify(project, { token: s.token, client }, { ip });
   assert.equal(v.verdict, 'reject'); assert.ok(codes(v).includes('unsigned_request'));
   s = await mint();
-  v = await core.verify(project, { token: s.token, request: B.sign(s, { a: 1 }), client }, { ip });
+  v = await core.verify(project, { token: s.token, request: B.sign(s, { a: 1 }), client, turnstile: B.human(s, HOST()) }, { ip });
   assert.equal(v.verdict, 'accept'); assert.equal(v.trusted, true, JSON.stringify(v));
+  // turned off on purpose, unsigned is an ordinary verdict again, and still never trusted, even with a human check
+  project = await core.updateSettings(project, { requireSignedRequests: false });
+  s = await mint();
+  v = await core.verify(project, { token: s.token, client, turnstile: B.human(s, HOST()) }, { ip });
+  assert.equal(v.verdict, 'accept'); assert.equal(v.human, 'ok'); assert.equal(v.trusted, false);
 });
 
 test('4. trusted needs real input counted on the page, not just the activation flag', async () => {
@@ -145,7 +156,7 @@ test('4. trusted needs real input counted on the page, not just the activation f
   ip = nextIp(); s = await harvest(ip, { k: 1, p: 0 });
   assert.equal((await post('/demo', sealed(s, { value: 42, visitor: 'visitor' }), tab(ip))).body.trusted, false, 'one key press is not enough');
   ip = nextIp(); s = await harvest(ip, { k: 0, p: 3 });
-  assert.equal((await post('/demo', sealed(s, { value: 42, visitor: 'visitor' }), tab(ip))).body.trusted, true, 'one real click is');
+  assert.equal((await post('/demo', sealedH(s, { value: 42, visitor: 'visitor' }), tab(ip))).body.trusted, true, 'one real click is');
 });
 
 test('5. a session factory is cut off per site and network within a minute; other sites and networks are not', async () => {
@@ -176,13 +187,13 @@ test('6. a value has to be a number: "1e3", [1000], true and "1001" are bad_scor
   assert.equal((await post('/demo', sealed(s, { value: 1000, visitor: 'visitor' }), tab(ip))).body.verdict, 'accept');
 });
 
-test('a project from before round 11 keeps its trusted flag without signing; a pinned 1.3.0 page still corroborates', async () => {
+test('a project from before round 11: a pinned 1.3.0 page still corroborates, but unsigned is no longer trusted (round 12)', async () => {
   const pid = 'p_r11legacy' + C.randomId(4), pk = 'pk_r11legacy' + C.randomId(8);
   const old = { reviewAt: 40, rejectAt: 70, maxScore: null, maxScorePerSec: null, minDurationMs: 0, origins: [base], sessionTtlSec: 3600, strictClock: false };
   await kv.cmd('HSET', 'ps:p:' + pid, 'name', 'Legacy', 'pk', pk, 'created', Date.now(), 'settings', JSON.stringify(old));
   await kv.cmd('SET', 'ps:pk:' + pk, pid);
   const project = await core.loadProject(pid);
-  assert.equal(project.settings.signedTrust, false);
+  assert.equal(project.settings.requireSignedRequests, false, 'old projects keep taking unsigned actions');
   const ip = nextIp();
   const s = await core.startSession(project, { ip, ua: CHROME, origin: base }, { pt: 0 });
   const pinned = Object.keys(B.SDK.supported)[0];
@@ -190,7 +201,8 @@ test('a project from before round 11 keeps its trusted flag without signing; a p
   await core.recordSignals({ token: s.token, ...B.order(s), signals: B.signals({ pt: 0, sh: pinned }) }, { ip, ua: CHROME, origin: base, sfs: 'same-origin' });
   const v = await core.verify(project, { token: s.token }, { ip });
   assert.equal(v.client, 'corroborated', JSON.stringify(v.reasons));
-  assert.equal(v.trusted, true);
+  assert.equal(v.verdict, 'accept');
+  assert.equal(v.trusted, false, 'unsigned, unbound and no human check: trusted on every project needs all three now');
 });
 
 test('the request key is per session, derived on the server, and never in the token', async () => {
@@ -208,8 +220,8 @@ test('pyrmi-server: verify({ sealed, req }) sends the signature and the browser 
   const ip = nextIp();
   const p = await core.createProject({ name: 'Server', origins: [base] }, ip, 'owner-r11');
   let project = await core.loadProject(p.pid);
-  project = await core.updateSettings(project, { minDurationMs: 0, maxScore: 1000 });
-  const pyrmi = new Pyrmi({ secretKey: p.secretKey, endpoint: base + '/api/v1' });
+  project = await core.updateSettings(project, { minDurationMs: 0, maxScore: 1000, requireHumanCheck: true });
+  const pyrmi = new Pyrmi({ secretKey: p.secretKey, endpoint: base + '/api/v1', turnstileSecret: B.TS_SECRET, trustProxyHops: 1 });
   const req = { headers: { 'user-agent': CHROME, 'sec-ch-ua': CH, 'sec-fetch-site': 'same-origin', 'x-forwarded-for': ip } };
   const mint = async () => {
     const s = await core.startSession(project, { ip, ua: CHROME, origin: base, ch: CH }, { pt: 0 });
@@ -219,7 +231,10 @@ test('pyrmi-server: verify({ sealed, req }) sends the signature and the browser 
   let s = await mint();
   let v = await pyrmi.verify({ sealed: sealed(s, { score: 500 }), score: 500, req, user: 'u1' });
   assert.equal(v.verdict, 'accept', JSON.stringify(v.reasons)); assert.equal(v.signed, 'ok'); assert.equal(v.bound, true);
-  assert.equal(trusted(v), true);
+  assert.equal(v.human, 'none'); assert.equal(trusted(v), false, 'no human check sent');
+  s = await mint();
+  v = await pyrmi.verify({ sealed: sealed(s, { score: 500 }), score: 500, req, user: 'u1', turnstile: B.human(s, HOST()).token });
+  assert.equal(v.human, 'ok', JSON.stringify(v.reasons)); assert.equal(trusted(v), true);
   s = await mint();
   const body = sealed(s, { score: 500 }); body.score = 900;
   v = await pyrmi.verify({ sealed: body, score: body.score, req, user: 'u1' });

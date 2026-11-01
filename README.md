@@ -253,11 +253,14 @@ Be honest about the threat model, because it decides where you can rely on Pyrmi
 - **Gate sensitive actions on more than "not rejected".** For payouts, prizes, leaderboards and account changes, use
   `trusted(v)` from `pyrmi-server`, together with your own server-side limits. It reads `v.trusted`, which the server
   sets only for an `accept` whose `client` is `corroborated`, whose browser saw a real key press or click (`ac: true`)
-  with some input counted on the page, that was sealed and sent from the same browser (new projects), and whose every
-  reason is harmless (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
+  with some input counted on the page, that was sealed and sent from the same browser and network, that carries a
+  Turnstile pass Pyrmi confirmed with Cloudflare for that session if the site turned on `requireHumanCheck` (an
+  option, off by default; see install.md), and whose every reason is harmless
+  (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`). It doesn't move
   with your thresholds: raising `reviewAt` to 50 or 80 turns a tampered runtime or webdriver session into an accept,
-  but never into a trusted one. A `review` never counts. The strongest setup is all three: `trusted(v)`, a Turnstile
-  check on the same request (`verifyTurnstile`, then `trusted(v, t)`), and server-side replay where the app allows it. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
+  but never into a trusted one. A `review` never counts. Even trusted isn't proof of an honest client (a person can solve
+  the check while automation does the rest), so the strongest setup is `trusted(v)` plus your own limits plus
+  server-side replay where the app allows it. Everyday actions (a sign-up, a comment) can let a `review` through, flagged.
 - **The fingerprint is a speed bump.** The script reports a hash of its own code, and the known hashes are public (the
   built file, `api/_lib/sdk-build.json`), so it only catches a careless edit. Builds that came before stay known for
   1 day after they're replaced (`PYRMI_SDK_GRACE_DAYS`; the CDN caches the script for 5 minutes) so cached pages

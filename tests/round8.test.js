@@ -105,11 +105,13 @@ test('an edited copy (unknown fingerprint) is a reject, not a 30-point accept', 
   assert.equal(v.verdict, 'reject', JSON.stringify(v));
 });
 
-test('D, the known limit: a script that copies the real beacon with a real page clock still corroborates; trusted() is the gate for sensitive actions', async () => {
+test('D, the known limit: a script that copies the real beacon with a real page clock still corroborates, but is no longer trusted', async () => {
   const v = await run((s) => ({ bn: s.bn, n: 1, signals: full() }));
   assert.equal(v.verdict, 'accept');
   assert.equal(v.client, 'corroborated'); // documented: telemetry can't tell this from a browser
-  assert.equal(trusted(v), true);
+  // The sandbox has requireHumanCheck on, so trusted also needs a Turnstile pass Pyrmi confirms with Cloudflare.
+  assert.equal(v.human, 'none');
+  assert.equal(trusted(v), false);
   // ...but anything short of a corroborated accept is not trusted, including the review the sample used to let through.
   const r = await run((s) => ({ bn: s.bn, n: 1, signals: full({ pt: null }) }));
   assert.equal(trusted(r), false);

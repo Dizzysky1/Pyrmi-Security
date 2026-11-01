@@ -35,8 +35,9 @@ async function siteToken() {
 
 let pk, sk;
 
+// These tests send raw tokens to check the server gate; sealing (on by default since round 12) is tested in round11/12.
 test('create project returns keys once', async () => {
-  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'], settings: { minDurationMs: 0, maxScore: 1000 }, pyrmiToken: await siteToken() });
+  const r = await call('POST', '/api/v1/project', { name: 'Test Game', origins: ['https://game.example'], settings: { minDurationMs: 0, maxScore: 1000, requireSignedRequests: false }, pyrmiToken: await siteToken() });
   assert.equal(r.status, 201);
   ({ publicKey: pk, secretKey: sk } = r.body.project);
   assert.match(pk, /^pk_/); assert.match(sk, /^sk_/);

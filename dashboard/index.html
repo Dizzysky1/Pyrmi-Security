@@ -64,7 +64,6 @@
       <form class="card" id="login">
         <h3>Open a project</h3>
         <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
-        <label class="check"><input type="checkbox" name="remember"> remember on this device</label>
         <button class="btn" type="submit">open dashboard</button>
         <p class="err" id="login-err" role="alert"></p>
         <p class="muted small-t">Or look around the <a href="?demo=1">public dashboard</a> for the pyrmi.com sandbox, or watch <a href="?demo=site">pyrmi.com protect itself</a>.</p>
@@ -96,6 +95,8 @@
         <h3>Bring in an existing project</h3>
         <p class="muted small-t">Made a project with keys only? Its secret key moves it into this account.</p>
         <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
+        <label class="check"><input type="checkbox" name="keep"> Keep this secret key</label>
+        <p class="muted small-t">Leave it unticked and you get a new key, so anyone else who had the old one loses access. Put the new one on your server as <code>PYRMI_SECRET_KEY</code>.</p>
         <div class="ts" id="ts-claim" hidden></div>
         <button class="btn" type="submit">add to my account</button>
         <p class="err" id="claim-err" role="alert"></p>
@@ -105,7 +106,7 @@
 
   <!-- keys, shown once after creating -->
   <section id="keys" hidden>
-    <h1 class="title">Project created</h1>
+    <h1 class="title" id="k-title">Project created</h1>
     <div class="card warn">
       <h3>Save your secret key now</h3>
       <p>It's shown this one time. It goes in your server's environment as <code>PYRMI_SECRET_KEY</code> and opens this dashboard. Never put it in a web page.</p>
@@ -169,7 +170,7 @@
     </div>
 
     <div class="panel gap">
-      <div class="panel-h">users <span class="muted" id="p-count"></span></div>
+      <div class="panel-h">users <span class="muted" id="p-count"></span> <span class="muted" title="Pyrmi can't check who anyone is. Set user on your server from your own sign-in, never from the request body.">as your server named them</span></div>
       <div class="tbl-wrap"><table class="tbl" id="players"><thead><tr><th>user</th><th>verified</th><th>flagged</th><th>rejected</th><th>last risk</th><th>usual reason</th><th>last seen</th></tr></thead><tbody></tbody></table></div>
     </div>
 
@@ -186,8 +187,8 @@
         </div>
         <label>Allowed pages <span class="muted">(one per line)</span><textarea name="origins" rows="2"></textarea></label>
         <label class="check"><input type="checkbox" name="strictClock"> flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)</label>
-        <label class="check"><input type="checkbox" name="signedTrust"> trusted(v) needs a sealed action (Pyrmi.seal) and the browser's request forwarded (pyrmi-server does both)</label>
         <label class="check"><input type="checkbox" name="requireSignedRequests"> reject any action that isn't sealed by the Pyrmi script (turn on once your page uses Pyrmi.seal)</label>
+        <label class="check"><input type="checkbox" name="requireHumanCheck"> trusted also needs a Cloudflare Turnstile pass for the session (turn on once your page and server send one; see install.md)</label>
         <button class="btn" type="submit">save settings</button>
         <p class="err" id="settings-msg" role="status"></p>
       </form>

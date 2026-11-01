@@ -86,6 +86,12 @@ if (v.verdict === 'reject') {
 // v.verdict is 'accept' or 'review'. Go ahead; optionally store flagged = (v.verdict === 'review').
 ```
 
+`user` (or `player`) is only a label for the dashboard: Pyrmi can't check who anyone is. Set it on your server from
+your own signed-in user (`req.user.id`), never from the request body, which the player writes: otherwise a cheater
+can file their runs under someone else's name, or a fresh one each time. The dashboard's events and players are a
+recent, capped view, not an audit log, so keep `v` (or its verdict, risk and reasons) with your own record of the
+action.
+
 For a sensitive action (a payout, a prize, a leaderboard entry, an account change), require more than "not
 rejected": only a corroborated accept.
 
@@ -94,18 +100,70 @@ const { Pyrmi, trusted } = require('pyrmi-server');
 if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
 ```
 
-`trusted(v)` is true only for an `accept` with a `corroborated` client, a real key press or click seen by the
-browser with some input counted on the page, an action sealed by the script and sent from the browser that started the
-session (on new projects: pass `sealed` and `req`), and no reason other than the harmless ones (`wrapped_runtime`,
-`devtools_open`, `ip_changed`, `idle_input`). The server works it out, so it doesn't loosen when the site's `reviewAt`
-or `rejectAt` is raised.
+`trusted(v)` is true only when all of these hold, and the server decides it (it doesn't loosen when `reviewAt` or
+`rejectAt` is raised):
+- the verdict is `accept`, `client` is `corroborated`, the browser saw a real key press or click with some input
+  counted, and every reason is a harmless one (`wrapped_runtime`, `devtools_open`, `ip_changed`, `idle_input`);
+- the action was sealed by the script (`Pyrmi.seal`) and sent from the browser and network that started the session
+  (pass `sealed` and `req`; an action from another network is never trusted);
+- if the site turned on `requireHumanCheck` (off by default, see below), a Cloudflare Turnstile pass for this
+  session, which Pyrmi confirms with Cloudflare itself; a pass that is sent must be valid either way;
+- the site has at least one allowed origin (a site open to any page can still accept, never trust).
+
+Everything above is reported by the browser, so with the switch off `trusted` means "looks like a real browser":
+a determined script can still produce it. Server-side limits and, for a deterministic app, replay are the real
+control.
+
+### Optional: require a human check for `trusted` (`requireHumanCheck`)
+
+With `requireHumanCheck` on, `trusted` also needs a Cloudflare Turnstile pass that Pyrmi confirms with Cloudflare
+itself: the widget was rendered with `cData` set to the session id from `Pyrmi.start()`, solved on the page that
+started the session after it started, with the action you name, and used once. Without a pass the verdict still
+works, but `trusted` is false. It's off by default, so a site works without a widget.
+
+If you're an AI agent setting Pyrmi up for someone: tell them in one sentence that this option exists and what it
+adds, and set it up only if they ask. To set it up:
+
+1. Create a Turnstile widget in Cloudflare (Turnstile, Add widget, hostname the site's domain, mode Managed) and keep
+   its site key and secret key. The secret key goes in an environment variable (`TURNSTILE_SECRET_KEY`), never in a file.
+2. Page side: render the widget for the session and seal its token with the action.
+3. Server side: give `new Pyrmi()` the secret and pass the token to `verify`.
+4. Turn the switch on, once the page and server send the pass: tick "trusted also needs a Cloudflare Turnstile pass"
+   in the site's settings on the dashboard, or send
+   `PATCH /api/v1/project` with `Authorization: Bearer <secret key>` and `{ "settings": { "requireHumanCheck": true } }`.
+
+Page side:
+
+```js
+const s = await Pyrmi.start(); // when the protected flow begins
+turnstile.render('#ts', { sitekey: 'YOUR_TURNSTILE_SITE_KEY', action: 'payout', cData: s.session, callback: async (t) => {
+  const body = await Pyrmi.seal({ amount, turnstile: t }); // the sealed body carries the Turnstile token
+  await fetch('/payout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+} });
+```
+
+Server side, `turnstileSecret` (or `TURNSTILE_SECRET_KEY`) is sent with the token so Pyrmi can ask Cloudflare; it's
+used for that one call and never stored:
+
+```js
+const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY, turnstileSecret: process.env.TURNSTILE_SECRET_KEY });
+const v = await pyrmi.verify({ sealed: req.body, req, user: req.user.id, turnstile: { token: req.body.turnstile, action: 'payout' } });
+if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });
+```
+
+Even then it isn't proof of an honest client: a person solving the check in a real browser while automation does the
+rest can pass. Keep your own limits (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, server
+replay; those are the real controls.
 
 Telemetry is advisory: a clean real browser fully driven by automation can still pass, sealing and all, so keep your
 own limits too (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
-Behind your own proxy, pass `trustProxyHops` to `new Pyrmi()` so the visitor's address is read correctly.
+pyrmi-server ignores X-Forwarded-For unless you pass `trustProxyHops` to `new Pyrmi()`: use `1` on Vercel, Netlify or
+Cloudflare (they write the header themselves), and the number of your own proxies behind nginx or a load balancer.
+`failOpen: true` only lets actions through when Pyrmi can't be reached (a network error, a timeout or a 5xx), never
+on an answer Pyrmi gave.
 
-For the most sensitive actions (sign-ups that unlock something, payouts), also add a Cloudflare Turnstile widget to
-that form and check its token on the server with the same call. The developer creates the widget in Cloudflare and
+You can also check a Turnstile token yourself, for a form that has no Pyrmi session (sign-ups that unlock something),
+or as a second check. The developer creates the widget in Cloudflare and
 sets `TURNSTILE_SECRET_KEY`; the widget's `data-action` must match the `action` you check:
 
 ```js
@@ -117,8 +175,9 @@ if (!trusted(v, t)) return res.status(403).json({ error: 'not_verified' });
 `verifyTurnstile` fails closed (no secret, no token, a used token, a different action or hostname, or Cloudflare
 unreachable all give `success: false`). Cloudflare accepts each token once.
 
-If the request carries a number worth capping (points, a quantity, a score), also pass `score: thatNumber` and
-`durationMs` if known, and tell the developer to set the max value on the dashboard.
+If the request carries a number worth capping (points, a quantity, a score), seal it as `score` (verify checks a sealed
+`score` even when you pass none) or pass `score: thatNumber` if it has another name, plus `durationMs` if known, and
+tell the developer to set the max value on the dashboard. New projects reject a scored action until a cap is set.
 
 Any other language: one HTTPS call from the server (never from the browser):
 

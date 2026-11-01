@@ -28,8 +28,25 @@ const STATE_COOKIE = '__Host-pyrmi_oauth';
 const SID_RE = /^[A-Za-z0-9_-]{43}$/;
 const MAX_SITES = 10;
 const CODE_TTL = 600;
-const CODE_TRIES = 5;        // wrong tries per network, per code
-const CODE_TRIES_TOTAL = 30; // wrong tries from everywhere before the code is deleted
+const CODE_TRIES = 5;        // wrong tries on a code before it's deleted (only its own browser can try it)
+// A code belongs to the browser that asked for it. Asking sets this cookie (a random id), the code is kept under the
+// address and that id, and only a verify carrying the same cookie can try it.
+const EC_COOKIE = '__Host-pyrmi_ec';
+// A browser that has signed in to an account before carries a device mark for it (an id and a MAC over the address),
+// and it can still be sent codes when others have used up the address's hourly cap. Nobody can make one without the
+// server's secret. New browsers can still use GitHub and Google when the cap is full.
+const DEV_COOKIE = '__Host-pyrmi_dev';
+const RID_RE = /^[A-Za-z0-9_-]{22}$/;
+const newRid = () => C.randomId(16);
+const codeKey = (email, rid) => 'ps:ec:' + C.sha256(email) + ':' + C.sha256(rid);
+async function deviceMac(email, id) {
+  return crypto.createHmac('sha256', await C.secret()).update('pyrmi.dev.v1.' + C.sha256(email) + '.' + id).digest('base64url');
+}
+async function deviceMark(email) { const id = newRid(); return id + '.' + await deviceMac(email, id); }
+async function knownDevice(email, mark) {
+  const [id, mac] = String(mark || '').split('.');
+  return !!(id && mac && RID_RE.test(id) && C.safeEqual(mac, await deviceMac(email, id)));
+}
 
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
 // Signed-in session lifetime. Env-tunable so it can be lowered without a deploy; the default is kept at 7 days
@@ -42,12 +59,20 @@ function githubConfigured() { return !!(process.env.GITHUB_CLIENT_ID && process.
 function emailConfigured() { return !!(smtp.config() || process.env.RESEND_API_KEY); }
 function providers() { return { email: emailConfigured(), github: githubConfigured(), google: googleConfigured() }; }
 
+// This deployment's own host. X-Forwarded-Host is only read on Vercel, whose edge writes it itself; anywhere else a
+// caller can type it, so the request's own Host is used. A self-host behind a proxy that rewrites
+// Host sets PYRMI_PUBLIC_URL instead.
+function ownHost(req) {
+  const fwd = process.env.VERCEL_ENV ? String(req.headers['x-forwarded-host'] || '').split(',')[0].trim() : '';
+  return fwd || String(req.headers.host || '');
+}
 // The address GitHub and Google send people back to. PYRMI_PUBLIC_URL pins it (it must match what's registered with
 // them); otherwise it's this deployment's own address.
 function baseUrl(req) {
   if (process.env.PYRMI_PUBLIC_URL) return process.env.PYRMI_PUBLIC_URL.replace(/\/+$/, '');
-  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
-  return proto + '://' + String(req.headers['x-forwarded-host'] || req.headers.host);
+  const proto = process.env.VERCEL_ENV ? String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() : 'https';
+  const host = ownHost(req);
+  return (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host) ? 'http' : proto) + '://' + host;
 }
 function redirectUri(req, provider) { return baseUrl(req) + '/api/v1/auth/' + provider; }
 
@@ -68,7 +93,7 @@ function cookie(name, value, maxAge) {
 // ---- one account per verified email -----------------------------------------------------------------------------
 
 function cleanEmail(v) {
-  const e = String(v || '').trim().toLowerCase();
+  const e = (typeof v === 'string' ? v : '').trim().toLowerCase(); // a non-string (an object with no toString) threw a 500
   return e.length <= 254 && /^[^\s@<>()",;:\\]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e) ? e : null;
 }
 
@@ -90,7 +115,7 @@ async function signIn(email, name, via) {
   // revoke-all. (Q4/Q10)
   await kv.cmd('ZADD', 'ps:usess:' + uid, Date.now(), sidh);
   await kv.cmd('EXPIRE', 'ps:usess:' + uid, ttl + 86400);
-  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0)] };
+  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0), cookie(DEV_COOKIE, await deviceMark(email), 400 * 86400)] };
 }
 
 // ---- email codes ------------------------------------------------------------------------------------------------
@@ -105,7 +130,10 @@ async function hourly(key) {
   return Number(r[1]);
 }
 
-async function emailStart(body, ip, mailer) {
+// opts: { rid, device } from the requesting browser's cookies (EC_COOKIE, DEV_COOKIE); the endpoint sets EC_COOKIE.
+async function emailStart(body, ip, mailer, opts) {
+  const o = opts || {};
+  const rid = RID_RE.test(String(o.rid || '')) ? o.rid : newRid();
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
   const email = cleanEmail(body.email);
   if (!email) throw httpError(400, 'bad_email', 'That doesn\'t look like an email address.');
@@ -115,7 +143,7 @@ async function emailStart(body, ip, mailer) {
   const ah = C.sha256(email), ipf = await C.fingerprint('ip', core.network(ip));
   const tooMany = () => { const e = httpError(429, 'rate_limited', 'Too many codes sent to that address. Try again in an hour.'); e.retryAfter = 3600; return e; };
   if (await hourly('ps:rl:emailto:' + ah + ':' + ipf) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS', 5)) throw tooMany();
-  if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20)) throw tooMany();
+  if (await hourly('ps:rl:emailto:' + ah) > intEnv('PYRMI_EMAIL_CODES_PER_ADDRESS_TOTAL', 20) && !(await knownDevice(email, o.device))) throw tooMany();
   const day = core.ymd(Date.now());
   // One network's share of the day's codes, whatever addresses it asks for.
   if (await core.hit('ps:rl:emailnet:' + ipf + ':' + day, 2 * 86400) > intEnv('PYRMI_EMAIL_CODES_PER_IP_PER_DAY', 30)) {
@@ -141,8 +169,7 @@ async function emailStart(body, ip, mailer) {
     if (d > dayCap || h > hourCap) return { sent: false };
   }
   const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
-  await kv.cmd('HSET', 'ps:ec:' + C.sha256(email), 'h', await codeHash(email, code), 'n', 0);
-  await kv.cmd('EXPIRE', 'ps:ec:' + C.sha256(email), CODE_TTL);
+  await kv.pipeline([['HSET', codeKey(email, rid), 'h', await codeHash(email, code), 'n', 0], ['EXPIRE', codeKey(email, rid), CODE_TTL]]);
   await (mailer || sendMail)({
     to: email,
     subject: 'Your Pyrmi sign-in code: ' + code,
@@ -153,23 +180,22 @@ async function emailStart(body, ip, mailer) {
   return { sent: true };
 }
 
-async function emailVerify(body, ip) {
+// opts: { rid } from the browser's EC_COOKIE. Only the browser that asked for the code can try it, CODE_TRIES times.
+async function emailVerify(body, ip, opts) {
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
-  const email = cleanEmail(body.email), code = String(body.code || '').replace(/\D/g, '');
+  const email = cleanEmail(body.email), code = (typeof body.code === 'string' || typeof body.code === 'number' ? String(body.code) : '').replace(/\D/g, '');
   const wrong = httpError(400, 'bad_code', 'That code didn\'t work. Check it, or ask for a new one.');
-  if (!email || code.length !== 6) throw wrong;
-  const key = 'ps:ec:' + C.sha256(email);
-  // Wrong tries are counted per network. Six wrong guesses from anywhere used to delete the code, so anyone who
-  // knew your address could keep you from signing in. Now another network's guesses only lock that network out of
-  // this code, and the code itself is deleted only after CODE_TRIES_TOTAL wrong tries in all (still far too few to
-  // guess a six-digit code).
-  const ipf = await C.fingerprint('ip', core.network(ip));
-  const [mine, total, stored] = await kv.pipeline([['HINCRBY', key, 'n:' + ipf, 1], ['HINCRBY', key, 'n', 1], ['HGET', key, 'h']]);
+  const rid = String((opts && opts.rid) || '');
+  if (!email || code.length !== 6 || !RID_RE.test(rid)) throw wrong;
+  const key = codeKey(email, rid);
+  const [n, stored] = await kv.pipeline([['HINCRBY', key, 'n', 1], ['HGET', key, 'h']]);
   if (!stored) { await kv.cmd('DEL', key); throw wrong; }
   const tooMany = httpError(400, 'too_many_tries', 'Too many wrong codes. Ask for a new one.');
-  if (Number(total) > CODE_TRIES_TOTAL) { await kv.cmd('DEL', key); throw tooMany; }
-  if (Number(mine) > CODE_TRIES) throw tooMany;
-  if (!C.safeEqual(stored, await codeHash(email, code))) throw wrong;
+  if (Number(n) > CODE_TRIES) { await kv.cmd('DEL', key); throw tooMany; }
+  if (!C.safeEqual(stored, await codeHash(email, code))) {
+    if (Number(n) >= CODE_TRIES) await kv.cmd('DEL', key);
+    throw wrong;
+  }
   await kv.cmd('DEL', key);
   return signIn(email, email, 'email');
 }
@@ -343,9 +369,10 @@ function checkCsrf(req) {
   if (origin !== undefined) {
     const refused = () => httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
     let u = null; try { u = new URL(origin); } catch (_) { throw refused(); }
-    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+    const host = ownHost(req);
     const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
-    if (u.origin !== (local && u.protocol === 'http:' ? 'http://' : 'https://') + host) throw refused();
+    let pinned = ''; try { pinned = process.env.PYRMI_PUBLIC_URL ? new URL(process.env.PYRMI_PUBLIC_URL).origin : ''; } catch (_) {}
+    if (u.origin !== (local && u.protocol === 'http:' ? 'http://' : 'https://') + host && !(pinned && u.origin === pinned)) throw refused();
   }
 }
 
@@ -403,7 +430,10 @@ async function createSite(uid, body, ip) {
 }
 
 // Brings a project made with the older key-only flow into this account. Its secret key is the proof of ownership.
-async function claimSite(uid, sk) {
+// Claiming moves a key-only project into an account. By default it also issues a new secret key, so only the new
+// owner holds one.
+// keepKey: true skips that, for an owner who knows no one else has the key and can't redeploy right away.
+async function claimSite(uid, sk, opts) {
   const p = await core.projectBySecretKey(sk);
   if (!p || p.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
   if (p.owner && p.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
@@ -421,7 +451,10 @@ async function claimSite(uid, sk) {
   await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
   // It now belongs to an account, so it stops counting against the key-only project cap.
   if (Number(await kv.cmd('HDEL', 'ps:p:' + p.pid, 'anon')) > 0) await core.releaseAnon();
-  return { pid: p.pid, name: p.name, publicKey: p.publicKey };
+  const secretKey = opts && opts.keepKey === true ? undefined : await core.rotateSecret(p, sk);
+  // A claim ends the sessions started before it either way; rotateSecret already did when it ran.
+  if (!secretKey) await kv.cmd('HINCRBY', 'ps:p:' + p.pid, 'ep', 1);
+  return { pid: p.pid, name: p.name, publicKey: p.publicKey, ...(secretKey ? { secretKey } : {}) };
 }
 
 async function ownedSite(uid, pid) {
@@ -438,7 +471,7 @@ async function deleteSite(uid, p) {
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 module.exports = {
-  providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
+  baseUrl, providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
   readIdToken, cleanEmail, sendMail, currentUser, requireUser, sessionSid, checkCsrf, signOut, revokeAllSessions,
-  listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE,
+  listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE, EC_COOKIE, DEV_COOKIE, readCookies, cookie, CODE_TTL, RID_RE,
 };

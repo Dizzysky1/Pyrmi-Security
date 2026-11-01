@@ -11,6 +11,10 @@ const PORT = Number(process.env.PORT || 3000);
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8' };
 
+// The dev server stands in for Vercel's edge, which writes the caller's address into X-Forwarded-For. Tests send the
+// address they want there, so treat this server as one trusted proxy hop unless told otherwise.
+if (process.env.PYRMI_PROXY_HOPS === undefined && !process.env.VERCEL_ENV) process.env.PYRMI_PROXY_HOPS = '1';
+
 function serve(req, res) {
   const url = new URL(req.url, 'http://localhost');
   if (/^\/api\/v1\/auth\/[a-z]+$/.test(url.pathname)) return require(path.join(ROOT, 'api', 'v1', 'auth', '[provider].js'))(req, res);

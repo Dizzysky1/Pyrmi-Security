@@ -33,7 +33,12 @@ async function pipeline(cmds) {
   const pre = prefix();
   // Commands whose arguments are ALL keys (not key + values) must have every key prefixed, not just the first, or a
   // multi-key DEL in production (prefix "live:") would delete only its first key and silently no-op the rest (F-13).
+  // ALL_KEYS lists commands whose every argument is a key; prefix() gives each of them the prefix. A command with a
+  // different key layout (RENAME, COPY, MSET, EVAL, ...) isn't here and is refused below, so a new one can't skip
+  // the prefix by accident.
   const ALL_KEYS = new Set(['DEL', 'UNLINK', 'EXISTS', 'MGET', 'TOUCH', 'WATCH']);
+  const OTHER_LAYOUT = /^(RENAME|RENAMENX|COPY|MSET|MSETNX|EVAL|EVALSHA|FCALL|SMOVE|LMOVE|BLMOVE|RPOPLPUSH|SINTERSTORE|SUNIONSTORE|SDIFFSTORE|ZUNIONSTORE|ZINTERSTORE|ZDIFFSTORE|ZRANGESTORE|BITOP|PFMERGE|GEORADIUS|SORT|OBJECT|MIGRATE)$/;
+  for (const c of cmds) if (OTHER_LAYOUT.test(String(c[0]).toUpperCase())) throw new Error('kv: ' + c[0] + ' needs its own key prefixing (see ALL_KEYS)');
   if (pre) cmds = cmds.map((c) => {
     if (c.length <= 1) return c;
     if (ALL_KEYS.has(String(c[0]).toUpperCase())) return [c[0], ...c.slice(1).map((k) => pre + k)];
@@ -60,7 +65,8 @@ async function cmd(...args) { return (await pipeline([args]))[0]; }
 
 // Redis replies HGETALL as a flat [k, v, k, v] array; this turns it into an object.
 function pairs(arr) {
-  const o = {};
+  // Null prototype: a field named "__proto__" (a player label, say) is kept as a field instead of vanishing (round 12).
+  const o = Object.create(null);
   if (!Array.isArray(arr)) return o;
   for (let i = 0; i + 1 < arr.length; i += 2) o[arr[i]] = arr[i + 1];
   return o;

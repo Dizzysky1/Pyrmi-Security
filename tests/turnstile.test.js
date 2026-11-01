@@ -140,8 +140,10 @@ test('signed in: adding, claiming, rotating and deleting each need their own tok
   on();
   try {
     const email = 'owner@example.com';
-    assert.equal((await start(email, tok('signin'))).status, 200);
-    const v = await call('POST', '/api/v1/auth/email?action=verify', { email, code: codeFor(email) }, { 'X-Pyrmi-CSRF': '1' });
+    const st = await start(email, tok('signin'));
+    assert.equal(st.status, 200);
+    const ec = st.headers.getSetCookie().find((c) => c.startsWith('__Host-pyrmi_ec=')).split(';')[0]; // the code is this browser's (round 12)
+    const v = await call('POST', '/api/v1/auth/email?action=verify', { email, code: codeFor(email) }, { 'X-Pyrmi-CSRF': '1', Cookie: ec });
     assert.equal(v.status, 200, JSON.stringify(v.body));
     const cookie = v.headers.getSetCookie().find((c) => c.startsWith('__Host-pyrmi_session=')).split(';')[0];
     const as = { Cookie: cookie, 'X-Pyrmi-CSRF': '1', ip: '192.0.2.50' };
@@ -190,7 +192,7 @@ test('pyrmi-server: verifyTurnstile fails closed, and trusted(v, t) needs both a
   assert.deepEqual((await new Pyrmi({ secretKey: 'sk_test' }).verifyTurnstile('ok:x')).errorCodes, ['missing-input-secret']);
   if (saved !== undefined) process.env.TURNSTILE_SECRET_KEY = saved;
 
-  const v = { ok: true, verdict: 'accept', client: 'corroborated' };
+  const v = { ok: true, verdict: 'accept', client: 'corroborated', trusted: true, reasons: [] };
   assert.equal(trusted(v), true);
   assert.equal(trusted(v, good), true);
   assert.equal(trusted(v, { success: false, errorCodes: ['x'] }), false);
