@@ -1,0 +1,14 @@
+Pyrmi Security
+Copyright 2026 Dizzysky1 (Pyrmi Security)
+https://pyrmi.com
+
+This product includes software developed as Pyrmi Security (https://pyrmi.com).
+If you redistribute it or a work derived from it, keep this NOTICE file with it,
+as section 4(d) of the Apache License, Version 2.0 requires.
+
+Earlier releases (up to and including pyrmi-server and browser script versions
+published before this notice was added) were released under the MIT License and
+remain available under it.
+
+Third-party code:
+- vendor/three-r170/: three.js r170, Copyright 2010-2024 three.js authors, MIT License.

@@ -1,6 +1,6 @@
 # Pyrmi Security
 
-> Open-source (MIT) bot and tamper detection for websites: a browser script that starts a signed session on a real page load and reports signs of bots, scripted input, tampering and devtools, and a server check (`pyrmi-server` on npm, or POST /api/v1/verify) that returns accept/review/reject with reasons before the server trusts a request.
+> Open-source (Apache 2.0) bot and tamper detection for websites: a browser script that starts a signed session on a real page load and reports signs of bots, scripted input, tampering and devtools, and a server check (`pyrmi-server` on npm, or POST /api/v1/verify) that returns accept/review/reject with reasons before the server trusts a request.
 
 - [Install guide for coding agents](https://pyrmi.com/install.md): step-by-step wiring for client and server
 - [Docs](https://pyrmi.com/docs/): how it works, verdicts, settings, self-hosting

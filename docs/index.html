@@ -133,7 +133,7 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
     <p>Sign in on the <a href="/dashboard/">dashboard</a> with a code sent to your email, or with GitHub or Google, to keep all your sites in one place. One email is one account, whichever way you sign in. Each site gets its own keys and a setup guide, and the guide turns green once your page has started a session and your server has checked one. Nobody else can see or change your sites. A project made with keys only can be moved into your account with its secret key. Self-hosters switch each way in on with its own env vars (<code>SMTP_HOST</code>, <code>SMTP_USER</code> and <code>SMTP_PASS</code> for any mailbox, or <code>RESEND_API_KEY</code>; <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>); the README has the steps.</p>
 
     <h2 id="self-host">Self-hosting</h2>
-    <p>Everything is MIT, so you can run your own copy: deploy the repo to Vercel, add a free Upstash Redis from Vercel's Storage tab (it sets <code>KV_REST_API_URL</code> and <code>KV_REST_API_TOKEN</code>), and set <code>PYRMI_SECRET</code> to a long random string. Then point the script at it with <code>data-api="https://your-deploy/api/v1"</code> and <code>pyrmi-server</code> with <code>endpoint</code>. For local work: <code>PYRMI_KV=memory node scripts/dev.js</code>.</p>
+    <p>Everything is Apache 2.0 (keep the NOTICE file with your copy), so you can run your own copy: deploy the repo to Vercel, add a free Upstash Redis from Vercel's Storage tab (it sets <code>KV_REST_API_URL</code> and <code>KV_REST_API_TOKEN</code>), and set <code>PYRMI_SECRET</code> to a long random string. Then point the script at it with <code>data-api="https://your-deploy/api/v1"</code> and <code>pyrmi-server</code> with <code>endpoint</code>. For local work: <code>PYRMI_KV=memory node scripts/dev.js</code>.</p>
 
     <h2 id="dogfood">How pyrmi.com protects itself</h2>
     <p>The dashboard's "new project" form sends a Pyrmi token, and the API only creates the project on a clean accept. With Turnstile keys set, sign-in codes, new projects and sites, and claiming, rotating or deleting a site also need Cloudflare's human check, checked on the server and accepted once. You can watch what it catches on <a href="/dashboard/?demo=site">pyrmi.com's own dashboard</a>. Every endpoint is also rate limited per network, and wrong secret keys are capped per network.</p>
@@ -141,7 +141,7 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
     <h2 id="limits">Limits, honestly</h2>
     <div class="note">Pyrmi can't block devtools or stop code running in a visitor's browser, and nothing can: the visitor owns that browser. A determined attacker can hide most browser signals. What they can't fake is a signed, single-use session from a real page load, timing that fits the real time it took, and, for deterministic apps, inputs that reproduce the result. Treat browser signals as evidence, and let your server's verdict be the gate.</div>
   </main>
-  <footer>Pyrmi Security · open source, MIT · <a href="/">home</a> · <a href="/dashboard/">dashboard</a></footer>
+  <footer>Pyrmi Security · open source, Apache 2.0 · <a href="/">home</a> · <a href="/dashboard/">dashboard</a></footer>
 </div>
 <script src="/site.js"></script>
 <script type="module" src="/bg/singularity.js?v=2"></script>

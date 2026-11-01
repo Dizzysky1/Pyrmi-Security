@@ -1,4 +1,4 @@
-/* Pyrmi Security: in-browser self-test cases for the replaced built-ins check (see selftest.html). MIT License.
+/* Pyrmi Security: in-browser self-test cases for the replaced built-ins check (see selftest.html). Apache License 2.0.
  * In a case frame (selftest.html?case=<id>) this file runs before pyrmi.js, so "before" cases install their trick
  * ahead of the script; selftest.js runs "after" cases once it has loaded. The same tricks as tests/sdk-tamper.test.js. */
 (function () {
