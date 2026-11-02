@@ -487,3 +487,23 @@ test('claimSite will not overwrite an owner that appears mid-claim (M10)', async
     assert.equal(p.owner, 'u_racer', 'the racer keeps ownership; the claim did not overwrite it');
   } finally { kv.cmd = origCmd; }
 });
+
+test('only the newest sign-ins of an account are kept; older ones stop working', async () => {
+  const saved = process.env.PYRMI_SESSIONS_PER_USER, savedIn = process.env.PYRMI_SIGNINS_PER_IP;
+  process.env.PYRMI_SESSIONS_PER_USER = '3';
+  process.env.PYRMI_SIGNINS_PER_IP = '100000'; // this test signs in more often than one network may
+  try {
+    const cookies = [];
+    for (let i = 0; i < 5; i++) cookies.push((await signIn('cap1', 'cap@example.com')).cookie);
+    const uid = await kv.cmd('GET', 'ps:ue:' + C.sha256('cap@example.com'));
+    assert.equal(await kv.cmd('ZCARD', 'ps:usess:' + uid), 3);
+    for (const c of cookies.slice(0, 2)) {
+      assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: c })).status, 401, 'an older sign-in is ended');
+      assert.equal(await kv.cmd('GET', 'ps:auth:' + C.sha256(c.split('=')[1])), null, 'and its record removed');
+    }
+    for (const c of cookies.slice(2)) assert.equal((await call('GET', '/api/v1/me', undefined, { Cookie: c })).status, 200);
+  } finally {
+    if (saved === undefined) delete process.env.PYRMI_SESSIONS_PER_USER; else process.env.PYRMI_SESSIONS_PER_USER = saved;
+    if (savedIn === undefined) delete process.env.PYRMI_SIGNINS_PER_IP; else process.env.PYRMI_SIGNINS_PER_IP = savedIn;
+  }
+});

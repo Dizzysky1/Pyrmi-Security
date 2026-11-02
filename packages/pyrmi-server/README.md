@@ -53,8 +53,11 @@ action.
 
 If the request carries a number worth capping (points, a quantity, a score), pass it as `score` and set limits on
 the dashboard. If your app is deterministic (a seed plus recorded inputs always gives the same result), pass
-`replay` and a `simulate(replay, { seed })` function, and Pyrmi rejects any result the inputs don't reproduce. Seed
-the run with the `seed` simulate is given (the session's own, from the token), never one from the request body.
+`replay` and a `simulate(replay, { seed })` function, and any result the inputs don't reproduce is a reject. Seed
+the run with the `seed` simulate is given (the session's own), never one from the request body. simulate runs only
+after Pyrmi has confirmed the session and not rejected it, and only for a replay up to `maxReplayBytes` (64 KB by
+default, an option of `new Pyrmi()`). Keep it deterministic, free of side effects and bounded in its own work, such
+as a cap on how many inputs or steps it plays.
 
 A site can turn on `requireHumanCheck` (off by default) so `v.trusted` also needs a Turnstile pass for the session:
 render the widget with `cData` set to the session id from `Pyrmi.start()`, seal its token into the body as

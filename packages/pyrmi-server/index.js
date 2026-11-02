@@ -32,6 +32,8 @@ class Pyrmi {
     // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
     this.turnstileSecret = opts.turnstileSecret || envVar('TURNSTILE_SECRET_KEY') || null;
     this.turnstileEndpoint = opts.turnstileEndpoint || 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+    // The biggest replay (as JSON) simulate is given; anything larger is a mismatch without being run.
+    this.maxReplayBytes = Number.isFinite(opts.maxReplayBytes) && opts.maxReplayBytes > 0 ? opts.maxReplayBytes : 64 * 1024;
     if (!this.secretKey || !/^sk_/.test(this.secretKey)) throw new Error('pyrmi-server: pass { secretKey: "sk_..." } or set PYRMI_SECRET_KEY');
     if (typeof window !== 'undefined' && typeof document !== 'undefined') throw new Error('pyrmi-server: this runs on your server only, never in the browser');
   }
@@ -39,8 +41,10 @@ class Pyrmi {
   // Returns { verdict: 'accept'|'review'|'reject', risk, client: 'corroborated'|'unverified'|'none', trusted, reasons, session, player, score }.
   // user is an alias for player. score is optional: send it when the action carries a number you want capped.
   // simulate (optional): (replay, { seed, session }) => ({ score, durationMs }) re-runs a deterministic app from its
-  // recorded inputs on your server, seeded with the session's own seed (from the token, never from the body). If it
-  // gives a different score, the verdict is 'reject' with reason replay_mismatch.
+  // recorded inputs on your server, seeded with the session's own seed (never from the body). It runs only after Pyrmi
+  // has confirmed the session and not rejected it, and only for a replay up to maxReplayBytes (64 KB). If it gives a
+  // different score, the verdict is 'reject' with reason replay_mismatch. Keep it deterministic, free of side effects
+  // and bounded in its own work (a cap on inputs or steps).
   //
   // sealed (recommended): the parsed JSON body your page sent, made by Pyrmi.seal({ ... }) in the browser. Its pyrmi
   // part carries the token and the signature, and Pyrmi checks the rest arrived exactly as the page signed it, so a
@@ -80,22 +84,18 @@ class Pyrmi {
     if (typeof ttoken === 'string' && ttoken && this.turnstileSecret) human = { token: ttoken, secret: this.turnstileSecret, action: tin && typeof tin === 'object' && tin.action !== undefined ? tin.action : undefined };
     // A sealed number JSON can't carry exactly (Infinity, NaN, -0, a whole number past 2^53) is refused here.
     if (request) { const bad = badNumber(request.fields); if (bad) return refusal('the sealed field ' + bad + ' is a number that can\'t be checked exactly'); }
+    // The replay is run once Pyrmi has answered (below). One larger than maxReplayBytes is a mismatch without running it.
+    const wantsReplay = typeof simulate === 'function';
     let replayCheck = { check: 'none' };
-    if (typeof simulate === 'function') {
-      try {
-        // The session's own seed and id, read from the token (never take the seed from the request body). The token isn't
-        // checked here; Pyrmi checks it in this same call.
-        const r = await simulate(replay, sessionOf(token));
-        const same = r && Number(r.score) === Number(score) && (durationMs == null || r.durationMs == null || Math.abs(r.durationMs - durationMs) <= 50);
-        replayCheck = same ? { check: 'match' } : { check: 'mismatch', detail: 'replay gave ' + (r ? r.score : 'nothing') + ', claimed ' + score };
-      } catch (e) {
-        replayCheck = { check: 'mismatch', detail: 'replay failed: ' + String(e && e.message).slice(0, 80) };
-      }
+    if (wantsReplay) {
+      let size = Infinity;
+      try { size = utf8Length(JSON.stringify(replay === undefined ? null : replay)); } catch (_) { /* unreadable: refused below */ }
+      if (!(size <= this.maxReplayBytes)) replayCheck = { check: 'mismatch', detail: size === Infinity ? 'the replay could not be read' : 'the replay is larger than ' + this.maxReplayBytes + ' bytes' };
     }
     // failOpen covers Pyrmi being down (no answer, a timeout, a 5xx), never something the caller can cause.
     // An oversized or malformed action, or a 4xx answer to it (413 too large, 400, 403, 429), is a reject.
     const refuse = refusal;
-    let payload;
+    let payload, v;
     try { payload = JSON.stringify({ token, score, durationMs: dur, player, replay: replayCheck, request, client, turnstile: human }); } catch (e) { return refuse('it could not be sent (' + (e && e.message) + ')'); }
     if (utf8Length(payload) > 16 * 1024) return refuse('it is larger than 16 KB');
     try {
@@ -111,11 +111,24 @@ class Pyrmi {
       // Anything without a real verdict (an HTML page from a proxy, a wrong endpoint) is treated as Pyrmi being
       // unreachable: reject, unless you chose failOpen.
       if (!body || body.ok !== true || !['accept', 'review', 'reject'].includes(body.verdict)) throw new Error('Pyrmi sent something that isn\'t a verdict');
-      return body;
+      v = body;
     } catch (e) {
       if (e && e.status === 401) throw e; // a wrong key is a setup bug, not an outage
       return { ok: false, verdict: this.failOpen ? 'accept' : 'reject', risk: null, reasons: [{ code: 'pyrmi_unreachable', text: 'Could not reach Pyrmi: ' + (e && e.message) }], unverified: true };
     }
+    if (!wantsReplay || replayCheck.check !== 'none') return v;
+    // Nothing is worth re-running for a reject. Otherwise the token got past Pyrmi's checks, so its session is real:
+    // simulate gets that session's own seed and id (from Pyrmi's answer, or from the now-checked token on an older
+    // server), never anything from the request body.
+    if (v.verdict === 'reject') return { ...v, replay: 'none' };
+    const own = sessionOf(token);
+    const sess = typeof v.seed === 'number' && Number.isFinite(v.seed) && typeof v.session === 'string'
+      ? { seed: v.seed, session: v.session } : v.seed === undefined ? own : null;
+    if (!sess || sess.seed === null || (v.session != null && v.session !== own.session)) return replayFailed(v, 'no confirmed session to replay');
+    let r;
+    try { r = await simulate(replay, sess); } catch (e) { return replayFailed(v, 'replay failed: ' + String(e && e.message).slice(0, 80)); }
+    const same = r && Number(r.score) === Number(score) && (durationMs == null || r.durationMs == null || Math.abs(r.durationMs - durationMs) <= 50);
+    return same ? { ...v, replay: 'match' } : replayFailed(v, 'replay gave ' + (r ? r.score : 'nothing') + ', claimed ' + score);
   }
 
   // Checks a Cloudflare Turnstile token from your page (the widget's cf-turnstile-response) with Cloudflare.
@@ -142,6 +155,10 @@ class Pyrmi {
     return { success: true, errorCodes: [], hostname: r.hostname, action: r.action };
   }
 }
+
+// A reject for a replay that didn't reproduce the result. Never trusted.
+const replayFailed = (v, detail) => ({ ...v, verdict: 'reject', risk: 100, trusted: false, replay: 'mismatch',
+  reasons: [{ code: 'replay_mismatch', weight: 100, text: 'Replaying the recorded inputs gave a different result.', detail: String(detail).slice(0, 120) }, ...(Array.isArray(v.reasons) ? v.reasons : [])] });
 
 const refusal = (why) => ({ ok: false, verdict: 'reject', risk: null, reasons: [{ code: 'pyrmi_refused', text: 'Pyrmi refused the action: ' + why }], unverified: true });
 
