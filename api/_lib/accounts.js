@@ -52,6 +52,7 @@ const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number
 // Signed-in session lifetime. Env-tunable so it can be lowered without a deploy; the default is kept at 7 days
 // because shortening it signs everyone out sooner (a product/UX call). Recommend setting PYRMI_SESSION_TTL_DAYS lower.
 const sessionTtlSec = () => intEnv('PYRMI_SESSION_TTL_DAYS', 7) * 86400;
+const sessionsPerUser = () => intEnv('PYRMI_SESSIONS_PER_USER', 50);
 
 function googleConfigured() { return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
 function githubConfigured() { return !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET); }
@@ -115,6 +116,11 @@ async function signIn(email, name, via) {
   // revoke-all. (Q4/Q10)
   await kv.cmd('ZADD', 'ps:usess:' + uid, Date.now(), sidh);
   await kv.cmd('EXPIRE', 'ps:usess:' + uid, ttl + 86400);
+  // Keep only the newest sign-ins (PYRMI_SESSIONS_PER_USER, 50). Older ones are ended: their cookie stops working,
+  // since a session must be in the index, and their entry is removed, so the index can't grow without bound.
+  const extra = num(await kv.cmd('ZCARD', 'ps:usess:' + uid), 0) - sessionsPerUser();
+  const older = extra > 0 ? (await kv.cmd('ZRANGE', 'ps:usess:' + uid, 0, extra - 1)) || [] : [];
+  if (older.length) await kv.pipeline([['DEL', ...older.map((h) => 'ps:auth:' + h)], ['ZREM', 'ps:usess:' + uid, ...older]]);
   return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0), cookie(DEV_COOKIE, await deviceMark(email), 400 * 86400)] };
 }
 

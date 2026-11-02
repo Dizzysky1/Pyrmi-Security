@@ -1,6 +1,6 @@
 {
   "name": "pyrmi-server",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Server SDK for Pyrmi Security: check a browser session for bots and tampering before your server trusts what it sent.",
   "main": "index.js",
   "types": "index.d.ts",

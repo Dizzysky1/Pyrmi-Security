@@ -208,8 +208,10 @@ Cloudflare Workers, Supabase Edge Functions) that calls verify and then does the
 
 If the app is deterministic (same seed + same inputs = same result), seed the page's RNG with the `seed` that
 `Pyrmi.start()` answers, record inputs, seal them with the request, and pass `replay` plus a `simulate` function that
-re-runs it on the server. `simulate` gets the session's own seed as its second argument (read from the token): use
-that one, never a seed from the request body, which the player writes (a cheater could pick a seed they rehearsed).
+re-runs it on the server. `simulate` gets the session's own seed as its second argument: use that one, never a seed
+from the request body, which the player writes (a cheater could pick a seed they rehearsed). It runs only after Pyrmi
+has confirmed the session and not rejected it, and only for a replay up to `maxReplayBytes` (64 KB by default, an
+option of `new Pyrmi()`). Keep it deterministic, free of side effects and bounded (cap the inputs or steps it plays).
 
 ```js
 const v = await pyrmi.verify({

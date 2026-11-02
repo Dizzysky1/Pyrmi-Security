@@ -36,6 +36,10 @@ export interface VerifyResult {
    */
   human?: 'ok' | 'failed' | 'unavailable' | 'none';
   session?: string | null;
+  /** The session's own seed, for a genuine session (null otherwise). */
+  seed?: number | null;
+  /** With simulate: 'match' when the replay reproduced the result, 'mismatch' when it didn't (a reject), 'none' when it wasn't run. */
+  replay?: 'match' | 'mismatch' | 'none';
   player?: string;
   score?: number | null;
   unverified?: boolean;
@@ -77,7 +81,9 @@ export interface VerifyInput {
   turnstile?: string | { token: string; action?: string };
   /**
    * Re-run the app from the replay on your server. A different score means the result was faked. The second argument
-   * is the session's own seed and id, read from the token: seed your run with it, never with a seed from the body.
+   * is the session's own seed and id: seed your run with it, never with a seed from the body. It runs only after Pyrmi
+   * has confirmed the session and not rejected it, and only for a replay up to maxReplayBytes. Keep it deterministic,
+   * free of side effects and bounded in its own work.
    */
   simulate?: (replay: unknown, session: { seed: number | null; session: string | null }) => { score: number; durationMs?: number } | Promise<{ score: number; durationMs?: number }>;
 }
@@ -96,6 +102,8 @@ export interface PyrmiOptions {
   trustProxyHops?: number;
   /** Your Cloudflare Turnstile widget's secret key, sent with verify()'s turnstile and used by verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
   turnstileSecret?: string;
+  /** The biggest replay (as JSON, in bytes) simulate is given. Larger ones are a mismatch without being run. Default 65536. */
+  maxReplayBytes?: number;
   /** Override Cloudflare's siteverify URL (tests). */
   turnstileEndpoint?: string;
 }

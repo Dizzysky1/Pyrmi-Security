@@ -176,6 +176,24 @@ async function projectForKey(sk, ip) {
   return null;
 }
 
+// Wrong secret keys at /verify. Customer servers often share outbound addresses (serverless), so the cap is generous and
+// only misses count: the right key is looked up first and always works. Past PYRMI_VERIFY_BAD_KEYS_PER_MIN (600) from one
+// network, or PYRMI_VERIFY_BAD_KEYS_ALL_PER_MIN (20000) from everyone, a miss answers 429 instead of 401. Once a bucket is
+// over, this instance stops counting it until the window ends, so a flood of misses costs one lookup each and no writes.
+const verifyMissOver = new Map();
+async function verifyKeyMiss(ip) {
+  const now = Date.now(), net = 'ps:rl:vbad:' + (await netFingerprint(ip)), all = 'ps:rl:vbad:all';
+  if ((verifyMissOver.get(net) || 0) > now || (verifyMissOver.get(all) || 0) > now) return true;
+  const r = await kv.pipeline([['SET', net, '0', 'EX', 60, 'NX'], ['INCR', net], ['SET', all, '0', 'EX', 60, 'NX'], ['INCR', all]]);
+  const overNet = num(r[1], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_PER_MIN', 600);
+  const overAll = num(r[3], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_ALL_PER_MIN', 20000);
+  if (verifyMissOver.size > 5000) for (const [k, until] of verifyMissOver) if (until <= now) verifyMissOver.delete(k);
+  if (verifyMissOver.size > 5000) verifyMissOver.clear();
+  if (overNet) verifyMissOver.set(net, now + 60000);
+  if (overAll) verifyMissOver.set(all, now + 60000);
+  return overNet || overAll;
+}
+
 // pyrmi.com's own check on a request from one of its pages. Anything short of a clean accept is refused.
 async function guardSite(token, ip) {
   if (String(process.env.PYRMI_SITE_GUARD || '').toLowerCase() === 'off') return null;
@@ -1099,5 +1117,5 @@ module.exports = {
   TRUST_ALLOWS, isTrusted,
   SK_RE, DEFAULTS, LEGACY_DEFAULTS, checkSigned, checkHuman, relayed, sendsFetchMetadata, trustedMinInputs, DEMO, SITE, WEIGHTS, REASONS, HARD,
   createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, withKeyLock, rotateLocked, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
-  startSession, recordSignals, verify, dashboard, limitIp, limitPlan, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
+  startSession, recordSignals, verify, dashboard, limitIp, limitPlan, projectForKey, verifyKeyMiss, guardSite, cleanSignals, cleanPlayer, ymd,
 };
