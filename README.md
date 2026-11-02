@@ -148,6 +148,33 @@ doesn't offer STARTTLS is refused.
    Add a preview address too (`https://<preview-host>/api/v1/auth/google`) to try it there.
 3. In Vercel, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and redeploy.
 
+### Running your own copy cheaply
+
+What one player costs your server: a session when the page starts a run, a beacon every 10 seconds while it runs, and
+a verify for each action your server checks. In storage terms:
+
+| call | Redis round trips | Redis commands |
+| --- | --- | --- |
+| session start | 8 | about 17 |
+| beacon | 2 | 6 |
+| verify | 4 | about 16 (more when it flags something) |
+
+So a 5-minute run with one verify is about 32 function calls and 210 Redis commands. Divide your Redis plan's command
+allowance by that to see how many runs a month it covers. `tests/storage-trips.test.js` keeps these numbers from
+creeping up.
+
+- **Put the functions and Redis in the same region.** Every call waits on those round trips one after another, so a
+  database across the country adds its distance to each of them. On Vercel, pick the functions' region under the
+  project's Settings → Functions (or `"regions"` in `vercel.json`) to match the region you chose for the Upstash
+  database.
+- **Let browsers cache the script.** `vercel.json` serves `/sdk/<version>/pyrmi.js` as immutable and `/sdk/pyrmi.js`
+  for 5 minutes. On another host, send the same `Cache-Control` headers for those two paths. The script is about 7 KB
+  compressed.
+- **Keep previews off your production database.** Set `PYRMI_KV=memory` for Preview deployments only, so they don't
+  spend its allowance (and never mix with its keys).
+- **Your site's own server** can run `pyrmi-server` on Node 18+, Cloudflare Workers, Deno, Bun or edge functions. It
+  has no dependencies and makes one HTTPS call per verify.
+
 ## API
 
 | method | path | auth | body / result |

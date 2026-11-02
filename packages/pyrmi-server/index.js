@@ -12,18 +12,25 @@
 //   const t = await pyrmi.verifyTurnstile(body.turnstileToken, { remoteip, action: 'payout' });
 //   if (trusted(v, t)) payOut(...);                          // ...plus Cloudflare Turnstile, a check that doesn't
 //                                                            // depend on Pyrmi's browser telemetry at all
+//
+// Runs on Node 18+, and on runtimes with no Node globals (Cloudflare Workers, Deno, Bun, edge functions): it only
+// needs fetch, AbortSignal.timeout, TextEncoder/TextDecoder and atob. Where there's no process.env, pass the keys as
+// options.
+
+// Environment variables where there are any (Node, Bun, Workers with nodejs_compat), none elsewhere.
+const envVar = (k) => (typeof process !== 'undefined' && process && process.env ? process.env[k] : undefined);
 
 class Pyrmi {
   constructor(opts) {
     opts = opts || {};
-    this.secretKey = opts.secretKey || process.env.PYRMI_SECRET_KEY;
-    this.endpoint = String(opts.endpoint || process.env.PYRMI_ENDPOINT || 'https://pyrmi.com/api/v1').replace(/\/+$/, '');
+    this.secretKey = opts.secretKey || envVar('PYRMI_SECRET_KEY');
+    this.endpoint = String(opts.endpoint || envVar('PYRMI_ENDPOINT') || 'https://pyrmi.com/api/v1').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs || 8000;
     // If Pyrmi is unreachable: false = reject the action, true = accept it unverified. Only true or 'true' turns it on.
     this.failOpen = opts.failOpen === true || opts.failOpen === 'true';
     this.trustProxyHops = opts.trustProxyHops || 0; // proxies of yours in front of this server (for the caller's address)
     // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
-    this.turnstileSecret = opts.turnstileSecret || process.env.TURNSTILE_SECRET_KEY || null;
+    this.turnstileSecret = opts.turnstileSecret || envVar('TURNSTILE_SECRET_KEY') || null;
     this.turnstileEndpoint = opts.turnstileEndpoint || 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
     if (!this.secretKey || !/^sk_/.test(this.secretKey)) throw new Error('pyrmi-server: pass { secretKey: "sk_..." } or set PYRMI_SECRET_KEY');
     if (typeof window !== 'undefined' && typeof document !== 'undefined') throw new Error('pyrmi-server: this runs on your server only, never in the browser');
@@ -90,7 +97,7 @@ class Pyrmi {
     const refuse = refusal;
     let payload;
     try { payload = JSON.stringify({ token, score, durationMs: dur, player, replay: replayCheck, request, client, turnstile: human }); } catch (e) { return refuse('it could not be sent (' + (e && e.message) + ')'); }
-    if (Buffer.byteLength(payload) > 16 * 1024) return refuse('it is larger than 16 KB');
+    if (utf8Length(payload) > 16 * 1024) return refuse('it is larger than 16 KB');
     try {
       const res = await fetch(this.endpoint + '/verify', {
         method: 'POST',
@@ -149,10 +156,20 @@ function badNumber(v, path, depth) {
   return null;
 }
 
+// Byte length of a string as UTF-8, and base64url to UTF-8 text: Buffer on Node (as before), the web APIs elsewhere.
+function utf8Length(s) {
+  return typeof Buffer !== 'undefined' ? Buffer.byteLength(s) : new TextEncoder().encode(s).length;
+}
+function base64urlText(b) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(b, 'base64url').toString('utf8');
+  const bin = atob(b.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b.length + 3) % 4));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+
 // { seed, session } from a session token's payload (base64url JSON before the dot), for simulate. Not checked here.
 function sessionOf(token) {
   try {
-    const t = JSON.parse(Buffer.from(String(token).split('.')[0], 'base64url').toString('utf8'));
+    const t = JSON.parse(base64urlText(String(token).split('.')[0]));
     return { seed: Number.isFinite(t.seed) ? t.seed : null, session: typeof t.s === 'string' ? t.s : null };
   } catch (_) { return { seed: null, session: null }; }
 }

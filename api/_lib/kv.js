@@ -104,6 +104,7 @@ const mem = {
       case 'HSETNX': { const h = this.ensure(k, () => new Map()); if (h.has(c[2])) return 0; h.set(c[2], c[3]); return 1; }
       case 'HDEL': { const h = this.get(k); let n = 0; if (h) for (const f of c.slice(2)) if (h.delete(f)) n++; return n; }
       case 'HGET': { const h = this.get(k); return h && h.has(c[2]) ? h.get(c[2]) : null; }
+      case 'HMGET': { const h = this.get(k); return c.slice(2).map((f) => (h && h.has(f) ? h.get(f) : null)); }
       case 'HGETALL': { const h = this.get(k); return h ? [...h.entries()].flat() : []; }
       case 'HINCRBY': { const h = this.ensure(k, () => new Map()); const n = Number(h.get(c[2]) || 0) + Number(c[3]); h.set(c[2], String(n)); return n; }
       case 'LPUSH': { const l = this.ensure(k, () => []); for (const v of c.slice(2)) l.unshift(v); return l.length; }
