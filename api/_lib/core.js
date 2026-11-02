@@ -145,12 +145,23 @@ async function nearLimit(name, count, limit, day) {
 
 // Per-network limit for one kind of request. Limits can be changed with env vars (see README).
 async function limitIp(ip, name, ttl, env, dflt, message) {
-  const ipf = await netFingerprint(ip);
-  if (await bump('ps:rl:' + name + ':' + ipf, ttl, intEnv(env, dflt))) {
-    const e = httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
-    e.retryAfter = ttl; // the window length, surfaced as Retry-After (F-23)
-    throw e;
-  }
+  const plan = await limitPlan(ip, name, ttl, env, dflt, message);
+  plan.check(await kv.pipeline(plan.cmds));
+}
+// The same limit as commands to send along with others in one round trip: cmds go first in the pipeline, and
+// check(results) throws the same 429 limitIp would. The counter is taken exactly as limitIp takes it (SET NX EX, then
+// INCR), so it counts every call, refused or not, and the window still counts down.
+async function limitPlan(ip, name, ttl, env, dflt, message) {
+  const key = 'ps:rl:' + name + ':' + await netFingerprint(ip);
+  return {
+    cmds: [['SET', key, '0', 'EX', ttl, 'NX'], ['INCR', key]],
+    check(results) {
+      if (num(results[1], 1) <= intEnv(env, dflt)) return;
+      const e = httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
+      e.retryAfter = ttl; // the window length, surfaced as Retry-After (F-23)
+      throw e;
+    },
+  };
 }
 
 // Secret-key lookup with a cap on wrong guesses per network, so nobody can hammer the key check.
@@ -531,12 +542,14 @@ async function projectBySecretKey(sk) {
   if (typeof sk !== 'string' || !SK_RE.test(sk)) return null;
   const h = C.sha256(sk);
   const pid = await kv.cmd('GET', 'ps:sk:' + h);
-  if (!pid) return null;
+  if (!pid || !/^[\w-]{1,40}$/.test(String(pid))) return null;
   // Only the key the project itself records is live. Two rotations racing (say, an attacker with a stolen key
   // hammering rotate) could each map a new key to the project while only one was stored, and the other was never
-  // revoked by later rotations (A2-01). A stale ps:sk entry now opens nothing.
-  if ((await kv.cmd('HGET', 'ps:p:' + pid, 'skh')) !== h) return null;
-  return loadProject(pid);
+  // revoked by later rotations (A2-01). A stale ps:sk entry now opens nothing. The stored key hash is read in the same
+  // command as the rest of the project, so the project returned is the one that hash belongs to.
+  const row = kv.pairs(await kv.cmd('HGETALL', 'ps:p:' + pid));
+  if (row.skh !== h) return null;
+  return BUILTIN[pid] ? loadProject(pid) : parseProject(pid, row);
 }
 
 async function updateSettings(project, patch) {
@@ -686,13 +699,23 @@ async function startSession(project, ctx, body) {
   return { token, session: sid, seed, expiresAt: exp, issuedAt: now, bn, rk: await C.requestKey(sid) };
 }
 
+// ctx.limit (optional): { name, ttl, env, dflt }, a per-network limit to count in the same round trip as the session
+// read. It's counted and checked first, before anything else here can refuse the beacon, as a separate limitIp call
+// ahead of this one would be.
 async function recordSignals(body, ctx) {
+  const lim = ctx && ctx.limit ? await limitPlan(ctx.ip, ctx.limit.name, ctx.limit.ttl, ctx.limit.env, ctx.limit.dflt) : null;
   const t = await readSession(body && body.token);
-  if (!t) throw httpError(400, 'invalid_token');
   const now = Date.now();
-  if (now > t.e + 3600e3) throw httpError(410, 'expired');
+  if (!t || now > t.e + 3600e3) {
+    if (lim) lim.check(await kv.pipeline(lim.cmds));
+    if (!t) throw httpError(400, 'invalid_token');
+    throw httpError(410, 'expired');
+  }
   const key = 'ps:s:' + t.s;
-  const [rawSess, pk, ep] = await kv.pipeline([['HGETALL', key], ['HGET', 'ps:p:' + t.p, 'pk'], ['HGET', 'ps:p:' + t.p, 'ep']]);
+  const pre = lim ? lim.cmds : [];
+  const res = await kv.pipeline([...pre, ['HGETALL', key], ['HMGET', 'ps:p:' + t.p, 'pk', 'ep']]);
+  if (lim) lim.check(res);
+  const rawSess = res[pre.length], [pk, ep] = res[pre.length + 1] || [];
   const sess = kv.pairs(rawSess);
   if (!sess.p) throw httpError(410, 'expired');
   // The project is gone (deleted), or its key was rotated or it was claimed since this session started.
@@ -740,11 +763,13 @@ async function recordSignals(body, ctx) {
   if ((await C.fingerprint('ip', ctx.ip)) !== sess.ih) merged.ipc = true;
   const mark = JSON.stringify({ pt: sig.pt, gt: sig.gt, st: now });
   const counters = {}; for (const c of COUNTERS) counters[c] = sig[c];
-  const cmds = [['HSET', key, 'sig', JSON.stringify(merged), 'l', mark, 'lc', JSON.stringify(counters), ...(Number.isInteger(n) ? ['n', n] : [])], ['HINCRBY', key, 'b', 1]];
-  if (!sess.f) cmds.push(['HSET', key, 'f', mark]);
-  // keep the first mark that carried game time, so time_warp has a span to measure
-  if (sig.gt !== null && !sess.g) cmds.push(['HSET', key, 'g', mark]);
-  await kv.pipeline(cmds);
+  // f: the first mark. g: the first mark that carried game time, so time_warp has a span to measure. Both go in the same
+  // HSET as the rest, only when the session doesn't have them yet.
+  const once = [...(!sess.f ? ['f', mark] : []), ...(sig.gt !== null && !sess.g ? ['g', mark] : [])];
+  await kv.pipeline([
+    ['HSET', key, 'sig', JSON.stringify(merged), 'l', mark, 'lc', JSON.stringify(counters), ...(Number.isInteger(n) ? ['n', n] : []), ...once],
+    ['HINCRBY', key, 'b', 1],
+  ]);
   return { ok: true };
 }
 
@@ -870,7 +895,18 @@ async function verify(project, body, ctx) {
   // token is single-use, so each session gets one call. Key on the network the session started from, which is in the
   // signed token and can't be changed, and fall back to the calling server's network when there is no token.
   const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await netFingerprint(ctx.ip) : 'none');
-  if (await bump('ps:rl:v:' + project.pid + ':' + rlKey, 60, intEnv('PYRMI_VERIFIES_PER_MIN', 60))) hard('rate_limited');
+  const rl = 'ps:rl:v:' + project.pid + ':' + rlKey;
+  // Which way the token goes is known before anything is read, so the rate limit, the single-use marker and the
+  // session record go to the store in one round trip, in the order they used to go one by one.
+  const live = !!t && t.p === project.pid && num(t.ep, 0) === num(project.epoch, 0);
+  const cmds = [['SET', rl, '0', 'EX', 60, 'NX'], ['INCR', rl]];
+  // Mark expired tokens used too, so replaying one is reported as a replay and doesn't log a fresh event every time.
+  // A live one keeps its marker for as long as the token itself can still be used, not the project's current TTL:
+  // lowering sessionTtlSec after tokens were issued let the marker expire first and the same token pass again (A2-02).
+  if (live && now > t.e) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', 3600]);
+  else if (live) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600], ['HGETALL', 'ps:s:' + t.s]);
+  const got = await kv.pipeline(cmds);
+  if (num(got[1], 1) > intEnv('PYRMI_VERIFIES_PER_MIN', 60)) hard('rate_limited');
 
   // A project that takes only signed actions refuses an unsigned one whatever else it carries.
   if (s.requireSignedRequests && !(body.request && typeof body.request === 'object')) hard('unsigned_request');
@@ -880,17 +916,12 @@ async function verify(project, body, ctx) {
   else if (num(t.ep, 0) !== num(project.epoch, 0)) hard('invalid_token', 'the session started before the site\'s key was rotated');
   else if (now > t.e) {
     sid = t.s; hard('expired');
-    // Mark expired tokens used too, so replaying one is reported as a replay and doesn't log a fresh event every time.
-    const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', 3600);
-    if (fresh !== 'OK') hard('token_reused');
+    if (got[2] !== 'OK') hard('token_reused');
   }
   else {
     sid = t.s;
-    // Keep the marker for as long as the token itself can still be used, not the project's current TTL: lowering
-    // sessionTtlSec after tokens were issued let the marker expire first and the same token pass again (A2-02).
-    const fresh = await kv.cmd('SET', 'ps:used:' + sid, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600);
-    if (fresh !== 'OK') hard('token_reused');
-    const sess = kv.pairs(await kv.cmd('HGETALL', 'ps:s:' + sid));
+    if (got[2] !== 'OK') hard('token_reused');
+    const sess = kv.pairs(got[3]);
     const genuineSess = sess.p === project.pid;
     // Measure elapsed time from the server-recorded session start, never the token's self-reported `i`. The token is
     // only HMAC-signed, so a forged token (one precondition: a leaked PYRMI_SECRET) could otherwise carry a genuine
@@ -1000,14 +1031,18 @@ async function logVerdict(pid, ev, genuine) {
       cmds.push(['ZREMRANGEBYRANK', 'ps:plf:' + pid, 0, -1001]);
     }
   }
-  await kv.pipeline(cmds);
-  if (genuine && !isDemo) await trimPlayers(pid);
+  // A real project's index size comes back in the same round trip, after this verdict's ZADD, for trimPlayers.
+  const trim = genuine && !isDemo;
+  if (trim) cmds.push(['ZCARD', 'ps:plr:' + pid]);
+  const out = await kv.pipeline(cmds);
+  if (trim) await trimPlayers(pid, out[out.length - 1]);
 }
 
 // Keep a real project's recent-players index at MAX_PLAYERS and delete the per-player detail hash of each player
 // trimmed out, so ps:pl is capped the same way the index is (F-19). Does nothing until the project passes the cap.
-async function trimPlayers(pid) {
-  const over = num(await kv.cmd('ZCARD', 'ps:plr:' + pid), 0) - MAX_PLAYERS;
+// size: the index's ZCARD, when the caller already read it.
+async function trimPlayers(pid, size) {
+  const over = num(size !== undefined ? size : await kv.cmd('ZCARD', 'ps:plr:' + pid), 0) - MAX_PLAYERS;
   if (over <= 0) return;
   const gone = (await kv.cmd('ZRANGE', 'ps:plr:' + pid, 0, over - 1)) || []; // the oldest members
   if (!gone.length) return;
@@ -1064,5 +1099,5 @@ module.exports = {
   TRUST_ALLOWS, isTrusted,
   SK_RE, DEFAULTS, LEGACY_DEFAULTS, checkSigned, checkHuman, relayed, sendsFetchMetadata, trustedMinInputs, DEMO, SITE, WEIGHTS, REASONS, HARD,
   createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, withKeyLock, rotateLocked, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
-  startSession, recordSignals, verify, dashboard, limitIp, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
+  startSession, recordSignals, verify, dashboard, limitIp, limitPlan, projectForKey, guardSite, cleanSignals, cleanPlayer, ymd,
 };

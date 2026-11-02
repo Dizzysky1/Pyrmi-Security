@@ -73,6 +73,10 @@ if (!trusted(v, t)) return res.status(403).json({ error: 'not_verified' });
 Cloudflare already saw, a different action or hostname than you pass, or Cloudflare being unreachable all give
 `success: false`. `trusted(v, t)` needs both a trusted verdict and a passed check.
 
+Runs on Node 18+ and on runtimes without Node's globals (Cloudflare Workers, Deno, Bun, edge functions). There, pass
+`secretKey` (and `turnstileSecret`, `endpoint`) as options if the runtime has no `process.env`, and pass `req` as the
+Fetch API `Request` or `client: { ua, ch, sfs, ip }` yourself.
+
 Options: `secretKey` (or `PYRMI_SECRET_KEY`), `endpoint` (for self-hosting), `timeoutMs`, `failOpen` (only `true`
 turns it on; it covers Pyrmi being unreachable, never an answer it gave), `trustProxyHops` (X-Forwarded-For is
 ignored unless set; `1` on Vercel, Netlify or Cloudflare), `turnstileSecret` (or `TURNSTILE_SECRET_KEY`),
