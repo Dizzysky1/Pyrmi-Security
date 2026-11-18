@@ -8,97 +8,112 @@
 <meta name="robots" content="noindex">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<meta name="theme-color" content="#07070c">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/site.css">
-<link rel="stylesheet" href="/dashboard/dash.css">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css?v=4">
+<link rel="stylesheet" href="/dashboard/dash.css?v=4">
 </head>
-<body>
-<div id="bg-fallback" class="quiet"></div>
-<canvas id="gl" data-mode="quiet" aria-hidden="true"></canvas>
-<div class="veil"></div>
-<div class="wrap">
-  <header class="top">
+<body class="app">
+<header class="top">
+  <div class="wrap bar">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
-    <nav><a href="/docs/">docs</a><a href="/#demo">sandbox</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
-  </header>
+    <nav aria-label="Main"><a href="/docs/">Docs</a><a href="/#demo">Sandbox</a><a href="/dashboard/" class="nav-cta">Dashboard</a></nav>
+  </div>
+</header>
 
+<main class="wrap">
   <!-- signed out -->
   <section id="gate" hidden>
-    <h1 class="title">Your dashboard</h1>
-    <div class="card signin" id="signin-card" hidden>
+    <div class="page-h">
       <div>
-        <h3>Sign in to manage your sites</h3>
-        <p>Add your sites, get their keys, follow the setup guide and see only your own verdicts.</p>
+        <p class="label">Dashboard</p>
+        <h1 class="title">Your dashboard</h1>
       </div>
-      <div class="ways">
-        <a class="btn" href="/api/v1/auth/github" id="github-btn" hidden>sign in with GitHub</a>
-        <a class="btn" href="/api/v1/auth/google" id="google-btn" hidden>sign in with Google</a>
-      </div>
-      <form class="email-in" id="email-form" hidden>
-        <label>Or with your email<input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></label>
-        <div class="ts" id="ts-signin" hidden></div>
-        <button class="btn primary" type="submit">email me a code</button>
-      </form>
-      <form class="email-in" id="code-form" hidden>
-        <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes. No code after a few minutes? Sign in with GitHub instead.</p>
-        <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456"></label>
-        <button class="btn primary" type="submit">sign in</button>
-        <button class="btn" type="button" id="code-back">use another email</button>
-      </form>
-      <p class="err" id="signin-err" role="alert"></p>
     </div>
-    <p class="lead gap"><span id="skip-acct" hidden>Or skip the account: </span>A project gives you two keys, a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
-    <div class="grid2">
-      <form class="card" id="create">
-        <h3>New project</h3>
-        <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
-        <label>Allowed pages <span class="muted">(the pages that will run the script, one per line)</span>
-          <textarea name="origins" rows="2" placeholder="https://mysite.com" required></textarea></label>
-        <div class="ts" id="ts-create" hidden></div>
-        <button class="btn primary" type="submit">create project</button>
-        <p class="err" id="create-err" role="alert"></p>
-      </form>
-      <form class="card" id="login">
-        <h3>Open a project</h3>
-        <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
-        <button class="btn" type="submit">open dashboard</button>
-        <p class="err" id="login-err" role="alert"></p>
-        <p class="muted small-t">Or look around the <a href="?demo=1">public dashboard</a> for the pyrmi.com sandbox, or watch <a href="?demo=site">pyrmi.com protect itself</a>.</p>
-      </form>
+    <div class="gate-grid">
+      <div class="pane" id="signin-card" hidden>
+        <div class="pane-h"><span class="label">With an account</span></div>
+        <h2 class="pane-t">Sign in to manage your sites</h2>
+        <p class="muted small-t">Add your sites, get their keys, follow the setup guide and see only your own verdicts.</p>
+        <div class="ways">
+          <a class="btn" href="/api/v1/auth/github" id="github-btn" hidden>Sign in with GitHub</a>
+          <a class="btn" href="/api/v1/auth/google" id="google-btn" hidden>Sign in with Google</a>
+        </div>
+        <form class="email-in" id="email-form" hidden>
+          <label>Or with your email<input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="you@example.com"></label>
+          <div class="ts" id="ts-signin" hidden></div>
+          <button class="btn primary" type="submit">Email me a code</button>
+        </form>
+        <form class="email-in" id="code-form" hidden>
+          <p class="muted small-t">If <b id="code-to"></b> can get email, a 6-digit code is on its way. It works once, for 10 minutes. No code after a few minutes? Sign in with GitHub instead.</p>
+          <label>Code<input name="code" class="code-in" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456"></label>
+          <button class="btn primary" type="submit">Sign in</button>
+          <button class="btn" type="button" id="code-back">Use another email</button>
+        </form>
+        <p class="err" id="signin-err" role="alert"></p>
+      </div>
+
+      <div class="pane">
+        <div class="pane-h"><span class="label">Keys only</span></div>
+        <p class="muted small-t keys-lead"><span id="skip-acct" hidden>Or skip the account: </span>A project gives you two keys, a public one for your pages and a secret one for your server. The secret key also opens this dashboard.</p>
+        <div class="key-forms">
+          <form class="sub-form" id="create">
+            <h3>New project</h3>
+            <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
+            <label>Allowed pages <span class="dim">the pages that will run the script, one per line</span>
+              <textarea name="origins" rows="2" placeholder="https://mysite.com" required></textarea></label>
+            <div class="ts" id="ts-create" hidden></div>
+            <button class="btn primary" type="submit">Create project</button>
+            <p class="err" id="create-err" role="alert"></p>
+          </form>
+          <form class="sub-form" id="login">
+            <h3>Open a project</h3>
+            <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
+            <button class="btn" type="submit">Open dashboard</button>
+            <p class="err" id="login-err" role="alert"></p>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="demo-strip">
+      <span class="label">Look around first</span>
+      <a href="?demo=1">Public dashboard for the pyrmi.com sandbox</a>
+      <a href="?demo=site">pyrmi.com protecting itself</a>
     </div>
   </section>
 
   <!-- signed in: your sites -->
   <section id="account" hidden>
-    <div class="dash-h">
+    <div class="page-h">
       <div>
+        <p class="label">Signed in as <span id="a-email" class="acct"></span></p>
         <h1 class="title">Your sites</h1>
-        <div class="muted small-t">signed in as <span id="a-email"></span></div>
       </div>
-      <button class="btn" id="a-signout">sign out</button>
+      <button class="btn sm" type="button" id="a-signout">Sign out</button>
     </div>
     <div id="sites" class="sites"></div>
-    <div class="grid2 gap">
-      <form class="card" id="add-site">
+    <div class="gate-grid gap-l">
+      <form class="pane sub-form" id="add-site">
+        <div class="pane-h"><span class="label">New site</span></div>
         <h3>Add a site</h3>
         <label>Site or app name<input name="name" maxlength="48" required placeholder="My site"></label>
-        <label>Allowed pages <span class="muted">(the pages that will run the script, one per line)</span>
+        <label>Allowed pages <span class="dim">the pages that will run the script, one per line</span>
           <textarea name="origins" rows="2" placeholder="https://mysite.com" required></textarea></label>
         <div class="ts" id="ts-add" hidden></div>
-        <button class="btn primary" type="submit">add site</button>
+        <button class="btn primary" type="submit">Add site</button>
         <p class="err" id="add-err" role="alert"></p>
       </form>
-      <form class="card" id="claim">
+      <form class="pane sub-form" id="claim">
+        <div class="pane-h"><span class="label">Existing project</span></div>
         <h3>Bring in an existing project</h3>
         <p class="muted small-t">Made a project with keys only? Its secret key moves it into this account.</p>
         <label>Secret key<input name="sk" type="password" autocomplete="off" spellcheck="false" required placeholder="sk_..."></label>
-        <label class="check"><input type="checkbox" name="keep"> Keep this secret key</label>
+        <label class="check"><input type="checkbox" name="keep"> <span>Keep this secret key</span></label>
         <p class="muted small-t">Leave it unticked and you get a new key, so anyone else who had the old one loses access. Put the new one on your server as <code>PYRMI_SECRET_KEY</code>.</p>
         <div class="ts" id="ts-claim" hidden></div>
-        <button class="btn" type="submit">add to my account</button>
+        <button class="btn" type="submit">Add to my account</button>
         <p class="err" id="claim-err" role="alert"></p>
       </form>
     </div>
@@ -106,116 +121,138 @@
 
   <!-- keys, shown once after creating -->
   <section id="keys" hidden>
-    <h1 class="title" id="k-title">Project created</h1>
-    <div class="card warn">
-      <h3>Save your secret key now</h3>
-      <p>It's shown this one time. It goes in your server's environment as <code>PYRMI_SECRET_KEY</code> and opens this dashboard. Never put it in a web page.</p>
+    <div class="page-h"><div><p class="label">Keys</p><h1 class="title" id="k-title">Project created</h1></div></div>
+    <div class="keys-box">
+      <div class="callout">
+        <p class="label">Shown once</p>
+        <p><b>Save your secret key now.</b> It's shown this one time. It goes in your server's environment as <code>PYRMI_SECRET_KEY</code> and opens this dashboard. Never put it in a web page.</p>
+      </div>
+      <div class="keyrows">
+        <div class="keyrow"><span>public key</span><code id="k-pk"></code><button class="copy" type="button" data-copy="k-pk">copy</button></div>
+        <div class="keyrow secret"><span>secret key</span><code id="k-sk"></code><button class="copy" type="button" data-copy="k-sk">copy</button></div>
+      </div>
+      <div class="keys-go">
+        <label class="check"><input type="checkbox" id="k-saved"> <span>I saved my secret key</span></label>
+        <button class="btn primary" type="button" id="k-go" disabled>Open dashboard</button>
+      </div>
     </div>
-    <div class="keyrow"><span>public key</span><code id="k-pk"></code><button class="copy" data-copy="k-pk">copy</button></div>
-    <div class="keyrow"><span>secret key</span><code id="k-sk"></code><button class="copy" data-copy="k-sk">copy</button></div>
-    <label class="check"><input type="checkbox" id="k-saved"> I saved my secret key</label>
-    <button class="btn primary" id="k-go" disabled>open dashboard</button>
   </section>
 
   <!-- dashboard -->
   <section id="dash" hidden>
-    <div class="dash-h">
-      <div>
+    <div class="page-h">
+      <div class="min0">
+        <p class="label">Project <span id="d-demo" hidden class="chip info">public demo · read only</span></p>
         <h1 class="title" id="d-name"></h1>
-        <div class="muted small-t"><span id="d-demo" hidden class="chip info">public demo · read only</span> public key <code id="d-pk"></code> <button class="copy" data-copy="d-pk">copy</button> · <span id="d-updated"></span></div>
+        <div class="meta"><span class="dim">public key</span> <code id="d-pk"></code> <button class="copy" type="button" data-copy="d-pk">copy</button> <span class="sep"></span> <span class="live-dot" aria-hidden="true"></span><span id="d-updated" class="num"></span></div>
       </div>
-      <div class="acts"><button class="btn" id="back" hidden>all sites</button><button class="btn" id="signout">sign out</button></div>
+      <div class="acts"><button class="btn sm" type="button" id="back" hidden>All sites</button><button class="btn sm" type="button" id="signout">Sign out</button></div>
     </div>
 
-    <div class="panel" id="warns" hidden>
-      <div class="panel-h">worth fixing <span class="chip review">settings</span></div>
-      <ul class="muted" id="warn-list"></ul>
+    <div class="panel warnbox" id="warns" hidden>
+      <div class="panel-h"><span>Worth fixing</span><span class="chip review">settings</span></div>
+      <ul id="warn-list"></ul>
     </div>
 
     <div class="panel guide" id="guide" hidden>
-      <div class="panel-h">link your site <span id="g-state" class="chip info">not connected yet</span></div>
+      <div class="panel-h"><span>Link your site</span><span id="g-state" class="chip info">not connected yet</span></div>
       <ol class="steps-list">
         <li id="g-page"><b>Add the script to your pages.</b> Put this before your own scripts, then call <code>Pyrmi.start()</code> when the page loads.
-          <div class="code"><div class="code-h">html <button class="copy" data-copy="g1">copy</button></div><pre id="g1"></pre></div></li>
+          <div class="code"><div class="code-h"><span>html</span><button class="copy" type="button" data-copy="g1">copy</button></div><pre id="g1"></pre></div></li>
         <li id="g-server"><b>Check each protected request on your server.</b> Set <code>PYRMI_SECRET_KEY</code> in your server's environment, then:
-          <div class="code"><div class="code-h">node <button class="copy" data-copy="g2">copy</button></div><pre id="g2"></pre></div></li>
+          <div class="code"><div class="code-h"><span>node</span><button class="copy" type="button" data-copy="g2">copy</button></div><pre id="g2"></pre></div></li>
         <li><b>Or let your coding agent do both.</b> Paste this into Claude Code, Cursor or another agent:
-          <div class="code"><div class="code-h">prompt <button class="copy" data-copy="g3">copy</button></div><pre id="g3"></pre></div></li>
+          <div class="code wrapcode"><div class="code-h"><span>prompt</span><button class="copy" type="button" data-copy="g3">copy</button></div><pre id="g3"></pre></div></li>
       </ol>
-      <div class="acts"><button class="btn" type="button" id="g-check">check again</button><span class="muted small-t" id="g-note"></span></div>
+      <div class="acts"><button class="btn sm" type="button" id="g-check">Check again</button><span class="dim small-t num" id="g-note"></span></div>
     </div>
 
-    <div class="tiles">
-      <div class="tile"><span>sessions</span><b id="s-sessions">0</b><i>last 14 days</i></div>
-      <div class="tile ok"><span>verified</span><b id="s-accept">0</b><i>accepted</i></div>
-      <div class="tile warn"><span>flagged</span><b id="s-review">0</b><i>accepted, needs a look</i></div>
-      <div class="tile bad"><span>rejected</span><b id="s-reject">0</b><i id="s-rate">of all checks</i></div>
+    <div class="kpis">
+      <div class="kpi"><span class="k-l">Sessions</span><b id="s-sessions" class="num">0</b><i>last 14 days</i></div>
+      <div class="kpi ok"><span class="k-l">Verified</span><b id="s-accept" class="num">0</b><i>accepted</i></div>
+      <div class="kpi warn"><span class="k-l">Flagged</span><b id="s-review" class="num">0</b><i>accepted, needs a look</i></div>
+      <div class="kpi bad"><span class="k-l">Rejected</span><b id="s-reject" class="num">0</b><i id="s-rate" class="num">of all checks</i></div>
     </div>
 
-    <div class="grid2 gap">
+    <div class="row2">
       <div class="panel">
-        <div class="panel-h">verdicts per day</div>
+        <div class="panel-h"><span>Verdicts per day</span><span class="legend"><span class="lg ok">verified</span><span class="lg warn">flagged</span><span class="lg bad">rejected</span></span></div>
         <div id="chart" class="chart" role="img" aria-label="Verdicts per day for the last 14 days"></div>
-        <div class="legend"><span class="lg ok">verified</span><span class="lg warn">flagged</span><span class="lg bad">rejected</span></div>
       </div>
       <div class="panel">
-        <div class="panel-h">why requests were flagged</div>
+        <div class="panel-h"><span>Why requests were flagged</span><span class="dim">14 days</span></div>
         <ul id="why" class="why"></ul>
       </div>
     </div>
 
-    <div class="panel gap">
-      <div class="panel-h">recent verdicts <span class="muted">click a row for details</span></div>
-      <div class="tbl-wrap"><table class="tbl" id="events"><thead><tr><th>when</th><th>user</th><th>value</th><th>verdict</th><th>risk</th><th>top reason</th></tr></thead><tbody></tbody></table></div>
+    <div class="panel">
+      <div class="panel-h"><span>Recent verdicts</span><span class="dim">click a row for details</span></div>
+      <div class="tbl-wrap"><table class="tbl" id="events"><thead><tr><th>When</th><th>User</th><th class="r">Value</th><th>Verdict</th><th class="r">Risk</th><th>Top reason</th></tr></thead><tbody></tbody></table></div>
     </div>
 
-    <div class="panel gap">
-      <div class="panel-h">users <span class="muted" id="p-count"></span> <span class="muted" title="Pyrmi can't check who anyone is. Set user on your server from your own sign-in, never from the request body.">as your server named them</span></div>
-      <div class="tbl-wrap"><table class="tbl" id="players"><thead><tr><th>user</th><th>verified</th><th>flagged</th><th>rejected</th><th>last risk</th><th>usual reason</th><th>last seen</th></tr></thead><tbody></tbody></table></div>
+    <div class="panel">
+      <div class="panel-h"><span>Users <span class="dim num" id="p-count"></span></span><span class="dim" title="Pyrmi can't check who anyone is. Set user on your server from your own sign-in, never from the request body.">as your server named them</span></div>
+      <div class="tbl-wrap"><table class="tbl" id="players"><thead><tr><th>User</th><th class="r">Verified</th><th class="r">Flagged</th><th class="r">Rejected</th><th class="r">Last risk</th><th>Usual reason</th><th class="r">Last seen</th></tr></thead><tbody></tbody></table></div>
     </div>
 
-    <div class="grid2 gap" id="owner-only">
+    <div class="row2 even" id="owner-only">
       <form class="panel" id="settings">
-        <div class="panel-h">settings</div>
+        <div class="panel-h"><span>Settings</span></div>
         <div class="form-grid">
           <label>Name<input name="name" maxlength="48"></label>
-          <label>Max value <span class="muted">(blank = none)</span><input name="maxScore" inputmode="decimal"></label>
+          <label>Max value <span class="dim">blank = none</span><input name="maxScore" inputmode="decimal"></label>
           <label>Max value per second<input name="maxScorePerSec" inputmode="decimal"></label>
           <label>Shortest run (ms)<input name="minDurationMs" inputmode="numeric"></label>
           <label>Flag at risk<input name="reviewAt" inputmode="numeric"></label>
           <label>Reject at risk<input name="rejectAt" inputmode="numeric"></label>
         </div>
-        <label>Allowed pages <span class="muted">(one per line)</span><textarea name="origins" rows="2"></textarea></label>
-        <label class="check"><input type="checkbox" name="strictClock"> flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)</label>
-        <label class="check"><input type="checkbox" name="requireSignedRequests"> reject any action that isn't sealed by the Pyrmi script (turn on once your page uses Pyrmi.seal)</label>
-        <label class="check"><input type="checkbox" name="requireHumanCheck"> trusted also needs a Cloudflare Turnstile pass for the session (turn on once your page and server send one; see install.md)</label>
-        <button class="btn" type="submit">save settings</button>
-        <p class="err" id="settings-msg" role="status"></p>
+        <label>Allowed pages <span class="dim">one per line</span><textarea name="origins" rows="2"></textarea></label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" name="strictClock"> <span>Flag an app clock (Pyrmi.mark) running slower than real time (only if it never pauses)</span></label>
+          <label class="check"><input type="checkbox" name="requireSignedRequests"> <span>Reject any action that isn't sealed by the Pyrmi script (turn on once your page uses Pyrmi.seal)</span></label>
+          <label class="check"><input type="checkbox" name="requireHumanCheck"> <span>Trusted also needs a Cloudflare Turnstile pass for the session (turn on once your page and server send one; see install.md)</span></label>
+        </div>
+        <div class="form-foot"><button class="btn" type="submit">Save settings</button><p class="err" id="settings-msg" role="status"></p></div>
       </form>
       <div class="panel">
-        <div class="panel-h">install</div>
+        <div class="panel-h"><span>Install</span></div>
         <p class="muted small-t">In your pages:</p>
-        <div class="code"><pre id="i-snippet"></pre></div>
+        <div class="code wrapcode"><pre id="i-snippet"></pre></div>
         <p class="muted small-t">Then follow the <a href="/docs/">docs</a>, or hand <a href="/install.md">install.md</a> to your coding agent.</p>
-        <div class="panel-h" style="margin-top:18px">secret key</div>
+        <div class="panel-h sub"><span>Secret key</span></div>
         <p class="muted small-t">If your secret key leaks, make a new one. The old one stops working at once, so update your server right after.</p>
-        <button class="btn" type="button" id="rotate">make a new secret key</button>
+        <button class="btn sm danger" type="button" id="rotate">Make a new secret key</button>
         <div id="rotate-confirm" hidden class="confirm">
           <span>Your server will fail to verify until you update it.</span>
-          <button class="btn primary" type="button" id="rotate-yes">yes, rotate</button>
-          <button class="btn" type="button" id="rotate-no">cancel</button>
+          <button class="btn sm danger" type="button" id="rotate-yes">Yes, rotate</button>
+          <button class="btn sm" type="button" id="rotate-no">Cancel</button>
           <div class="ts" id="ts-rotate" hidden></div>
           <span class="err" id="rotate-err" role="alert"></span>
         </div>
-        <div id="rotate-out" hidden class="keyrow"><span>new key</span><code id="r-sk"></code><button class="copy" data-copy="r-sk">copy</button></div>
+        <div id="rotate-out" hidden class="keyrow secret"><span>new key</span><code id="r-sk"></code><button class="copy" type="button" data-copy="r-sk">copy</button></div>
+        <div class="panel-h sub"><span>Delete</span></div>
+        <p class="muted small-t">Deletes this project and its keys. Verify calls with its secret key stop working at once. This can't be undone.</p>
+        <button class="btn sm danger" type="button" id="delete">Delete this project</button>
+        <div id="delete-confirm" hidden class="confirm danger">
+          <span>Delete it for good? Your server's verify calls will fail until it uses another project's keys.</span>
+          <button class="btn sm danger" type="button" id="delete-yes">Yes, delete</button>
+          <button class="btn sm" type="button" id="delete-no">Cancel</button>
+          <div class="ts" id="ts-delete" hidden></div>
+          <span class="err" id="delete-err" role="alert"></span>
+        </div>
       </div>
     </div>
   </section>
-  <footer>Pyrmi Security · open source, Apache 2.0 · <a href="/">home</a> · <a href="/docs/">docs</a></footer>
-</div>
-<script src="/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_pyrmi_site"></script>
-<script src="/site.js"></script>
-<script src="/dashboard/app.js"></script>
-<script type="module" src="/bg/singularity.js?v=2"></script>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>Pyrmi Security · open source, Apache 2.0</span>
+    <nav aria-label="Footer"><a href="/">Home</a><a href="/docs/">Docs</a><a href="/install.md">Install guide</a></nav>
+  </div>
+</footer>
+<script src="/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_pyrmi_site"></script>
+<script src="/site.js?v=4"></script>
+<script src="/dashboard/app.js?v=4"></script>
 </body>
 </html>

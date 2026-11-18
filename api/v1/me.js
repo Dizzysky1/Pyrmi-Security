@@ -30,7 +30,7 @@ module.exports = handle(async (req, res) => {
     const u = await who();
     if (!u) return send(res, 401, { ok: false, error: 'signed_out' });
     const revoked = await accounts.revokeAllSessions(u.uid); // ends every session, this one included (Q4/Q10)
-    return send(res, 200, { ok: true, revoked }, { 'Set-Cookie': await accounts.signOut(req) });
+    return send(res, 200, { ok: true, revoked }, { 'Set-Cookie': accounts.cookie(accounts.SESSION_COOKIE, '', 0) });
   }
   if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Use GET, or POST with an action.', { Allow: 'GET, POST' });
   const user = await who();

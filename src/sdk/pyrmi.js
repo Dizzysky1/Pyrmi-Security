@@ -1,4 +1,4 @@
-/*! Pyrmi Security browser script · MIT License · https://pyrmi.com
+/*! Pyrmi Security browser script · Apache-2.0 · https://pyrmi.com
  *
  *   <script src="https://pyrmi.com/sdk/pyrmi.js" data-site="pk_..."></script>
  *
@@ -25,7 +25,7 @@
   var O = Object, FP = Function.prototype;
   var callFn = FP.call, bindFn = FP.bind, nativeToString = FP.toString;
   var run = bindFn.call(callFn, callFn);
-  var gopd = O.getOwnPropertyDescriptor, gpo = O.getPrototypeOf, freeze = O.freeze, isFrozen = O.isFrozen, defineProp = O.defineProperty;
+  var gopd = O.getOwnPropertyDescriptor, gpo = O.getPrototypeOf, freeze = O.freeze, isFrozen = O.isFrozen, defineProp = O.defineProperty, hasOwn = O.prototype.hasOwnProperty;
   // Whatever already sits at window.Pyrmi. The script used to skip itself whenever window.Pyrmi.version existed, so a
   // fake planted before it loaded switched it off. It's checked properly further down, once a trusted toString exists.
   var prior = null;
@@ -112,18 +112,21 @@
       if (frame.style) frame.style.display = 'none';
       if (frame.setAttribute) frame.setAttribute('aria-hidden', 'true');
       host.appendChild(frame);
-      var iw = frame.contentWindow;
-      if (iw && iw !== w && iw.Function && iw.Function !== w.Function) {
-        var iStr = iw.Function.prototype.toString, base = [];
-        for (var bi = 0; bi < WATCH.length; bi++) {
-          var bl = null;
-          try { bl = locate(iw, WATCH[bi][1]); } catch (_) { bl = null; }
-          base.push(bl ? { sig: bl.sig, str: bl.fn ? run(iStr, bl.fn) : null } : null);
+      try {
+        var iw = frame.contentWindow;
+        if (iw && iw !== w && iw.Function && iw.Function !== w.Function) {
+          var iStr = iw.Function.prototype.toString, base = [];
+          for (var bi = 0; bi < WATCH.length; bi++) {
+            var bl = null;
+            try { bl = locate(iw, WATCH[bi][1]); } catch (_) { bl = null; }
+            base.push(bl ? { sig: bl.sig, str: bl.fn ? run(iStr, bl.fn) : null } : null);
+          }
+          var inav = iw.navigator || {};
+          fresh = { toStr: iStr, base: base, wd: inav.webdriver === true, ua: String(inav.userAgent || '') };
         }
-        var inav = iw.navigator || {};
-        fresh = { toStr: iStr, base: base, wd: inav.webdriver === true, ua: String(inav.userAgent || '') };
+      } finally {
+        try { host.removeChild(frame); } catch (_) { /* already detached */ }
       }
-      host.removeChild(frame);
     }
   } catch (_) { fresh = null; }
 
@@ -191,7 +194,7 @@
 
   function tampered(i) {
     var e = WATCH[i], now = locate(w, e[1]), was = loaded[i], b = fresh ? fresh.base[i] : null;
-    if (!now) return !!was; // deleted since load
+    if (!now) return !!(was || b); // deleted since load, or before load when a clean copy has it
     if (was && (now.fn !== was.fn || now.sig !== was.sig || now.base !== was.base)) return true; // replaced since load
     if (b && now.sig !== b.sig) return true; // lives somewhere a clean copy doesn't (e.g. an own property shadowing it)
     if (!now.fn) return false;
@@ -271,15 +274,17 @@
       if (inp.win.length > 25) { inp.ih++; inp.win = []; } // 25+ distinct presses in one second
     }
   }
-  ['keydown', 'pointerdown', 'mousedown', 'touchstart', 'click'].forEach(function (t) {
-    try { run(listenW, w, t, onInput, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
-  });
+  var INP_EVENTS = ['keydown', 'pointerdown', 'mousedown', 'touchstart', 'click'];
+  for (var ei = 0; ei < INP_EVENTS.length; ei++) {
+    try { run(listenW, w, INP_EVENTS[ei], onInput, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
+  }
   // The other halves of presses and clicks: scripted ones count as synthetic too (a bot that only fakes keyup or
   // pointerup used to go unseen). Form events (input, change) are left alone: password managers fire those by script.
   function onOther(e) { if (!e.isTrusted) inp.ut++; else inputSeen++; }
-  ['keyup', 'keypress', 'pointerup', 'mouseup', 'touchend', 'dblclick', 'contextmenu', 'wheel'].forEach(function (t) {
-    try { run(listenW, w, t, onOther, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
-  });
+  var OTH_EVENTS = ['keyup', 'keypress', 'pointerup', 'mouseup', 'touchend', 'dblclick', 'contextmenu', 'wheel'];
+  for (var oi = 0; oi < OTH_EVENTS.length; oi++) {
+    try { run(listenW, w, OTH_EVENTS[oi], onOther, { capture: true, passive: true }); } catch (_) { /* no input stats then */ }
+  }
   try { run(listenD, d, 'visibilitychange', function () { if (d.hidden) inp.h++; }); } catch (_) { /* ignore */ }
 
   // ---- session + beacons ----
@@ -321,19 +326,53 @@
   // arrived exactly as the page built it: a value rewritten on the wire (a proxy, a debugger's Fetch interception) or a
   // token lifted out of a request and replayed with other fields fails. It does not stop code running in this page from
   // asking for a signature on whatever it likes; that is what the server's own limits are for.
-  // The signed form is JSON with sorted keys at every level (canon), the same one the server rebuilds from the JSON it
-  // received, and the timestamp is on the server's clock (the offset learned at start), so a wrong device clock is fine.
-  function canon(v) {
-    var i, out = [], keys;
+  // The signed form is JSON with sorted keys at every level (canon), matching the server's own checks (no unsafe
+  // integers >= 2^53, -0, NaN/Infinity, __proto__ keys, depth > 64 or canonical length > 8192).
+  var MAX_SAFE = 9007199254740991;
+  function checkNum(v) {
+    if (v !== v || v === 1 / 0 || v === -1 / 0 || (v === 0 && 1 / v < 0) || (v % 1 === 0 && (v > MAX_SAFE || v < -MAX_SAFE))) {
+      throw new Error('Pyrmi: number cannot be signed exactly');
+    }
+  }
+  function checkSignable(v, dep, dropRootPyrmi) {
+    if (dep > 64) throw new Error('Pyrmi: action is nested too deep');
+    if (typeof v === 'number') { checkNum(v); return; }
+    if (typeof v === 'bigint') throw new Error('Pyrmi: number cannot be signed exactly');
+    var i, keys, k;
     if (isArray(v)) {
-      for (i = 0; i < v.length; i++) out.push(v[i] === undefined ? 'null' : canon(v[i]));
+      for (i = 0; i < v.length; i++) checkSignable(v[i], dep + 1, false);
+      return;
+    }
+    if (v && typeof v === 'object') {
+      if (run(hasOwn, v, '__proto__')) throw new Error('Pyrmi: "__proto__" is not allowed');
+      if (typeof v.toJSON === 'function') { checkSignable(v.toJSON(''), dep, false); return; }
+      keys = objKeys(v);
+      for (i = 0; i < keys.length; i++) {
+        k = keys[i];
+        if (dropRootPyrmi && dep === 0 && k === 'pyrmi') continue;
+        if (k === '__proto__') throw new Error('Pyrmi: "__proto__" is not allowed');
+        if (v[k] !== undefined && typeof v[k] !== 'function') checkSignable(v[k], dep + 1, false);
+      }
+    }
+  }
+  function canon(v, depth) {
+    var dep = depth || 0, i, out = [], keys, k;
+    if (dep > 64) throw new Error('Pyrmi: action is nested too deep');
+    if (isArray(v)) {
+      for (i = 0; i < v.length; i++) out.push(v[i] === undefined ? 'null' : canon(v[i], dep + 1));
       return '[' + out.join(',') + ']';
     }
     if (v && typeof v === 'object') {
+      if (run(hasOwn, v, '__proto__')) throw new Error('Pyrmi: "__proto__" is not allowed');
       keys = objKeys(v).sort();
-      for (i = 0; i < keys.length; i++) if (v[keys[i]] !== undefined) out.push(stringify(keys[i]) + ':' + canon(v[keys[i]]));
+      for (i = 0; i < keys.length; i++) {
+        k = keys[i];
+        if (k === '__proto__') throw new Error('Pyrmi: "__proto__" is not allowed');
+        if (v[k] !== undefined) out.push(stringify(k) + ':' + canon(v[k], dep + 1));
+      }
       return '{' + out.join(',') + '}';
     }
+    if (typeof v === 'number') checkNum(v);
     var j = stringify(v);
     return j === undefined ? 'null' : j;
   }
@@ -348,17 +387,25 @@
     for (var ui = 0; ui < u.length; ui++) str += run(fromCC, String, u[ui]);
     return run(btoaFn, w, str).replace(new RegExp('[+]', 'g'), '-').replace(new RegExp('/', 'g'), '_').replace(new RegExp('=+$'), '');
   }
-  // The action as the server will see it: plain JSON (a Date becomes its string, undefined goes away).
-  function plainObject(fields) {
-    var plain = parse(stringify(fields === undefined ? {} : fields));
+  // Validates the action before JSON round-trip (catching -0, NaN/Infinity, unsafe ints, __proto__ and deep nesting)
+  // and computes its bounded canonical string.
+  function prepareFields(fields, forSeal) {
+    var raw = fields === undefined ? {} : fields;
+    if (!raw || typeof raw !== 'object' || isArray(raw)) throw new Error('Pyrmi: sign an object, like { score: 42 }');
+    checkSignable(raw, 0, forSeal);
+    var plain = parse(stringify(raw));
     if (!plain || typeof plain !== 'object' || isArray(plain)) throw new Error('Pyrmi: sign an object, like { score: 42 }');
-    return plain;
+    if (forSeal) delete plain.pyrmi;
+    else if (run(hasOwn, plain, 'pyrmi') || 'pyrmi' in plain) throw new Error('Pyrmi: "pyrmi" is reserved for the signature');
+    var c = canon(plain, 0);
+    if (c.length > 8192) throw new Error('Pyrmi: action is too large to sign');
+    return { plain: plain, canon: c };
   }
-  function signPlain(plain) {
+  function signPlain(prep) {
     if (!session || !session.rk) return Promise.reject(new Error('Pyrmi: call start() before signing'));
     if (!subtle || !importKeyFn || !signFn || !TE || !U8) return Promise.reject(new Error('Pyrmi: signing needs a secure (https) page'));
     var s = session, ts = Math.round(wallNow() + skew);
-    var msg = 'pyrmi.req.v1\n' + s.session + '\n' + ts + '\n' + canon(plain);
+    var msg = 'pyrmi.req.v1\n' + s.session + '\n' + ts + '\n' + prep.canon;
     return run(importKeyFn, subtle, 'raw', fromB64u(s.rk), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
       .then(function (key) { return run(signFn, subtle, 'HMAC', key, run(encodeFn, new TE(), msg)); })
       .then(function (mac) { return { token: s.token, ts: ts, sig: toB64u(mac) }; });
@@ -367,7 +414,7 @@
   // beacon protocol: 3 (what the beacons carry; scripts/build-sdk.js reads this. Bump it when the server starts
   // needing something older builds don't send.)
   var api = {
-    version: '1.4.0',
+    version: '1.4.1',
     config: cfg,
     // Starts a new session (on page load, or when a protected flow begins). Resolves to { token, seed, session, expiresAt }.
     start: function (opts) {
@@ -397,15 +444,14 @@
     // Signs an action for this session: resolves to { token, ts, sig } over exactly these fields. Send all three with
     // the fields, and have your server pass them to Pyrmi (pyrmi-server does it from a sealed body). Most pages want seal().
     sign: function (fields) {
-      try { var plain = plainObject(fields); if ('pyrmi' in plain) throw new Error('Pyrmi: "pyrmi" is reserved for the signature'); return signPlain(plain); } catch (e) { return Promise.reject(e); }
+      try { return signPlain(prepareFields(fields, false)); } catch (e) { return Promise.reject(e); }
     },
     // Seals an action: resolves to a copy of it with pyrmi: { token, ts, sig } added. POST that as JSON to your server
     // as it is; if anything in it changes on the way, the verdict is reject (bad_signature).
     seal: function (fields) {
       try {
-        var plain = plainObject(fields);
-        delete plain.pyrmi;
-        return signPlain(plain).then(function (p) { plain.pyrmi = p; return plain; });
+        var prep = prepareFields(fields, true);
+        return signPlain(prep).then(function (p) { prep.plain.pyrmi = p; return prep.plain; });
       } catch (e) { return Promise.reject(e); }
     },
     // What this script has noticed so far, for showing players what's being checked.

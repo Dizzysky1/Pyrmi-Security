@@ -30,11 +30,59 @@ const PUNCT = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '=>', '=
   '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<', '>>', '**'];
 const REGEX_AFTER = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', '&&', '||',
   '==', '===', '!=', '!==', '=>', 'return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw']);
+const ESCAPES = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', '\\': '\\', "'": "'", '"': '"', '/': '/' };
 
 function fnv(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return ('0000000' + h.toString(16)).slice(-8);
+}
+
+// Safe static unescaper for single- and double-quoted strict-mode JS string literals (no eval / Function).
+function unescapeString(raw, at) {
+  const q = raw[0];
+  if (raw.length < 2 || (q !== '"' && q !== "'") || raw[raw.length - 1] !== q) {
+    throw new Error('build-sdk: malformed string at ' + at);
+  }
+  let out = '';
+  for (let i = 1; i < raw.length - 1; i++) {
+    const ch = raw[i];
+    if (ch === '\n' || ch === '\r') throw new Error('build-sdk: unterminated string at ' + at);
+    if (ch !== '\\') { out += ch; continue; }
+    i++;
+    if (i >= raw.length - 1) throw new Error('build-sdk: unterminated escape at ' + at);
+    const esc = raw[i];
+    if (Object.prototype.hasOwnProperty.call(ESCAPES, esc)) { out += ESCAPES[esc]; continue; }
+    if (esc === '0') {
+      if (/\d/.test(raw[i + 1] || '')) throw new Error('build-sdk: octal escape at ' + at);
+      out += '\0'; continue;
+    }
+    if (esc >= '1' && esc <= '9') throw new Error('build-sdk: octal escape at ' + at);
+    if (esc === 'x') {
+      const hex = raw.slice(i + 1, i + 3);
+      if (!/^[\da-fA-F]{2}$/.test(hex)) throw new Error('build-sdk: bad \\x escape at ' + at);
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 2; continue;
+    }
+    if (esc === 'u') {
+      if (raw[i + 1] === '{') {
+        const close = raw.indexOf('}', i + 2);
+        const hex = close > 0 ? raw.slice(i + 2, close) : '';
+        if (!/^[\da-fA-F]{1,6}$/.test(hex)) throw new Error('build-sdk: bad \\u{} escape at ' + at);
+        const cp = parseInt(hex, 16);
+        if (cp > 0x10ffff) throw new Error('build-sdk: code point out of range at ' + at);
+        out += String.fromCodePoint(cp);
+        i = close; continue;
+      }
+      const hex = raw.slice(i + 1, i + 5);
+      if (!/^[\da-fA-F]{4}$/.test(hex)) throw new Error('build-sdk: bad \\u escape at ' + at);
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 4; continue;
+    }
+    if (esc === '\n' || esc === '\r') throw new Error('build-sdk: line continuation in string at ' + at);
+    out += esc;
+  }
+  return out;
 }
 
 function tokenize(src) {
@@ -46,13 +94,13 @@ function tokenize(src) {
     let m;
     if ((m = /^\s+/.exec(rest))) { out.push({ t: 'ws', v: m[0] }); i += m[0].length; continue; }
     if (rest.startsWith('//')) { const e = src.indexOf('\n', i); const v = src.slice(i, e < 0 ? src.length : e); out.push({ t: 'com', v }); i += v.length; continue; }
-    if (rest.startsWith('/*')) { const e = src.indexOf('*/', i + 2); const v = src.slice(i, e + 2); out.push({ t: 'com', v }); i += v.length; continue; }
+    if (rest.startsWith('/*')) { const e = src.indexOf('*/', i + 2); if (e < 0) throw new Error('build-sdk: unterminated comment at ' + i); const v = src.slice(i, e + 2); out.push({ t: 'com', v }); i += v.length; continue; }
     if (c === '`') throw new Error('build-sdk: template literals are not supported');
     if (c === '"' || c === "'") {
       let j = i + 1;
-      while (src[j] !== c) { if (src[j] === '\\') j++; if (src[j] === '\n' || j >= src.length) throw new Error('build-sdk: unterminated string at ' + i); j++; }
+      while (src[j] !== c) { if (src[j] === '\\') j++; if (src[j] === '\n' || src[j] === '\r' || j >= src.length) throw new Error('build-sdk: unterminated string at ' + i); j++; }
       const raw = src.slice(i, j + 1);
-      out.push({ t: 'str', v: raw, s: Function('"use strict";return ' + raw)() });
+      out.push({ t: 'str', v: raw, s: unescapeString(raw, i) });
       i = j + 1; continue;
     }
     if ((m = /^(0[xX][\da-fA-F]+|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?)/.exec(rest)) && !/^\.[^\d]/.test(rest)) { out.push({ t: 'num', v: m[0] }); i += m[0].length; continue; }
@@ -91,8 +139,6 @@ function build(source) {
   const start = source.indexOf('(function pyrmiMain');
   // The license line follows the version: 1.4.0 and earlier were published under MIT, and their bytes are pinned by
   // SRI hashes on customers' pages, so they stay exactly as built. Later versions ship under Apache 2.0.
-  // (src/sdk/pyrmi.js's own header still says MIT for the same reason: the build is seeded from the whole source, so
-  // editing it would change 1.4.0's bytes. Change it with the next version bump.)
   const ver = /version:\s*'([\d.]+)'/.exec(source)[1];
   const lic = ver.split('.').map(Number).reduce((a, n) => a * 1000 + n, 0) > 1004000 ? 'Apache-2.0' : 'MIT License';
   const banner = '/*! Pyrmi Security browser script v' + ver + ' - ' + lic + ' - https://pyrmi.com - built from src/sdk/pyrmi.js */';
@@ -164,13 +210,16 @@ function build(source) {
     }
     out.push(t.v);
   }
-  // after "use strict";, decode the table: base64, then XOR with a build key
+  // after "use strict";, decode the table: plain indexed for loops using w.atob and w.String.fromCharCode so prototype
+  // overrides on Array.prototype.map / String.prototype.split cannot crash start-up.
   const key = crypto.createHash('sha256').update('pyrmi-sdk:' + source).digest('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 13);
   for (const s of table) if (/[^\x00-\x7f]/.test(s)) throw new Error('build-sdk: non-ASCII string in source: ' + s);
   const enc = table.map((s) => Buffer.from([...s].map((ch, i) => ch.charCodeAt(0) ^ key.charCodeAt(i % key.length))).toString('base64'));
-  const [a, b, c, e, k] = [fresh(), fresh(), fresh(), fresh(), fresh()];
-  const decoder = 'var ' + TABLE + '=(function(' + k + ',' + a + '){return ' + a + '.map(function(' + b + '){var ' + c + '=atob(' + b + '),' + e + "='';" +
-    'for(var i=0;i<' + c + '.length;i++)' + e + '+=String.fromCharCode(' + c + '.charCodeAt(i)^' + k + '.charCodeAt(i%' + k + '.length));return ' + e + ';});})(' +
+  const [a, c, e, k, r, j, m] = [fresh(), fresh(), fresh(), fresh(), fresh(), fresh(), fresh()];
+  const decoder = 'var ' + TABLE + '=(function(' + k + ',' + a + '){var ' + r + '=[],' + j + '=0,' + c + ',' + e + ',' + m + ';' +
+    'for(;' + j + '<' + a + '.length;' + j + '++){' + c + '=' + WIN + '.atob(' + a + '[' + j + ']);' + e + "='';" +
+    'for(' + m + '=0;' + m + '<' + c + '.length;' + m + '++)' + e + '+=' + WIN + '.String.fromCharCode(' + c + '.charCodeAt(' + m + ')^' + k + '.charCodeAt(' + m + '%' + k + '.length));' +
+    r + '[' + j + ']=' + e + ';}return ' + r + ';})(' +
     JSON.stringify(key) + ',' + JSON.stringify(enc) + ');';
   const strictAt = out.indexOf("'use strict'");
   out.splice(strictAt + 2, 0, decoder); // after 'use strict' and its ;
@@ -186,10 +235,10 @@ function build(source) {
 }
 
 // Every place that tells someone which script to load. scripts/build-sdk.js rewrites them to the current versioned
-// file with its integrity hash, and --check fails if one is behind. (src/sdk/pyrmi.js is left alone: changing its
-// comment would change the build.)
+// file with its integrity hash, and --check fails if one is behind.
 const SNIPPETS = ['index.html', 'install.md', 'docs/index.html', 'dashboard/index.html'];
 const TAG = /src="((?:https:\/\/pyrmi\.com)?)\/sdk\/(?:\d+\.\d+\.\d+\/)?pyrmi\.js"(?: integrity="[^"]*" crossorigin="anonymous")?/g;
+const SPEC_VER = /(<dt>Browser script<\/dt><dd class="num">)\d+\.\d+\.\d+(, pinned with SRI<\/dd>)/;
 const APP = path.join(ROOT, 'dashboard/app.js');
 const APP_LINE = /var SDK_PATH = '[^']*', SDK_SRI = '[^']*';/;
 
@@ -199,8 +248,10 @@ function sri(file) { return 'sha384-' + crypto.createHash('sha384').update(file)
 function snippets(version, integrity) {
   const out = {};
   for (const rel of SNIPPETS) {
-    const p = path.join(ROOT, rel), cur = fs.readFileSync(p, 'utf8');
-    out[p] = cur.replace(TAG, (m, host) => 'src="' + host + '/sdk/' + version + '/pyrmi.js" integrity="' + integrity + '" crossorigin="anonymous"');
+    const p = path.join(ROOT, rel);
+    let cur = fs.readFileSync(p, 'utf8').replace(TAG, (m, host) => 'src="' + host + '/sdk/' + version + '/pyrmi.js" integrity="' + integrity + '" crossorigin="anonymous"');
+    if (rel === 'index.html') cur = cur.replace(SPEC_VER, '$1' + version + '$2');
+    out[p] = cur;
   }
   const app = fs.readFileSync(APP, 'utf8');
   out[APP] = app.replace(APP_LINE, "var SDK_PATH = '/sdk/" + version + "/pyrmi.js', SDK_SRI = '" + integrity + "';");
@@ -262,4 +313,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { build, fnv, tokenize };
+module.exports = { build, fnv, tokenize, unescapeString };

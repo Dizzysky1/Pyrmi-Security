@@ -97,9 +97,16 @@ export interface PyrmiOptions {
   failOpen?: boolean;
   /**
    * Proxies in front of this server that write X-Forwarded-For, so req's address is read from the right entry. 0 (the
-   * default) ignores the header and uses the socket address. On Vercel, Netlify or behind Cloudflare, use 1.
+   * default) ignores the header and uses the socket address. Use 1 on Vercel or Netlify alone, and 2 when Cloudflare
+   * sits in front of Vercel or an ALB/reverse proxy. In a Cloudflare Worker directly, use trustedIpHeader instead.
    */
   trustProxyHops?: number;
+  /**
+   * Single-IP header overwritten by your edge runtime when there is no intermediate proxy hop, e.g. 'cf-connecting-ip'
+   * directly inside a Cloudflare Worker. Do not set this when Cloudflare forwards to another origin without stripping
+   * the header on direct origin hits; use trustProxyHops (e.g. 2 for Cloudflare -> Vercel/ALB) there instead.
+   */
+  trustedIpHeader?: string;
   /** Your Cloudflare Turnstile widget's secret key, sent with verify()'s turnstile and used by verifyTurnstile(). Defaults to TURNSTILE_SECRET_KEY. */
   turnstileSecret?: string;
   /** The biggest replay (as JSON, in bytes) simulate is given. Larger ones are a mismatch without being run. Default 65536. */
@@ -135,4 +142,7 @@ export declare class Pyrmi {
  * verifyTurnstile() result as the second argument to require Turnstile to have passed too.
  */
 export declare function trusted(v: VerifyResult | null | undefined, turnstile?: TurnstileResult | null): boolean;
+export declare function clientOf(req: VerifyInput['req'], hops?: number | { trustProxyHops?: number; trustedIpHeader?: string }, trustedIpHeader?: string): ClientContext;
+export declare function sessionOf(token: string | null | undefined): { seed: number | null; session: string | null };
+export declare const TRUST_ALLOWS: Set<string>;
 export default Pyrmi;

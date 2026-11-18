@@ -8,39 +8,41 @@
 <link rel="canonical" href="https://pyrmi.com/docs/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<meta name="theme-color" content="#07070c">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/site.css">
-<style>
-  .doc{max-width:820px;margin:30px 0 0;padding:6px 30px 30px;border-radius:22px}
-  @media(max-width:560px){.doc{padding:4px 18px 22px}}
-  .doc h1{font-family:var(--display);font-weight:700;font-size:34px;margin:22px 0 8px;letter-spacing:-.02em}
-  .doc h2{font-family:var(--display);font-weight:500;font-size:21px;margin:38px 0 10px;letter-spacing:-.01em}
-  .doc p,.doc li{color:#d6d3f0;line-height:1.65}
-  .doc .code{margin:14px 0}
-  .doc table{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0}
-  .doc th,.doc td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-  .doc th{color:var(--muted);font-weight:500}
-  .toc{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:14px;margin:14px 0 6px}
-  .note{border:1px dashed rgba(255,225,77,.35);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:14px;line-height:1.55}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css?v=4">
 </head>
 <body>
-<div id="bg-fallback" class="quiet"></div>
-<canvas id="gl" data-mode="quiet" aria-hidden="true"></canvas>
-<div class="veil"></div>
-<div class="wrap">
-  <header class="top">
+<header class="top">
+  <div class="wrap bar">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
-    <nav><a href="/#demo">sandbox</a><a href="/docs/">docs</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
-  </header>
+    <nav aria-label="Main"><a href="/#demo">Sandbox</a><a href="/docs/">Docs</a><a href="/dashboard/" class="nav-cta">Dashboard</a></nav>
+  </div>
+</header>
 
-  <main class="doc glass">
+<div class="wrap doc-layout">
+  <nav class="toc" aria-label="On this page">
+    <span class="label">On this page</span>
+    <a href="#start">Quick start</a>
+    <a href="#client">Browser script</a>
+    <a href="#server">Server check</a>
+    <a href="#verdicts">Verdicts and reasons</a>
+    <a href="#settings">Settings</a>
+    <a href="#values">Values and clocks</a>
+    <a href="#replay">Replay check</a>
+    <a href="#agents">AI agents</a>
+    <a href="#accounts">Accounts</a>
+    <a href="#self-host">Self-hosting</a>
+    <a href="#dogfood">pyrmi.com itself</a>
+    <a href="#limits">Limits</a>
+  </nav>
+
+  <main class="doc">
+    <p class="label">Documentation</p>
     <h1>Docs</h1>
-    <p>Pyrmi Security checks requests from your site in two halves. A browser script starts a signed session on a real page load and reports signs of bots and tampering. Your server then asks Pyrmi for a verdict before it trusts the request: a sign-up, a login, a vote, a checkout, a score, or any endpoint that bots and scrapers hit. You need both halves: the browser half alone protects nothing, because whoever runs the browser controls it.</p>
-    <div class="toc"><a href="#start">quick start</a><a href="#client">browser script</a><a href="#server">server check</a><a href="#verdicts">verdicts</a><a href="#settings">settings</a><a href="#values">values and clocks</a><a href="#replay">replay check</a><a href="#agents">ai agents</a><a href="#self-host">self-hosting</a><a href="#dogfood">pyrmi.com itself</a><a href="#limits">limits</a></div>
+    <p class="intro">Pyrmi Security checks requests from your site in two halves. A browser script starts a signed session on a real page load and reports signs of bots and tampering. Your server then asks Pyrmi for a verdict before it trusts the request: a sign-up, a login, a vote, a checkout, a score, or any endpoint that bots and scrapers hit. You need both halves: the browser half alone protects nothing, because whoever runs the browser controls it.</p>
 
     <h2 id="start">Quick start</h2>
     <ol>
@@ -50,69 +52,69 @@
     </ol>
 
     <h2 id="client">Browser script</h2>
-    <div class="code"><div class="code-h">html <button class="copy" data-copy="d1">copy</button></div>
-<pre id="d1">&lt;script src="https://pyrmi.com/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;</pre></div>
-    <table>
-      <tr><th>call</th><th>when</th></tr>
+    <div class="code"><div class="code-h"><span>html</span><button class="copy" type="button" data-copy="d1">copy</button></div>
+<pre id="d1">&lt;script src="https://pyrmi.com/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;</pre></div>
+    <div class="tbl-wrap"><table class="tbl-doc">
+      <tr><th>Call</th><th>When</th></tr>
       <tr><td><code>await Pyrmi.start()</code></td><td>On page load, or when a flow you protect begins. Returns <code>{ token, seed, session, expiresAt }</code>. Each token is good for one verify, so call it again after each protected request.</td></tr>
       <tr><td><code>await Pyrmi.flush()</code></td><td>Right before you send the protected request. Sends the latest telemetry.</td></tr>
       <tr><td><code>await Pyrmi.seal(fields)</code></td><td>Seals the action you're about to send: returns a copy of <code>fields</code> with <code>pyrmi: { token, ts, sig }</code> added. POST it as JSON, unchanged. Anything changed on the way is a reject (<code>bad_signature</code>).</td></tr>
       <tr><td><code>Pyrmi.mark(seconds)</code></td><td>Optional, for apps with their own clock (a game, a timed quiz). Lets the server catch speed and slow-motion hacks.</td></tr>
       <tr><td><code>Pyrmi.report()</code></td><td>What the script has noticed so far, if you want to show it.</td></tr>
-    </table>
+    </table></div>
     <p>Send the sealed body to your server (or, the older way, just <code>token</code>). The script watches for webdriver and headless browsers, bot frameworks, scripted input events, inhumanly fast or even typing and clicking, replaced built-ins like <code>fetch</code> and <code>performance.now</code> (compared by identity and against a clean copy, so <code>.bind()</code> and <code>Proxy</code> wrappers don't pass as native), a page clock that doesn't match real time, and probably-open devtools. It sends this as small beacons every 10 seconds while the tab is visible. A fake <code>window.Pyrmi</code> planted before it loads is replaced and reported, and input stopped before it reaches the script is caught through the browser's own activation flag.</p>
     <p>The script you load is a minified build and it reports a fingerprint of its own code, so an edited copy shows up as <code>tampered_runtime</code>. This telemetry is <strong>advisory</strong>: it can only raise risk, and it can never prove a request is human, because anything the script sends an attacker running a real browser can send too. The server checks each beacon against what it saw itself (the page that sent it, the browser's own request headers, the page clock against its own, a per-session nonce), so hand-written beacons come back as <code>unverified_client</code> and the verdict's <code>client</code> field says whether the telemetry was <code>corroborated</code>. That raises the cost of faking; it doesn't make a fake impossible: a script that copies everything the real one sends, or a person in their own browser running an edited copy, can still come back <code>corroborated</code>. The real protection is the server-side verdict — the signed, single-use session token, the duration and score limits, and the rate limits — none of which depend on the browser cooperating. Set <code>maxScore</code>, <code>maxScorePerSec</code> and <code>minDurationMs</code> for anything that matters, and treat <code>risk</code> as a reason to flag or review, not as proof. The readable source is <code>src/sdk/pyrmi.js</code> in the repo.</p>
 
     <h2 id="server">Server check</h2>
-    <div class="code"><div class="code-h">node · npm install pyrmi-server <button class="copy" data-copy="d2">copy</button></div>
+    <div class="code"><div class="code-h"><span>node · npm install pyrmi-server</span><button class="copy" type="button" data-copy="d2">copy</button></div>
 <pre id="d2">const { Pyrmi } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
-// req.body is what the page sent from Pyrmi.seal(); req lets Pyrmi check it came from the same browser
-const v = await pyrmi.verify({ sealed: req.body, req }); // user: your signed-in user's id, never from req.body
+<span class="c">// req.body is what the page sent from Pyrmi.seal(); req lets Pyrmi check it came from the same browser</span>
+const v = await pyrmi.verify({ sealed: req.body, req }); <span class="c">// user: your signed-in user's id, never from req.body</span>
 if (v.verdict === 'reject') return res.status(403).json({ error: 'blocked' });
 createAccount(email, { flagged: v.verdict === 'review' });
 
-// For anything that matters (a payout, a prize, a leaderboard entry), only a corroborated accept
-// (const { trusted } = require('pyrmi-server')):
+<span class="c">// For anything that matters (a payout, a prize, a leaderboard entry), only a corroborated accept</span>
+<span class="c">// (const { trusted } = require('pyrmi-server')):</span>
 if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></div>
     <p><code>trusted(v)</code> is true only when the verdict is <code>accept</code>, its <code>client</code> is <code>corroborated</code>, the browser saw a real key press or click with some input counted on the page, the action was sealed and sent from the browser and network that started the session, if the site turned on <code>requireHumanCheck</code> (an option, off by default), a Cloudflare Turnstile pass was confirmed for that session (render the widget with <code>cData</code> set to the session id from <code>Pyrmi.start()</code>, seal its token as <code>turnstile</code>, and give <code>new Pyrmi()</code> your <code>turnstileSecret</code>; see <a href="/install.md">install.md</a>), and every reason is a harmless one (<code>wrapped_runtime</code>, <code>devtools_open</code>, <code>ip_changed</code>, <code>idle_input</code>). The server decides it, so raising your thresholds never makes a tampered or automated session trusted. A <code>review</code> never counts. It still isn't proof of a person: a clean real browser fully driven by automation can pass, sealing and all, so keep your own limits as well, and for a deterministic game re-run the inputs with <code>simulate</code>.</p>
     <p><code>user</code> (or <code>player</code>) is only a label for the dashboard: Pyrmi can't check who anyone is. Set it on your server from your own signed-in user, never from the request body, which the player writes; otherwise a cheater can file their runs under someone else's name, or a fresh one each time. The dashboard's events and players are a recent, capped view, not an audit log, so keep the verdict with your own record of the action.</p>
     <p>You can also check a <a href="https://developers.cloudflare.com/turnstile/">Cloudflare Turnstile</a> token yourself, for a form with no Pyrmi session or as a second check: <code>const t = await pyrmi.verifyTurnstile(token, { action: 'payout', hostname: 'example.com' })</code>, then <code>trusted(v, t)</code>. It reads <code>TURNSTILE_SECRET_KEY</code>, checks the action and hostname, and fails closed if Cloudflare can't be reached. Telemetry, Turnstile and server-side replay together are the strongest setup.</p>
     <p>Not on Node? It's one HTTPS call from your server:</p>
-    <div class="code"><div class="code-h">any language <button class="copy" data-copy="d3">copy</button></div>
+    <div class="code"><div class="code-h"><span>any language</span><button class="copy" type="button" data-copy="d3">copy</button></div>
 <pre id="d3">curl https://pyrmi.com/api/v1/verify \
   -H "Authorization: Bearer $PYRMI_SECRET_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"token":"<pyrmi.token>","user":"<your signed-in user id>",
-       "request":{"fields":{...the sealed body without pyrmi...},"ts":<pyrmi.ts>,"sig":"<pyrmi.sig>"},
-       "client":{"ua":"<User-Agent>","ch":"<Sec-CH-UA>","sfs":"<Sec-Fetch-Site>","ip":"<visitor address>"}}'</pre></div>
+  -d '{"token":"&lt;pyrmi.token&gt;","user":"&lt;your signed-in user id&gt;",
+       "request":{"fields":{...the sealed body without pyrmi...},"ts":&lt;pyrmi.ts&gt;,"sig":"&lt;pyrmi.sig&gt;"},
+       "client":{"ua":"&lt;User-Agent&gt;","ch":"&lt;Sec-CH-UA&gt;","sfs":"&lt;Sec-Fetch-Site&gt;","ip":"&lt;visitor address&gt;"}}'</pre></div>
     <p>Send <code>fields</code> exactly as your server parsed them. A server that reads numbers exactly (Python, Go, Java) should keep sealed whole numbers below 2<sup>53</sup>: Pyrmi refuses bigger ones, since it can't check them exactly.</p>
     <p>If Pyrmi can't be reached, <code>pyrmi-server</code> rejects by default. Pass <code>failOpen: true</code> to let requests through unverified instead.</p>
 
     <h2 id="verdicts">Verdicts and reasons</h2>
-    <p>Each verify returns <b>accept</b>, <b>review</b> (let through, flagged on the dashboard) or <b>reject</b>, plus a risk from 0 to 100. Hard reasons reject on their own. Soft signals add up.</p>
-    <table>
-      <tr><th>reason</th><th>effect</th><th>meaning</th></tr>
-      <tr><td><code>invalid_token</code></td><td>reject</td><td>Token missing, forged or edited.</td></tr>
-      <tr><td><code>token_reused</code></td><td>reject</td><td>The same session was already used once: a replayed request.</td></tr>
-      <tr><td><code>expired</code> / <code>wrong_project</code></td><td>reject</td><td>Old token, or one from another project.</td></tr>
-      <tr><td><code>too_short</code></td><td>reject</td><td>Sent sooner after page load than your minimum.</td></tr>
-      <tr><td><code>impossible_time</code></td><td>reject</td><td>Claims more time than its session has existed.</td></tr>
-      <tr><td><code>score_over_max</code> / <code>score_too_fast</code></td><td>reject</td><td>The value sent breaks a limit you set.</td></tr>
-      <tr><td><code>replay_mismatch</code></td><td>reject</td><td>Replaying the recorded inputs gave a different result.</td></tr>
-      <tr><td><code>rate_limited</code></td><td>reject</td><td>Too many checks for one user in a minute.</td></tr>
-      <tr><td><code>automation</code></td><td>+70</td><td>Webdriver, headless or a bot framework. Real visitors never have these, so this alone rejects at the default settings.</td></tr>
-      <tr><td><code>no_client</code></td><td>+40</td><td>No telemetry ever came from a real page: a direct API call or a scraper.</td></tr>
-      <tr><td><code>unverified_client</code></td><td>+40</td><td>The telemetry doesn't hold up against what the server saw itself: wrong page or missing browser headers, a page clock out of step with the server's or missing, counters going backwards, a beacon from another session, or a copy of the script older than the current build. Hand-written beacons land here.</td></tr>
-      <tr><td><code>synthetic_input</code></td><td>+40</td><td>Input events created by script.</td></tr>
-      <tr><td><code>speed_hack</code> / <code>time_warp</code></td><td>+35</td><td>Page or app clock out of step with real time.</td></tr>
-      <tr><td><code>tampered_runtime</code></td><td>+40</td><td>Built-in functions replaced: the clocks, <code>Math.random</code>, <code>call</code>/<code>apply</code>/<code>bind</code> or the <code>navigator</code> getters, input hidden from the script, a fake <code>window.Pyrmi</code>, or an edited, outdated or missing copy of the script.</td></tr>
-      <tr><td><code>wrapped_runtime</code></td><td>+5</td><td>Timers, <code>fetch</code>, XHR, event listeners or <code>toString</code> were wrapped. Error trackers and frameworks (Sentry, Angular) do this on ordinary sites, so it adds little risk.</td></tr>
-      <tr><td><code>inhuman_input</code></td><td>+25</td><td>Input too fast or too regular for a hand.</td></tr>
-      <tr><td><code>ua_changed</code> / <code>idle_input</code></td><td>+20 / +15</td><td>Browser changed mid-session / long session with almost no input.</td></tr>
-      <tr><td><code>devtools_open</code> / <code>ip_changed</code></td><td>+10</td><td>Weak hints, worth a look only alongside others.</td></tr>
-    </table>
+    <p>Each verify returns <span class="chip accept">accept</span>, <span class="chip review">review</span> (let through, flagged on the dashboard) or <span class="chip reject">reject</span>, plus a risk from 0 to 100. Hard reasons reject on their own. Soft signals add up. <code>trusted(v)</code> is a separate, stricter yes: <span class="chip trusted">trusted</span>.</p>
+    <div class="tbl-wrap"><table class="tbl-doc">
+      <tr><th>Reason</th><th>Effect</th><th>Meaning</th></tr>
+      <tr><td><code>invalid_token</code></td><td class="eff reject">reject</td><td>Token missing, forged or edited.</td></tr>
+      <tr><td><code>token_reused</code></td><td class="eff reject">reject</td><td>The same session was already used once: a replayed request.</td></tr>
+      <tr><td><code>expired</code> / <code>wrong_project</code></td><td class="eff reject">reject</td><td>Old token, or one from another project.</td></tr>
+      <tr><td><code>too_short</code></td><td class="eff reject">reject</td><td>Sent sooner after page load than your minimum.</td></tr>
+      <tr><td><code>impossible_time</code></td><td class="eff reject">reject</td><td>Claims more time than its session has existed.</td></tr>
+      <tr><td><code>score_over_max</code> / <code>score_too_fast</code></td><td class="eff reject">reject</td><td>The value sent breaks a limit you set.</td></tr>
+      <tr><td><code>replay_mismatch</code></td><td class="eff reject">reject</td><td>Replaying the recorded inputs gave a different result.</td></tr>
+      <tr><td><code>rate_limited</code></td><td class="eff reject">reject</td><td>Too many checks for one user in a minute.</td></tr>
+      <tr><td><code>automation</code></td><td class="eff">+70</td><td>Webdriver, headless or a bot framework. Real visitors never have these, so this alone rejects at the default settings.</td></tr>
+      <tr><td><code>no_client</code></td><td class="eff">+40</td><td>No telemetry ever came from a real page: a direct API call or a scraper.</td></tr>
+      <tr><td><code>unverified_client</code></td><td class="eff">+40</td><td>The telemetry doesn't hold up against what the server saw itself: wrong page or missing browser headers, a page clock out of step with the server's or missing, counters going backwards, a beacon from another session, or a copy of the script older than the current build. Hand-written beacons land here.</td></tr>
+      <tr><td><code>synthetic_input</code></td><td class="eff">+40</td><td>Input events created by script.</td></tr>
+      <tr><td><code>speed_hack</code> / <code>time_warp</code></td><td class="eff">+35</td><td>Page or app clock out of step with real time.</td></tr>
+      <tr><td><code>tampered_runtime</code></td><td class="eff">+40</td><td>Built-in functions replaced: the clocks, <code>Math.random</code>, <code>call</code>/<code>apply</code>/<code>bind</code> or the <code>navigator</code> getters, input hidden from the script, a fake <code>window.Pyrmi</code>, or an edited, outdated or missing copy of the script.</td></tr>
+      <tr><td><code>wrapped_runtime</code></td><td class="eff">+5</td><td>Timers, <code>fetch</code>, XHR, event listeners or <code>toString</code> were wrapped. Error trackers and frameworks (Sentry, Angular) do this on ordinary sites, so it adds little risk.</td></tr>
+      <tr><td><code>inhuman_input</code></td><td class="eff">+25</td><td>Input too fast or too regular for a hand.</td></tr>
+      <tr><td><code>ua_changed</code> / <code>idle_input</code></td><td class="eff">+20 / +15</td><td>Browser changed mid-session / long session with almost no input.</td></tr>
+      <tr><td><code>devtools_open</code> / <code>ip_changed</code></td><td class="eff">+10</td><td>Weak hints, worth a look only alongside others.</td></tr>
+    </table></div>
 
     <h2 id="settings">Settings</h2>
     <p>On the dashboard: the risk levels for flagging (default 40) and rejecting (default 70), the shortest time from page load to a request, the pages allowed to start sessions, and the value limits below. You can also make a new secret key there if yours leaks.</p>
@@ -122,10 +124,10 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
 
     <h2 id="replay">Replay check (deterministic apps)</h2>
     <p>If your app is deterministic, meaning the same seed and the same inputs always give the same result, record the inputs and seal them with the action. Seed your RNG with the <code>seed</code> that <code>Pyrmi.start()</code> answers so nobody can rehearse in advance. On the server, pass a <code>simulate</code> function that re-runs it with the session's own seed, which pyrmi-server hands to <code>simulate</code> once Pyrmi has confirmed the session. Never take the seed from the request body: the player writes that. Replays over <code>maxReplayBytes</code> (64 KB by default) aren't run, and <code>simulate</code> should cap its own work too.</p>
-    <div class="code"><div class="code-h">node</div>
+    <div class="code"><div class="code-h"><span>node</span></div>
 <pre>const v = await pyrmi.verify({
   sealed: req.body, req, user: req.user.id, replay: req.body.inputs,
-  simulate: (inputs, { seed }) => runApp(seed, inputs),   // returns { score, durationMs }
+  simulate: (inputs, { seed }) =&gt; runApp(seed, inputs),   <span class="c">// returns { score, durationMs }</span>
 });</pre></div>
     <p>A memory edit or a typed-in result won't reproduce, so the verdict is <code>reject</code> with <code>replay_mismatch</code>.</p>
 
@@ -136,7 +138,12 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
     <p>Sign in on the <a href="/dashboard/">dashboard</a> with a code sent to your email, or with GitHub or Google, to keep all your sites in one place. One email is one account, whichever way you sign in. Each site gets its own keys and a setup guide, and the guide turns green once your page has started a session and your server has checked one. Nobody else can see or change your sites. A project made with keys only can be moved into your account with its secret key. Self-hosters switch each way in on with its own env vars (<code>SMTP_HOST</code>, <code>SMTP_USER</code> and <code>SMTP_PASS</code> for any mailbox, or <code>RESEND_API_KEY</code>; <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>); the README has the steps.</p>
 
     <h2 id="self-host">Self-hosting</h2>
-    <p>Everything is Apache 2.0 (keep the NOTICE file with your copy), so you can run your own copy: deploy the repo to Vercel, add a free Upstash Redis from Vercel's Storage tab (it sets <code>KV_REST_API_URL</code> and <code>KV_REST_API_TOKEN</code>), and set <code>PYRMI_SECRET</code> to a long random string. Then point the script at it with <code>data-api="https://your-deploy/api/v1"</code> and <code>pyrmi-server</code> with <code>endpoint</code>. For local work: <code>PYRMI_KV=memory node scripts/dev.js</code>.</p>
+    <p>Everything is Apache 2.0 (keep the NOTICE file with your copy), so you can run your own copy on Cloudflare Workers or Vercel, with a free Upstash Redis for storage. Set <code>KV_REST_API_URL</code> and <code>KV_REST_API_TOKEN</code> (on Vercel, adding Upstash from the Storage tab fills both in), and set <code>PYRMI_SECRET</code> to a long random string.</p>
+    <ul>
+      <li><b>Vercel:</b> deploy the repo; the static files and the functions in <code>api/</code> need no config.</li>
+      <li><b>Cloudflare Workers:</b> <code>npm run deploy</code> stages the static files and runs <code>wrangler deploy</code>; upload the same variables as secrets with <code>wrangler secret bulk</code> (<code>.dev.vars.example</code> lists them).</li>
+    </ul>
+    <p>Then point the script at it with <code>data-api="https://your-deploy/api/v1"</code> and <code>pyrmi-server</code> with <code>endpoint</code>. For local work: <code>PYRMI_KV=memory node scripts/dev.js</code>.</p>
 
     <h2 id="dogfood">How pyrmi.com protects itself</h2>
     <p>The dashboard's "new project" form sends a Pyrmi token, and the API only creates the project on a clean accept. With Turnstile keys set, sign-in codes, new projects and sites, and claiming, rotating or deleting a site also need Cloudflare's human check, checked on the server and accepted once. You can watch what it catches on <a href="/dashboard/?demo=site">pyrmi.com's own dashboard</a>. Every endpoint is also rate limited per network, and wrong secret keys are capped per network.</p>
@@ -144,9 +151,14 @@ if (!trusted(v)) return res.status(403).json({ error: 'not_verified' });</pre></
     <h2 id="limits">Limits, honestly</h2>
     <div class="note">Pyrmi can't block devtools or stop code running in a visitor's browser, and nothing can: the visitor owns that browser. A determined attacker can hide most browser signals. What they can't fake is a signed, single-use session from a real page load, timing that fits the real time it took, and, for deterministic apps, inputs that reproduce the result. Treat browser signals as evidence, and let your server's verdict be the gate.</div>
   </main>
-  <footer>Pyrmi Security · open source, Apache 2.0 · <a href="/">home</a> · <a href="/dashboard/">dashboard</a></footer>
 </div>
-<script src="/site.js"></script>
-<script type="module" src="/bg/singularity.js?v=2"></script>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>Pyrmi Security · open source, Apache 2.0</span>
+    <nav aria-label="Footer"><a href="/">Home</a><a href="/blog/what-a-browser-cant-prove/">Blog</a><a href="/dashboard/">Dashboard</a><a href="/install.md">Install guide</a></nav>
+  </div>
+</footer>
+<script src="/site.js?v=4"></script>
 </body>
 </html>

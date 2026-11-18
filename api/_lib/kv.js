@@ -23,7 +23,7 @@ function useMemory() { return process.env.PYRMI_KV === 'memory'; }
 // PYRMI_KV=memory). Every command used in this project takes its key as the first argument.
 function prefix() {
   if (process.env.PYRMI_KV_PREFIX !== undefined) return process.env.PYRMI_KV_PREFIX;
-  const env = process.env.VERCEL_ENV;
+  const env = process.env.PYRMI_ENV || process.env.VERCEL_ENV;
   return env === 'production' ? 'live:' : env ? env + ':' : '';
 }
 function ready() { return useMemory() || !!creds(); }
@@ -84,6 +84,10 @@ const mem = {
   ensure(k, make) { let v = this.get(k); if (v === undefined) { v = make(); this.data.set(k, v); } return v; },
   zsorted(z) { return [...z.entries()].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)); },
   run(c) {
+    if (this.exp.size > 5000) {
+      const now = Date.now();
+      for (const [ek, until] of this.exp) if (until <= now) { this.data.delete(ek); this.exp.delete(ek); }
+    }
     const op = c[0].toUpperCase(), k = c[1];
     switch (op) {
       case 'GET': { const v = this.get(k); return v === undefined ? null : v; }

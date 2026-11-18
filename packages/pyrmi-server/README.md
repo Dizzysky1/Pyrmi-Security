@@ -40,8 +40,9 @@ reasons. `trusted(v)` is true only for an `accept` with a `corroborated` client,
 browser, a sealed action from the same browser and network, a Turnstile pass for the session if the site turned on
 `requireHumanCheck` (below), and no reason
 other than `wrapped_runtime`, `devtools_open`, `ip_changed` or `idle_input`; the server sets
-it as `v.trusted`, so it doesn't loosen when the site's thresholds are raised (an older server falls back to the same
-allow-list here). Browser telemetry is advisory, so a
+it as `v.trusted`, so it doesn't loosen when the site's thresholds are raised (`trusted(v)` fails closed: if `v.trusted`
+isn't `true`, or Pyrmi couldn't be reached under `failOpen`, or a reason outside that allow-list is present, it returns
+`false`). Browser telemetry is advisory, so a
 script that copies the real one closely enough can still pass; keep your own limits too. The
 browser half is one script tag; see the [docs](https://pyrmi.com/docs/).
 
@@ -80,10 +81,11 @@ Runs on Node 18+ and on runtimes without Node's globals (Cloudflare Workers, Den
 `secretKey` (and `turnstileSecret`, `endpoint`) as options if the runtime has no `process.env`, and pass `req` as the
 Fetch API `Request` or `client: { ua, ch, sfs, ip }` yourself.
 
-Options: `secretKey` (or `PYRMI_SECRET_KEY`), `endpoint` (for self-hosting), `timeoutMs`, `failOpen` (only `true`
-turns it on; it covers Pyrmi being unreachable, never an answer it gave), `trustProxyHops` (X-Forwarded-For is
-ignored unless set; `1` on Vercel, Netlify or Cloudflare), `turnstileSecret` (or `TURNSTILE_SECRET_KEY`),
-`turnstileEndpoint`.
+Options: `secretKey` (or `PYRMI_SECRET_KEY`), `endpoint` (for self-hosting; `https://`, or `http://` on localhost),
+`timeoutMs`, `failOpen` (only `true` turns it on; it covers Pyrmi being unreachable, never an answer it gave or a local
+refusal), `trustProxyHops` (`X-Forwarded-For` is ignored unless set: `1` on Vercel or Netlify alone, `2` for Cloudflare
+in front of Vercel or an ALB/nginx), `trustedIpHeader` (e.g. `'cf-connecting-ip'` when running directly inside a
+Cloudflare Worker), `turnstileSecret` (or `TURNSTILE_SECRET_KEY`), `turnstileEndpoint`, `maxReplayBytes`.
 
 A sealed `score` is checked against the project's caps even when you pass none; a value under another name, pass as
 `score:`.

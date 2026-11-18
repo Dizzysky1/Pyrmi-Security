@@ -1,0 +1,14 @@
+{
+  "name": "pyrmi-site",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-cf.js",
+    "dev": "node scripts/build-cf.js && wrangler dev",
+    "deploy": "node scripts/build-cf.js && wrangler deploy",
+    "cf-typegen": "wrangler types",
+    "test": "node scripts/check-no-python.js && node scripts/build-sdk.js --check && node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.164.0"
+  }
+}

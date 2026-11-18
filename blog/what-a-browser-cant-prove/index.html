@@ -13,36 +13,25 @@
 <meta property="og:type" content="article">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<meta name="theme-color" content="#07070c">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/site.css">
-<style>
-  .doc{max-width:760px;margin:30px 0 0;padding:6px 30px 30px;border-radius:22px}
-  @media(max-width:560px){.doc{padding:4px 18px 22px}}
-  .doc h1{font-family:var(--display);font-weight:700;font-size:32px;margin:22px 0 8px;letter-spacing:-.02em;line-height:1.2}
-  .doc h2{font-family:var(--display);font-weight:500;font-size:21px;margin:38px 0 10px;letter-spacing:-.01em}
-  .doc p,.doc li{color:#d6d3f0;line-height:1.7}
-  .doc li{margin:4px 0}
-  .doc .code{margin:14px 0}
-  .byline{color:var(--muted);font-size:14px;margin:0 0 18px}
-  .note{border:1px dashed rgba(255,225,77,.35);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:14px;line-height:1.55}
-</style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css?v=4">
 </head>
 <body>
-<div id="bg-fallback" class="quiet"></div>
-<canvas id="gl" data-mode="quiet" aria-hidden="true"></canvas>
-<div class="veil"></div>
-<div class="wrap">
-  <header class="top">
+<header class="top">
+  <div class="wrap bar">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
-    <nav><a href="/#demo">sandbox</a><a href="/docs/">docs</a><a href="/dashboard/" class="nav-cta">dashboard</a></nav>
-  </header>
+    <nav aria-label="Main"><a href="/#demo">Sandbox</a><a href="/docs/">Docs</a><a href="/dashboard/" class="nav-cta">Dashboard</a></nav>
+  </div>
+</header>
 
-  <main class="doc glass">
+<div class="wrap">
+  <main class="post">
+    <p class="label kicker">Blog · Threat model</p>
     <h1>What a browser can't prove: building an open-source bot and tamper check</h1>
-    <p class="byline">Dizzysky1 · November 2026</p>
+    <p class="byline"><span>Dizzysky1</span><span>November 2026</span></p>
 
     <p>Pyrmi Security is open-source (Apache 2.0) bot and tamper detection for your site: one script tag in the page and three lines on your server. It catches bots, scrapers, replayed requests and tampered pages before your server trusts a sign-up, a login, a vote, a checkout, a coupon code or a score.</p>
     <p>The thing I kept running into is that a lot of bot and tamper protection for the web promises something it can't deliver. Whoever owns the browser can switch off any check that runs in it. You can't block devtools, and you can't stop code from running. So Pyrmi is built around a different idea: the browser collects evidence, and your server makes the call.</p>
@@ -56,13 +45,13 @@
       <li><strong>Ask for a verdict.</strong> Your server calls <code>pyrmi.verify()</code> and gets back accept, review or reject, a risk score from 0 to 100, and the reasons.</li>
       <li><strong>Watch the dashboard.</strong> Every verdict, which checks fired, and which users keep getting flagged.</li>
     </ol>
-    <div class="code"><div class="code-h">in your page <button class="copy" data-copy="b1">copy</button></div>
-<pre id="b1">const s = await Pyrmi.start();                // on page load
-await Pyrmi.flush();                          // right before the protected request
-const body = await Pyrmi.seal({ email });     // signed: changed on the way = rejected
+    <div class="code"><div class="code-h"><span>in your page</span><button class="copy" type="button" data-copy="b1">copy</button></div>
+<pre id="b1">const s = await Pyrmi.start();                <span class="c">// on page load</span>
+await Pyrmi.flush();                          <span class="c">// right before the protected request</span>
+const body = await Pyrmi.seal({ email });     <span class="c">// signed: changed on the way = rejected</span>
 await fetch('/signup', { method: 'POST',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });</pre></div>
-    <div class="code"><div class="code-h">on your server · npm install pyrmi-server <button class="copy" data-copy="b2">copy</button></div>
+    <div class="code"><div class="code-h"><span>on your server · npm install pyrmi-server</span><button class="copy" type="button" data-copy="b2">copy</button></div>
 <pre id="b2">const { Pyrmi } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 const v = await pyrmi.verify({ sealed: req.body, req });
@@ -99,7 +88,7 @@ if (v.verdict === 'reject') return res.status(403).end();</pre></div>
     <p>The <a href="/#demo">homepage sandbox</a> stands in for a form on your site. You can send an action normally, replay it, edit its token, send an impossible value, change it on the wire, or skip the page and call the API directly, and see the verdict your server would get. You can also open devtools and paste <code>performance.now = () =&gt; 0</code> into the console. Everything you do shows up on the <a href="/dashboard/?demo=1">public sandbox dashboard</a>.</p>
 
     <h2>Setting it up</h2>
-    <p>It's free to use on pyrmi.com while it's in early access, or you can self-host it on Vercel with a free Upstash Redis. There are no dependencies, just Node 18+. If you use Claude Code, Cursor or another coding agent, there's an <a href="/install.md">install guide written for agents</a>: paste one prompt and it wires up the script tag and the server check. For high-value actions like payouts there's an optional switch that also requires a Cloudflare Turnstile pass.</p>
+    <p>It's free to use on pyrmi.com while it's in early access, or you can self-host it on Cloudflare Workers or Vercel with a free Upstash Redis. There are no dependencies, just Node 18+. If you use Claude Code, Cursor or another coding agent, there's an <a href="/install.md">install guide written for agents</a>: paste one prompt and it wires up the script tag and the server check. For high-value actions like payouts there's an optional switch that also requires a Cloudflare Turnstile pass.</p>
 
     <h2>What I'd love feedback on</h2>
     <ul>
@@ -109,9 +98,14 @@ if (v.verdict === 'reject') return res.status(403).end();</pre></div>
     </ul>
     <p class="note">The source is on <a href="https://github.com/Dizzysky1/Pyrmi-Security">GitHub</a>, and issues and pull requests are welcome. The full threat model is in the README and the <a href="/docs/#limits">docs</a>.</p>
   </main>
-  <footer>Pyrmi Security · open source, Apache 2.0 · <a href="/">home</a> · <a href="/docs/">docs</a> · <a href="/dashboard/">dashboard</a></footer>
 </div>
-<script src="/site.js"></script>
-<script type="module" src="/bg/singularity.js?v=2"></script>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>Pyrmi Security · open source, Apache 2.0</span>
+    <nav aria-label="Footer"><a href="/">Home</a><a href="/docs/">Docs</a><a href="/dashboard/">Dashboard</a><a href="/install.md">Install guide</a></nav>
+  </div>
+</footer>
+<script src="/site.js?v=4"></script>
 </body>
 </html>

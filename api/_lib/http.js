@@ -21,20 +21,26 @@ function fail(res, status, code, message, headers) {
 // so read the raw stream when needed and enforce a size cap either way.
 async function readJson(req, max) {
   max = max || MAX_BODY;
+  const cl = req && req.headers ? Number(req.headers['content-length']) : NaN;
+  if (Number.isFinite(cl) && cl > max) throw httpError(413, 'body_too_large');
   let raw;
   try { raw = req.body; } catch (_) { throw httpError(400, 'bad_json'); } // Vercel's body getter throws on bad JSON
   if (raw && typeof raw === 'object' && !Buffer.isBuffer(raw)) {
-    if (JSON.stringify(raw).length > max) throw httpError(413, 'body_too_large');
-    return raw;
+    if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > max) throw httpError(413, 'body_too_large');
+    return !Array.isArray(raw) ? raw : {};
   }
   if (raw === undefined || raw === null) {
     const chunks = []; let size = 0;
-    for await (const ch of req) { size += ch.length; if (size > max) throw httpError(413, 'body_too_large'); chunks.push(ch); }
+    for await (const ch of req) {
+      const b = Buffer.isBuffer(ch) ? ch : Buffer.from(String(ch));
+      size += b.length; if (size > max) throw httpError(413, 'body_too_large');
+      chunks.push(b);
+    }
     raw = Buffer.concat(chunks).toString('utf8');
   } else if (Buffer.isBuffer(raw)) raw = raw.toString('utf8');
-  if (raw.length > max) throw httpError(413, 'body_too_large');
+  if (raw.length > max || Buffer.byteLength(raw, 'utf8') > max) throw httpError(413, 'body_too_large');
   if (!raw.trim()) return {};
-  try { const v = JSON.parse(raw); return v && typeof v === 'object' ? v : {}; } catch (_) { throw httpError(400, 'bad_json'); }
+  try { const v = JSON.parse(raw); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch (_) { throw httpError(400, 'bad_json'); }
 }
 
 function httpError(status, code, message) { const e = new Error(message || code); e.status = status; e.code = code; return e; }
@@ -60,6 +66,14 @@ function clientIp(req) {
 function bearer(req) {
   const h = String(req.headers.authorization || '');
   return h.toLowerCase().startsWith('bearer ') ? h.slice(7).trim() : '';
+}
+
+// This deployment's own host. X-Forwarded-Host is only read on Vercel, whose edge writes it itself; anywhere else a
+// caller can type it, so the request's own Host is used.
+function ownHost(req) {
+  const headers = (req && req.headers) || {};
+  const fwd = process.env.VERCEL_ENV ? String(headers['x-forwarded-host'] || '').split(',')[0].trim() : '';
+  return fwd || String(headers.host || '');
 }
 
 // Browsers send Origin on every POST and Sec-Fetch-Site on every request; server-side HTTP clients
@@ -101,4 +115,4 @@ function handle(fn) {
   };
 }
 
-module.exports = { send, fail, readJson, httpError, clientIp, bearer, fromBrowser, cors, handle };
+module.exports = { send, fail, readJson, httpError, clientIp, ownHost, bearer, fromBrowser, cors, handle };

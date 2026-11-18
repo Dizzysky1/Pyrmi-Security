@@ -38,8 +38,8 @@ module.exports = handle(async (req, res) => {
     const body = await readJson(req, 4096);
     if (q.get('action') === 'start') {
       await core.limitIp(ip, 'emailcode', 600, 'PYRMI_EMAIL_CODES_PER_IP', 10, 'Too many sign-in codes from your network. Try again in a few minutes.');
-      await turnstile.check(body.turnstileToken, ip, 'signin', req.headers.host);
-      await core.guardSite(body.pyrmiToken, ip);
+      await turnstile.check(body.turnstileToken, ip, 'signin', accounts.ownHost(req));
+      await core.guardSite(body.pyrmiToken, ip, req);
       // The code belongs to this browser (round 12): it gets a random id in a cookie, and only a verify with the same
       // cookie can try the code. A browser that signed in before also sends its device mark (see accounts.js).
       const ck = accounts.readCookies(req);
