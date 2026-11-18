@@ -15,24 +15,32 @@ function config(env) {
   return { host: env.SMTP_HOST, port, user: env.SMTP_USER, pass: env.SMTP_PASS };
 }
 
+const MAX_SMTP_BUF = 64 * 1024;
+const MAX_SMTP_LINES = 100;
+
 // Reads SMTP replies (multi-line "250-..." until "250 ...") from whichever socket is current.
 function replies(sock) {
   let buf = '', waiting = null, ended = null;
   const queue = [];
+  const onEnd = (e) => { if (ended) return; ended = e || new Error('smtp_closed'); if (waiting) { const w = waiting; waiting = null; w.reject(ended); } };
+  const abort = (code) => { const err = new Error(code); onEnd(err); sock.destroy(err); };
   const onData = (d) => {
+    if (ended) return;
     buf += d.toString('utf8');
+    if (buf.length > MAX_SMTP_BUF) return abort('smtp_reply_too_large');
     let m;
     while ((m = /^(\d{3})([ -])(.*)\r?\n/m.exec(buf)) && m.index === 0) {
       buf = buf.slice(m[0].length);
-      (queue.lines = queue.lines || []).push(m[3]);
+      const lines = (queue.lines = queue.lines || []);
+      lines.push(m[3]);
+      if (lines.length > MAX_SMTP_LINES) return abort('smtp_too_many_lines');
       if (m[2] === ' ') {
-        const r = { code: Number(m[1]), lines: queue.lines };
+        const r = { code: Number(m[1]), lines };
         queue.lines = null;
         if (waiting) { const w = waiting; waiting = null; w.resolve(r); } else queue.push(r);
       }
     }
   };
-  const onEnd = (e) => { ended = e || new Error('smtp_closed'); if (waiting) { const w = waiting; waiting = null; w.reject(ended); } };
   sock.on('data', onData); sock.on('error', onEnd); sock.on('close', () => onEnd());
   return {
     next() {
@@ -45,8 +53,12 @@ function replies(sock) {
 }
 
 const enc = (s) => '=?UTF-8?B?' + Buffer.from(s, 'utf8').toString('base64') + '?=';
-const addr = (s) => (/<([^<>\s]+)>/.exec(s) || [null, s.trim()])[1];
-const noCrlf = (s) => String(s).replace(/[\r\n]+/g, ' ');
+const addr = (s) => {
+  const first = String(s || '').split(/[\r\n]/)[0].replace(/[\u0000-\u001f\u007f]+/g, '').trim();
+  const m = /^[^<>]*<([^<>\s]+)>\s*$/.exec(first);
+  return m ? m[1] : first.replace(/[<>\s]+/g, '');
+};
+const noCrlf = (s) => String(s).replace(/[\r\n\u0000-\u001f\u007f]+/g, ' ');
 
 function build(msg, from) {
   const boundary = 'pyrmi-' + crypto.randomBytes(9).toString('hex');
@@ -128,7 +140,7 @@ async function send(msg, opts) {
     await r.next().catch(() => {});
   } finally {
     clearTimeout(timer);
-    sock.end();
+    sock.destroy();
   }
 }
 

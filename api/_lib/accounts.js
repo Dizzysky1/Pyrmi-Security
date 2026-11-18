@@ -94,8 +94,9 @@ function cookie(name, value, maxAge) {
 // ---- one account per verified email -----------------------------------------------------------------------------
 
 function cleanEmail(v) {
-  const e = (typeof v === 'string' ? v : '').trim().toLowerCase(); // a non-string (an object with no toString) threw a 500
-  return e.length <= 254 && /^[^\s@<>()",;:\\]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e) ? e : null;
+  if (typeof v !== 'string' || /[\u0000-\u001f\u007f]/.test(v)) return null;
+  const e = v.trim().toLowerCase(); // a non-string (an object with no toString) threw a 500
+  return e.length <= 254 && /^[^\s\u0000-\u001f\u007f@<>()",;:\\]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e) ? e : null;
 }
 
 async function signIn(email, name, via) {
@@ -164,12 +165,15 @@ async function emailStart(body, ip, mailer, opts) {
   // other, so the cap doesn't tell anyone which addresses have accounts, but no mail is sent; the dashboard says to
   // use GitHub or Google if a code doesn't come. Crossing 80% of either cap is logged (see core.nearLimit).
   const known = Number(await kv.cmd('EXISTS', 'ps:ue:' + ah)) > 0;
+  const busy = () => { const e = httpError(429, 'rate_limited', 'Email sign-in is busy right now. Try again later or use another sign-in method.'); e.retryAfter = 3600; return e; };
+  const knownCap = intEnv('PYRMI_EMAIL_KNOWN_PER_DAY', 5000);
   if (known) {
-    const n = await core.hit('ps:rl:emailknown:' + day, 2 * 86400), cap = intEnv('PYRMI_EMAIL_KNOWN_PER_DAY', 5000);
-    await core.nearLimit('email-known', n, cap, day);
+    const n = await core.hit('ps:rl:emailknown:' + day, 2 * 86400);
+    await core.nearLimit('email-known', n, knownCap, day);
     // A browser that signed in to this account before still gets its code past the cap.
-    if (n > cap && !device) { const e = httpError(429, 'rate_limited', 'Email sign-in is busy right now. Try again later or use another sign-in method.'); e.retryAfter = 3600; throw e; }
+    if (n > knownCap && !device) throw busy();
   } else {
+    if (num(await kv.cmd('GET', 'ps:rl:emailknown:' + day)) >= knownCap) throw busy();
     const hour = new Date().toISOString().slice(0, 13).replace(/\D/g, '');
     const [d, h] = await Promise.all([core.hit('ps:rl:emailstart:' + day, 2 * 86400), core.hit('ps:rl:emailnew:' + hour, 7200)]);
     const dayCap = intEnv('PYRMI_EMAIL_STARTS_PER_DAY', 500), hourCap = intEnv('PYRMI_EMAIL_NEW_PER_HOUR', 100);
@@ -204,7 +208,7 @@ async function emailVerify(body, ip, opts) {
     if (Number(n) >= CODE_TRIES) await kv.cmd('DEL', key);
     throw wrong;
   }
-  await kv.cmd('DEL', key);
+  if (Number(await kv.cmd('DEL', key)) !== 1) throw wrong;
   return signIn(email, email, 'email');
 }
 
@@ -385,11 +389,10 @@ function checkCsrf(req) {
 }
 
 async function signOut(req) {
-  const sid = readCookies(req)[SESSION_COOKIE];
+  const sid = sessionSid(req);
   if (sid) {
     const sidh = C.sha256(sid);
-    const uid = await kv.cmd('GET', 'ps:auth:' + sidh);
-    await kv.cmd('DEL', 'ps:auth:' + sidh);
+    const [uid] = await kv.pipeline([['GET', 'ps:auth:' + sidh], ['DEL', 'ps:auth:' + sidh]]);
     if (uid) await kv.cmd('ZREM', 'ps:usess:' + uid, sidh); // keep the per-user index in step (Q4/Q10)
   }
   return cookie(SESSION_COOKIE, '', 0);
@@ -442,10 +445,12 @@ async function createSite(uid, body, ip) {
 // owner holds one.
 // keepKey: true skips that, for an owner who knows no one else has the key and can't redeploy right away.
 async function claimSite(uid, sk, opts) {
-  const found = await core.projectBySecretKey(sk);
+  const found = await core.projectForKey(sk, (opts && opts.ip) || '0.0.0.0');
   if (!found || found.demo) throw httpError(404, 'not_found', 'No project has that secret key.');
-  if (found.owner && found.owner !== uid) throw httpError(409, 'owned', 'That project already belongs to another account.');
-  if (num(await kv.cmd('ZCARD', 'ps:us:' + uid)) >= intEnv('PYRMI_SITES_PER_USER', MAX_SITES)) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
+  if (found.owner === uid) return { pid: found.pid, name: found.name, publicKey: found.publicKey };
+  if (found.owner) throw httpError(409, 'owned', 'That project already belongs to another account.');
+  const usKey = 'ps:us:' + uid, cap = intEnv('PYRMI_SITES_PER_USER', MAX_SITES);
+  if (num(await kv.cmd('ZCARD', usKey)) >= cap) throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
   // The whole claim runs under the project's key lock, the same one a rotation takes, and checks the key again there,
   // so a claim either completes with a key only the new owner has, or changes nothing.
   return core.withKeyLock(found.pid, async () => {
@@ -459,7 +464,11 @@ async function claimSite(uid, sk, opts) {
       if (current && current.owner === uid) return { pid: p.pid, name: p.name, publicKey: p.publicKey }; // already ours (idempotent)
       throw httpError(409, 'owned', 'That project already belongs to another account.');
     }
-    await kv.cmd('ZADD', 'ps:us:' + uid, Date.now(), p.pid);
+    await kv.cmd('ZADD', usKey, Date.now(), p.pid);
+    if (num(await kv.cmd('ZCARD', usKey)) > cap) {
+      await kv.pipeline([['ZREM', usKey, p.pid], ['HDEL', 'ps:p:' + p.pid, 'owner']]);
+      throw httpError(403, 'too_many_sites', 'You have the most sites an account can have. Delete one first.');
+    }
     // It now belongs to an account, so it stops counting against the key-only project cap.
     if (Number(await kv.cmd('HDEL', 'ps:p:' + p.pid, 'anon')) > 0) await core.releaseAnon();
     const secretKey = opts && opts.keepKey === true ? undefined : await core.rotateLocked(p, sk);
@@ -476,14 +485,16 @@ async function ownedSite(uid, pid) {
 }
 
 async function deleteSite(uid, p) {
-  await core.deleteProject(p);
-  await kv.cmd('ZREM', 'ps:us:' + uid, p.pid);
+  await core.withKeyLock(p.pid, async () => {
+    await core.deleteProject(p);
+    await kv.cmd('ZREM', 'ps:us:' + uid, p.pid);
+  });
 }
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 module.exports = {
-  baseUrl, providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
+  ownHost, baseUrl, providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
   readIdToken, cleanEmail, sendMail, currentUser, requireUser, sessionSid, checkCsrf, signOut, revokeAllSessions,
   listSites, createSite, claimSite, ownedSite, deleteSite, status, SESSION_COOKIE, STATE_COOKIE, EC_COOKIE, DEV_COOKIE, readCookies, cookie, CODE_TTL, RID_RE,
 };

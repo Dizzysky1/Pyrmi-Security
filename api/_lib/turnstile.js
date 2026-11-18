@@ -22,17 +22,32 @@ if (!configured() && (process.env.TURNSTILE_SITE_KEY || process.env.TURNSTILE_SE
   console.warn('pyrmi: only ' + (process.env.TURNSTILE_SITE_KEY ? 'TURNSTILE_SITE_KEY' : 'TURNSTILE_SECRET_KEY') + ' is set, so the Turnstile human check is OFF. Set both keys to turn it on.');
 }
 function siteKey() { return configured() ? process.env.TURNSTILE_SITE_KEY : null; }
+function cleanHost(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (s.startsWith('[')) {
+    const m = /^\[([^\]]+)\](?::\d+)?$/.exec(s);
+    return m ? m[1] : '';
+  }
+  return s.replace(/:\d+$/, '');
+}
 function hostnames(host) {
-  const set = String(process.env.TURNSTILE_HOSTNAMES || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  const set = String(process.env.TURNSTILE_HOSTNAMES || '').split(',').map((h) => cleanHost(h)).filter(Boolean);
   if (set.length) return set;
-  const h = String(host || '').toLowerCase().replace(/:\d+$/, '');
+  if (process.env.PYRMI_PUBLIC_URL) {
+    try {
+      const pub = cleanHost(new URL(process.env.PYRMI_PUBLIC_URL).hostname);
+      if (pub) return [pub];
+    } catch (_) { /* fall through */ }
+  }
+  const h = cleanHost(host);
   return h ? [h] : [];
 }
 
 const failed = (msg) => httpError(403, 'turnstile_failed', msg || 'The human check didn\'t pass. Try again.');
 
 // Checks a token from the page against Cloudflare. `action` is the name the page gave the widget for this form, and
-// Cloudflare's answer must carry exactly that action; `host` is the request's Host header (see TURNSTILE_HOSTNAMES).
+// Cloudflare's answer must carry exactly that action; `host` is this deployment's host (see TURNSTILE_HOSTNAMES).
 // Each token is accepted once: Cloudflare refuses a duplicate itself, and a hash of every accepted token is kept for
 // 10 minutes so a token can't be replayed here even if that ever changed. Returns null when Turnstile is off,
 // Cloudflare's answer when it passed; throws otherwise.
@@ -51,7 +66,7 @@ async function check(token, ip, action, host) {
   if (!r || r.success !== true) throw failed();
   if (action && r.action !== action) throw failed('The human check was for a different form. Try again.');
   const allowed = hostnames(host);
-  if (allowed.length && !allowed.includes(String(r.hostname || '').toLowerCase())) throw failed('The human check came from a different site. Try again.');
+  if (!allowed.length || !allowed.includes(String(r.hostname || '').toLowerCase())) throw failed('The human check came from a different site. Try again.');
   const fresh = await kv.cmd('SET', 'ts:used:' + sha256(token), '1', 'NX', 'EX', TOKEN_TTL);
   if (!fresh) throw failed('That human check was already used. Try again.');
   return r;

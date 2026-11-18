@@ -7,6 +7,7 @@
 // POST  /api/v1/project?action=rotate  Bearer sk_...            -> new secret key (old one stops working)
 // DELETE /api/v1/project  Bearer sk_...                           -> deletes a key-only project (one not in an account)
 const core = require('../_lib/core');
+const accounts = require('../_lib/accounts');
 const turnstile = require('../_lib/turnstile');
 const { send, fail, readJson, bearer, clientIp, handle, httpError } = require('../_lib/http');
 
@@ -21,8 +22,8 @@ module.exports = handle(async (req, res) => {
     // A per-minute cap ahead of the human check and the site guard, so junk sign-ups can't run them freely (round 12).
     await core.limitIp(ip, 'projnew', 60, 'PYRMI_PROJECT_CREATES_PER_MIN', 10);
     const body = await readJson(req, 4096);
-    await turnstile.check(body.turnstileToken, ip, 'new-project', req.headers.host);
-    await core.guardSite(body.pyrmiToken, ip);
+    await turnstile.check(body.turnstileToken, ip, 'new-project', accounts.ownHost(req));
+    await core.guardSite(body.pyrmiToken, ip, req);
     const p = await core.createProject(body, ip);
     return send(res, 201, { ok: true, project: p });
   }

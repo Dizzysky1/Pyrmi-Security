@@ -109,18 +109,58 @@ function originPolicy() {
 }
 const mustHaveOrigins = (s) => originPolicy() === 'all' || (originPolicy() === 'new' && s.requireOrigins === true);
 
+function parseV4(str) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(str);
+  if (!m) return null;
+  const oct = [];
+  for (let i = 1; i <= 4; i++) {
+    const n = Number(m[i]);
+    if (n > 255) return null;
+    oct.push(n);
+  }
+  return oct.join('.');
+}
+
 // The network a request came from, for counting. An IPv4 address is its own network. An IPv6 host usually gets a
 // whole /64 and can pick any address in it, so per-address limits on IPv6 were per-request in practice: count the /64.
 function network(ip) {
-  const s = String(ip || '').trim().toLowerCase();
-  const v4 = s.match(/^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (v4) return v4[1];
-  if (!s.includes(':') || !/^[0-9a-f:]+$/.test(s) || (s.match(/::/g) || []).length > 1) return s;
-  const [head, tail] = s.includes('::') ? s.split('::') : [s, null];
-  const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
-  const groups = tail === null ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
-  if (groups.length !== 8) return s;
-  return groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':') + '::/64';
+  const raw = String(ip || '').trim().toLowerCase();
+  if (!raw) return '';
+  let s = raw;
+  const br = /^\[([^\]]+)\](?::\d{1,5})?$/.exec(s);
+  if (br) s = br[1];
+  const pct = s.indexOf('%');
+  if (pct >= 0) s = s.slice(0, pct);
+  const v4Port = /^(\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?$/.exec(s);
+  if (v4Port) {
+    const v4 = parseV4(v4Port[1]);
+    return v4 || raw;
+  }
+  if (!s.includes(':')) return raw;
+  let v6 = s;
+  const lastColon = v6.lastIndexOf(':');
+  if (v6.includes('.', lastColon)) {
+    const tail4 = parseV4(v6.slice(lastColon + 1));
+    if (!tail4) return raw;
+    const o = tail4.split('.').map(Number);
+    v6 = v6.slice(0, lastColon + 1) + ((o[0] << 8) | o[1]).toString(16) + ':' + ((o[2] << 8) | o[3]).toString(16);
+  }
+  if (!/^[0-9a-f:]+$/.test(v6) || (v6.match(/::/g) || []).length > 1) return raw;
+  let groups;
+  if (v6.includes('::')) {
+    const [head, tail] = v6.split('::');
+    const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
+    if (h.length + t.length > 7) return raw;
+    groups = [...h, ...Array(8 - h.length - t.length).fill('0'), ...t];
+  } else {
+    groups = v6.split(':');
+  }
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return raw;
+  const nums = groups.map((g) => parseInt(g, 16));
+  if (nums[0] === 0 && nums[1] === 0 && nums[2] === 0 && nums[3] === 0 && nums[4] === 0 && nums[5] === 0xffff) {
+    return [(nums[6] >> 8) & 0xff, nums[6] & 0xff, (nums[7] >> 8) & 0xff, nums[7] & 0xff].join('.');
+  }
+  return nums.slice(0, 4).map((n) => n.toString(16)).join(':') + '::/64';
 }
 const netFingerprint = (ip) => C.fingerprint('ip', network(ip));
 
@@ -168,11 +208,19 @@ async function limitPlan(ip, name, ttl, env, dflt, message) {
 // The right key always works: checking the cap first let anyone on a shared network (an office, a school, mobile
 // CGNAT) lock the real owner out with a few junk keys (A2-05). Keys are 180 bits, so the cap is about load, not
 // guessing.
+const badKeyMissOver = new Map();
 async function projectForKey(sk, ip) {
   const project = await projectBySecretKey(sk);
   if (project) return project;
-  const ipf = await netFingerprint(ip);
-  if (await bump('ps:rl:badkey:' + ipf, 900, intEnv('PYRMI_BAD_KEYS_PER_IP', 20))) throw httpError(429, 'rate_limited', 'Too many wrong secret keys from your network. Try again later.');
+  const now = Date.now(), key = 'ps:rl:badkey:' + (await netFingerprint(ip));
+  const rateErr = () => { const e = httpError(429, 'rate_limited', 'Too many wrong secret keys from your network. Try again later.'); e.retryAfter = 900; return e; };
+  if ((badKeyMissOver.get(key) || 0) > now) throw rateErr();
+  if (badKeyMissOver.size > 5000) for (const [k, until] of badKeyMissOver) if (until <= now) badKeyMissOver.delete(k);
+  if (badKeyMissOver.size > 5000) badKeyMissOver.clear();
+  if (await bump(key, 900, intEnv('PYRMI_BAD_KEYS_PER_IP', 20))) {
+    badKeyMissOver.set(key, now + 60000);
+    throw rateErr();
+  }
   return null;
 }
 
@@ -194,15 +242,47 @@ async function verifyKeyMiss(ip) {
   return overNet || overAll;
 }
 
+function siteAllowedOrigins(host) {
+  if (!inProduction() || !process.env.PYRMI_PUBLIC_URL) return [];
+  const out = [];
+  try { out.push(new URL(process.env.PYRMI_PUBLIC_URL).origin); } catch (_) { /* ignore */ }
+  const h = String(host || '').trim();
+  if (h) {
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(h);
+    const ho = (local ? 'http://' : 'https://') + h;
+    if (!out.includes(ho)) out.push(ho);
+    if (local && !out.includes('https://' + h)) out.push('https://' + h);
+  }
+  return out;
+}
+
 // pyrmi.com's own check on a request from one of its pages. Anything short of a clean accept is refused.
-async function guardSite(token, ip) {
+async function guardSite(token, ip, req) {
   if (String(process.env.PYRMI_SITE_GUARD || '').toLowerCase() === 'off') return null;
   // The label is shown on the public ?demo=site dashboard, so it changes every day: a fixed one let anyone follow a
   // network across days (and, with the secret, test which IPv4 address it was).
   const day = ymd(Date.now());
   const ipf = await C.fingerprint('ip-day', day + ':' + ip);
-  const v = await verify(await loadProject(SITE.pid), { token, player: 'net-' + ipf.slice(0, 8) }, { ip });
-  if (v.verdict === 'accept') return v;
+  const client = req && req.headers ? {
+    ua: String(req.headers['user-agent'] || ''),
+    ip: String(ip || ''),
+    ch: String(req.headers['sec-ch-ua'] || ''),
+    sfs: String(req.headers['sec-fetch-site'] || ''),
+  } : undefined;
+  const v = await verify(await loadProject(SITE.pid), { token, player: 'net-' + ipf.slice(0, 8), ...(client ? { client } : {}) }, { ip });
+  if (v.verdict === 'accept') {
+    if (!client) return v;
+    const hasRelay = v.reasons.some((r) => r.code === 'relayed_session');
+    const ipc = v.reasons.find((r) => r.code === 'ip_changed');
+    let ignoreLoopback = false;
+    if (ipc && !inProduction() && ipc.detail === 'at verify') {
+      const t = await readSession(token);
+      if (t && (t.ih === await C.fingerprint('ip', '127.0.0.1') || t.ih === await C.fingerprint('ip', '::ffff:127.0.0.1') || t.ih === await C.fingerprint('ip', '::1'))) {
+        ignoreLoopback = true;
+      }
+    }
+    if (!hasRelay && (!ipc || ignoreLoopback)) return v;
+  }
   const e = httpError(403, 'blocked_by_pyrmi', 'Pyrmi flagged this request: ' + v.reasons.map((r) => r.text).join(' '));
   e.reasons = v.reasons.map((r) => r.code);
   throw e;
@@ -301,7 +381,7 @@ function warnings(s, extra) {
 // never "corroborated": they can't pass the checks below, so a beacon from one is `unverified_client` (review by
 // default). After the grace period they count as tampered too.
 const SDK_GRACE_MS = () => intEnv('PYRMI_SDK_GRACE_DAYS', 1) * DAY * 1000;
-const inProduction = () => process.env.VERCEL_ENV === 'production';
+const inProduction = () => process.env.VERCEL_ENV === 'production' || process.env.PYRMI_ENV === 'production';
 function sdkStatus(sh, now) {
   if (typeof sh !== 'string' || !sh) return 'missing';
   if (sh === SDK.hash || (sh === SDK.sourceHash && !inProduction())) return 'current';
@@ -380,12 +460,13 @@ function corroborate(raw, body, sess, ctx, now) {
   else if (!ctx.sfs && sendsFetchMetadata(String(ctx.ua || ''))) out.push('transport');
   const pt0 = sess.pt0 === undefined || sess.pt0 === '' ? null : Number(sess.pt0);
   const span = now - num(sess.i, now);
-  if (Number.isFinite(pt0) && pt0 !== null && Number.isFinite(raw.pt)) {
+  const validPt = typeof raw.pt === 'number' && Number.isFinite(raw.pt) && raw.pt >= 0 && raw.pt < 1e13;
+  if (Number.isFinite(pt0) && pt0 !== null && pt0 >= 0 && pt0 < 1e13 && validPt) {
     // The page clock and the server clock started together (session start) and must move together. Ahead is
     // impossible; behind can be a sleeping laptop, so only short sessions are held to it.
     const drift = (raw.pt - pt0) - span, slack = CLOCK_SLACK_MS + span * 0.1;
     if (drift > slack || (drift < -slack && span < 120000)) out.push('clock');
-  } else if (current) out.push('clock'); // this build always sends its start clock and a page clock on every beacon
+  } else if (current || (raw.pt !== null && raw.pt !== undefined && !validPt)) out.push('clock'); // this build always sends its start clock and a page clock on every beacon
   let last = null; try { last = sess.lc ? JSON.parse(sess.lc) : null; } catch (_) { last = null; }
   if (last && COUNTERS.some((k) => Number.isFinite(raw[k]) && raw[k] < num(last[k], 0))) out.push('counters'); // counters only grow
   if (Number.isFinite(raw.k) && Number.isFinite(raw.p) && raw.k + raw.p > MAX_INPUTS_PER_SEC * Math.max(span, 0) / 1000 + 30) out.push('input_rate');
@@ -406,7 +487,7 @@ function cleanSignals(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const n = (v) => Math.max(0, Math.min(1e6, Math.floor(num(v, 0))));
   const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x).replace(/[^\w.:-]/g, '').slice(0, 24)).filter(Boolean).slice(0, 10);
-  const t = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) < 1e12 ? Number(v) : null);
+  const t = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) < 1e13 ? Number(v) : null);
   return { wd: !!r.wd, hl: !!r.hl, au: list(r.au), dt: n(r.dt), ut: n(r.ut), ih: n(r.ih), tp: list(r.tp), wr: list(r.wr), k: n(r.k), p: n(r.p), h: n(r.h), pt: t(r.pt), gt: t(r.gt),
     sh: typeof r.sh === 'string' ? r.sh.replace(/[^\w]/g, '').slice(0, 16) : null, uv: list(r.uv), ac: r.ac === true };
 }
@@ -501,22 +582,34 @@ function parseProject(pid, h) {
     owner: h.owner || null, lastSession: num(h.ls, 0), lastVerify: num(h.lv, 0), epoch: num(h.ep, 0) };
 }
 
-async function loadProject(pid) {
-  if (!/^[\w-]{1,40}$/.test(String(pid))) return null;
-  if (BUILTIN[pid]) await ensureBuiltin(BUILTIN[pid]);
-  return parseProject(pid, kv.pairs(await kv.cmd('HGETALL', 'ps:p:' + pid)));
+const builtinReady = new Set();
+const builtinInflight = new Map();
+async function ensureBuiltin(b, force) {
+  if (!force && builtinReady.has(b.pid)) return;
+  if (force) builtinReady.delete(b.pid);
+  let p = builtinInflight.get(b.pid);
+  if (!p) {
+    p = kv.pipeline([
+      ['HSETNX', 'ps:p:' + b.pid, 'pk', b.publicKey],
+      ['HSET', 'ps:p:' + b.pid, 'name', b.name],
+      ['HSETNX', 'ps:p:' + b.pid, 'created', Date.now()],
+      ['SET', 'ps:pk:' + b.publicKey, b.pid],
+    ]).then(() => { builtinReady.add(b.pid); }).finally(() => { builtinInflight.delete(b.pid); });
+    builtinInflight.set(b.pid, p);
+  }
+  await p;
 }
 
-const builtinReady = new Set();
-async function ensureBuiltin(b) {
-  if (builtinReady.has(b.pid)) return;
-  await kv.pipeline([
-    ['HSETNX', 'ps:p:' + b.pid, 'pk', b.publicKey],
-    ['HSET', 'ps:p:' + b.pid, 'name', b.name],
-    ['HSETNX', 'ps:p:' + b.pid, 'created', Date.now()],
-    ['SET', 'ps:pk:' + b.publicKey, b.pid],
-  ]);
-  builtinReady.add(b.pid);
+async function loadProject(pid) {
+  if (!/^[\w-]{1,40}$/.test(String(pid))) return null;
+  const b = BUILTIN[pid];
+  if (b) await ensureBuiltin(b, false);
+  let h = kv.pairs(await kv.cmd('HGETALL', 'ps:p:' + pid));
+  if (b && !h.pk) {
+    await ensureBuiltin(b, true);
+    h = kv.pairs(await kv.cmd('HGETALL', 'ps:p:' + pid));
+  }
+  return parseProject(pid, h);
 }
 
 async function createProject(body, ip, owner) {
@@ -596,6 +689,7 @@ async function rotateLocked(project, oldSk) {
   const sk = 'sk_' + C.randomId(30);
   // Signed-in owners rotate without the old key, so drop whatever hash is stored on the project.
   const stored = await kv.cmd('HGET', 'ps:p:' + project.pid, 'skh');
+  if (!stored) throw httpError(404, 'not_found', 'This project no longer exists.');
   const oldHash = oldSk ? C.sha256(oldSk) : stored;
   if (oldSk && stored && oldHash !== stored) throw httpError(409, 'key_changed', 'That secret key was already rotated.');
   await kv.pipeline([
@@ -675,6 +769,19 @@ async function readSession(token) {
 
 async function startSession(project, ctx, body) {
   const s = project.settings;
+  const nf = await netFingerprint(ctx.ip);
+  const now = Date.now(), day = ymd(now);
+  // Per site and network: count rate limits before origin checks so repeated 403 origin mismatches are rate-limited
+  // without adding any round trip to valid sessions, while keeping daily quota (takeQuota) after origin checks.
+  if (await bump('ps:rl:sess:' + project.pid + ':' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
+  if (await bump('ps:rl:sessall:' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP_ALL_SITES', 3000))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
+  // Per site too (round 11): a session factory harvesting tokens for one site from one network is cut off within a
+  // minute, well below the network-wide limit that many sites share. A player rarely starts more than a few a minute.
+  if (await bump('ps:rl:sessp:' + project.pid + ':' + nf, 60, intEnv('PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN', 30))) throw httpError(429, 'rate_limited', 'Too many sessions for this site from this network. Try again in a minute.');
+  if (project.pid === SITE.pid && ctx.origin) {
+    const allowed = siteAllowedOrigins(ctx.host);
+    if (allowed.length && !allowed.includes(ctx.origin)) throw httpError(403, 'origin_not_allowed', 'This page is not on the project\'s allowed origins.');
+  }
   // An allowed-origins list is a real binding: the request's Origin must be in it (a missing Origin is '' and so
   // never matches, which rejects bare non-browser callers too). This is enforced whenever a project has origins set.
   if (s.origins.length && !s.origins.includes(ctx.origin)) throw httpError(403, 'origin_not_allowed', 'This page is not on the project\'s allowed origins.');
@@ -686,15 +793,6 @@ async function startSession(project, ctx, body) {
   // daily cap below (ps:q, independent of IP) remains the backstop against quota drain in every case.
   if (!project.demo && !s.origins.length && mustHaveOrigins(s)) throw httpError(403, 'origin_required', 'This project has no allowed origins registered; add one in the dashboard to start sessions.');
   const ipf = await C.fingerprint('ip', ctx.ip), uaf = await C.fingerprint('ua', ctx.ua || '');
-  const nf = await netFingerprint(ctx.ip);
-  const now = Date.now(), day = ymd(now);
-  // Per site and network: one site's sessions only use up that site's allowance. A much larger network-wide bucket is
-  // a backstop for the server itself.
-  if (await bump('ps:rl:sess:' + project.pid + ':' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP', 150))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
-  if (await bump('ps:rl:sessall:' + nf, 600, intEnv('PYRMI_SESSIONS_PER_IP_ALL_SITES', 3000))) throw httpError(429, 'rate_limited', 'Too many sessions from this network. Try again in a few minutes.');
-  // Per site too (round 11): a session factory harvesting tokens for one site from one network is cut off within a
-  // minute, well below the network-wide limit that many sites share. A player rarely starts more than a few a minute.
-  if (await bump('ps:rl:sessp:' + project.pid + ':' + nf, 60, intEnv('PYRMI_SESSIONS_PER_IP_PER_SITE_PER_MIN', 30))) throw httpError(429, 'rate_limited', 'Too many sessions for this site from this network. Try again in a minute.');
   await takeQuota(project, nf, day);
   const sid = C.randomId(12), seed = C.randomUint32(), exp = now + s.sessionTtlSec * 1000, bn = C.randomId(9);
   // The browser's own context at the start, so /verify can tell whether the action comes from the same browser: the
@@ -758,12 +856,13 @@ async function recordSignals(body, ctx) {
     throw httpError(400, 'bad_signals', 'Telemetry could not be read.');
   }
   // Beacon nonce and order. bn is handed out with the session and n counts up, so a beacon lifted from another session
-  // (or replayed into this one) is refused and marks the session. A late, out-of-order beacon from the real script
-  // (the 10 s timer racing flush()) is just dropped: the next one carries everything it had.
+  // (or sent with a leaked token without the session's private bn) is refused without mutating the victim's session.
+  // A late, out-of-order beacon from the real script (the 10 s timer racing flush()) is just dropped.
   const n = Number(body.n);
   if (sess.bn && body.bn !== undefined && body.bn !== sess.bn) {
-    const uv = mergeSignals(prev, cleanSignals({ uv: ['replay'] }));
-    await kv.cmd('HSET', key, 'sig', JSON.stringify({ ...prev, uv: uv.uv }));
+    throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
+  }
+  if (sess.bn && num(sess.n, 0) > 0 && (body.bn !== sess.bn || body.n === undefined)) {
     throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
   }
   if (body.n !== undefined && (!Number.isInteger(n) || n < 1 || n <= num(sess.n, 0))) return { ok: true, dropped: 'stale' };
@@ -845,6 +944,7 @@ async function checkSigned(request, t, now) {
   if (Object.prototype.hasOwnProperty.call(request.fields, '__proto__')) return { state: 'bad', detail: 'forbidden key __proto__' };
   let fields;
   try { fields = C.canon(request.fields); } catch (e) {
+    if (e && e.code === 'CANON_PROTO') return { state: 'bad', detail: 'forbidden key __proto__' };
     if (e && e.code === 'CANON_TOO_DEEP') return { state: 'bad', detail: 'nested too deep' };
     if (e && e.code === 'CANON_BAD_NUMBER') return { state: 'bad', detail: 'a number that can\'t be checked exactly (infinite, -0 or past 2^53)' };
     throw e;
@@ -924,7 +1024,8 @@ async function verify(project, body, ctx) {
   if (live && now > t.e) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', 3600]);
   else if (live) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600], ['HGETALL', 'ps:s:' + t.s]);
   const got = await kv.pipeline(cmds);
-  if (num(got[1], 1) > intEnv('PYRMI_VERIFIES_PER_MIN', 60)) hard('rate_limited');
+  const rateLimited = num(got[1], 1) > intEnv('PYRMI_VERIFIES_PER_MIN', 60);
+  if (rateLimited) hard('rate_limited');
 
   // A project that takes only signed actions refuses an unsigned one whatever else it carries.
   if (s.requireSignedRequests && !(body.request && typeof body.request === 'object')) hard('unsigned_request');
@@ -1007,7 +1108,12 @@ async function verify(project, body, ctx) {
   // A value that was refused as not a number isn't recorded as one.
   const scoreOut = hasScore && Number.isFinite(score) && !reasons.some((r) => r.code === 'bad_score') ? score : null;
   const ev = { t: now, sid, player, score: scoreOut, durationMs, verdict, risk, replay: replayCheck, reasons: reasons.map((r) => r.detail ? { code: r.code, detail: String(r.detail).slice(0, 120) } : { code: r.code }) };
-  await logVerdict(project.pid, ev, genuine);
+  const releaseUsed = rateLimited && got[2] === 'OK' ? 'ps:used:' + t.s : null;
+  if (rateLimited && !genuine) {
+    if (releaseUsed) await kv.cmd('DEL', releaseUsed);
+  } else {
+    await logVerdict(project.pid, ev, genuine, releaseUsed);
+  }
   const client = !genuine ? 'none' : reasons.some((r) => r.code === 'no_client') ? 'none' : reasons.some((r) => r.code === 'unverified_client') ? 'unverified' : 'corroborated';
   // trusted also needs the browser's own word that a person pressed a key or clicked (ac === true from the current
   // script), whatever the user agent says: a script claiming an old Safari could otherwise send ac: null.
@@ -1015,15 +1121,18 @@ async function verify(project, body, ctx) {
   return { ok: true, verdict, risk, client, trusted, signed, bound, human, seed: genuine && Number.isFinite(t.seed) ? t.seed : null, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
-async function logVerdict(pid, ev, genuine) {
+async function logVerdict(pid, ev, genuine, releaseUsed) {
   const isDemo = pid === DEMO.pid;
   const day = ymd(ev.t), stat = 'ps:st:' + pid + ':' + day, pl = 'ps:pl:' + pid + ':' + ev.player;
   const flagged = ev.verdict !== 'accept';
+  const isRateLimited = ev.reasons.some((r) => r.code === 'rate_limited');
   // The two public dashboards (the sandbox and pyrmi.com's own forms) only list verdicts a real session backs; the rest
-  // are still counted. A customer's own project keeps them all; they show who is probing it.
+  // are still counted. A customer's own project keeps them all; they show who is probing it. Rate-limited bursts never
+  // push into ps:ev so a flood cannot evict real recent events.
   const listed = genuine || (pid !== DEMO.pid && pid !== SITE.pid);
   const cmds = [
-    ...(listed ? [['LPUSH', 'ps:ev:' + pid, JSON.stringify(ev)], ['LTRIM', 'ps:ev:' + pid, 0, MAX_EVENTS - 1]] : []),
+    ...(releaseUsed ? [['DEL', releaseUsed]] : []),
+    ...(listed && !isRateLimited ? [['LPUSH', 'ps:ev:' + pid, JSON.stringify(ev)], ['LTRIM', 'ps:ev:' + pid, 0, MAX_EVENTS - 1]] : []),
     ['HINCRBY', stat, ev.verdict, 1], ['EXPIRE', stat, 35 * DAY],
     ...(listed ? [['HSET', 'ps:p:' + pid, 'lv', ev.t]] : []), // "your server is connected" on the dashboard
   ];
@@ -1066,7 +1175,7 @@ async function trimPlayers(pid, size) {
   if (!gone.length) return;
   await kv.pipeline([
     ['DEL', ...gone.map((m) => 'ps:pl:' + pid + ':' + m)],
-    ['ZREMRANGEBYRANK', 'ps:plr:' + pid, 0, over - 1],
+    ['ZREM', 'ps:plr:' + pid, ...gone],
   ]);
 }
 
@@ -1114,7 +1223,7 @@ async function dashboard(project) {
 }
 
 module.exports = {
-  TRUST_ALLOWS, isTrusted,
+  TRUST_ALLOWS, isTrusted, inProduction, siteAllowedOrigins,
   SK_RE, DEFAULTS, LEGACY_DEFAULTS, checkSigned, checkHuman, relayed, sendsFetchMetadata, trustedMinInputs, DEMO, SITE, WEIGHTS, REASONS, HARD,
   createProject, deleteProject, loadProject, view, projectByPublicKey, projectBySecretKey, updateSettings, rotateSecret, withKeyLock, rotateLocked, releaseAnon, network, nearLimit, hit, originPolicy, warnings,
   startSession, recordSignals, verify, dashboard, limitIp, limitPlan, projectForKey, verifyKeyMiss, guardSite, cleanSignals, cleanPlayer, ymd,

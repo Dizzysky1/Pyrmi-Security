@@ -1,0 +1,28 @@
+# Copy to .secrets.prod (never commit!) and upload with:
+#   npx wrangler secret bulk .secrets.prod
+# Then delete .secrets.prod.
+
+# Required: Upstash Redis REST credentials (same database your Vercel app used — keeps all live: data!)
+KV_REST_API_URL=https://your-db.upstash.io
+KV_REST_API_TOKEN=your_upstash_rest_token
+
+# Required: 32+ random characters used to sign session tokens (use the same value from Vercel to keep active tokens valid, or a fresh 48-char random string)
+PYRMI_SECRET=replace_with_32_plus_char_random_secret
+
+# Recommended: Cloudflare Turnstile keys for dashboard & sandbox human check
+# TURNSTILE_SITE_KEY=0x4AAAAAAA...
+# TURNSTILE_SECRET_KEY=0x4AAAAAAA...
+# TURNSTILE_HOSTNAMES=pyrmi.com,www.pyrmi.com
+
+# Optional: Sign-in providers (each stays hidden on /dashboard/ until configured)
+# SMTP_HOST=mail.privateemail.com
+# SMTP_PORT=465
+# SMTP_USER=login@pyrmi.com
+# SMTP_PASS=your_mailbox_password
+# PYRMI_EMAIL_FROM=Pyrmi Security <login@pyrmi.com>
+# RESEND_API_KEY=re_...
+# GITHUB_CLIENT_ID=...
+# GITHUB_CLIENT_SECRET=...
+# GOOGLE_CLIENT_ID=...
+# GOOGLE_CLIENT_SECRET=...
+# PYRMI_PUBLIC_URL=https://pyrmi.com

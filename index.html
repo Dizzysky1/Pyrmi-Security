@@ -22,59 +22,64 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#07070c">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/site.css">
-<script src="/intro.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css?v=4">
+<script src="/intro.js?v=4"></script>
 </head>
-<body>
-<div id="bg-fallback"></div>
+<body class="home">
+<div id="bg-fallback" aria-hidden="true"></div>
 <canvas id="gl" aria-hidden="true"></canvas>
-<div class="veil"></div>
-<div id="intro">
-  <div class="mark" aria-hidden="true"><span style="--i:0">P</span><span style="--i:1">Y</span><span style="--i:2" class="r">R</span><span style="--i:3">M</span><span style="--i:4">I</span></div>
-  <div class="mark-sub pix" aria-hidden="true">security</div>
-  <button class="skip pix" type="button">skip intro</button>
-</div>
 
-<div class="wrap">
-  <header class="top">
+<header class="top">
+  <div class="wrap bar">
     <a class="brand" href="/">PY<b>R</b>MI <span class="sub">security</span></a>
-    <nav>
-      <a href="#how">how it works</a>
-      <a href="#demo">sandbox</a>
-      <a href="/docs/">docs</a>
-      <a href="/dashboard/" class="nav-cta">dashboard</a>
+    <nav aria-label="Main">
+      <a href="#how" class="nav-hide">How it works</a>
+      <a href="#demo">Sandbox</a>
+      <a href="/docs/">Docs</a>
+      <a href="/dashboard/" class="nav-cta">Dashboard</a>
     </nav>
-  </header>
+  </div>
+</header>
 
+<main class="wrap">
   <section class="hero">
-    <div class="eyebrow pix">OPEN SOURCE · APACHE 2.0</div>
-    <h1>Bot and tamper detection<br>for <span class="g">your site</span>. One script tag.</h1>
-    <p>Pyrmi spots bots, scrapers, replayed requests and tampered pages in the browser. Your server asks for a verdict before it trusts a sign-up, a vote, a checkout or a score, and the dashboard shows every flag and why.</p>
+    <p class="label">Open source · Apache 2.0</p>
+    <h1>Bot and tamper detection for your site. <span class="quiet">One script tag.</span></h1>
+    <p class="sub-h">Pyrmi spots bots, scrapers, replayed requests and tampered pages in the browser. Your server asks for a verdict before it trusts a sign-up, a vote, a checkout or a score, and the dashboard shows every flag and why.</p>
     <div class="cta">
-      <a class="btn primary" href="#demo">▶ try to get flagged</a>
-      <a class="btn" href="/dashboard/">get your keys →</a>
+      <a class="btn primary" href="#demo">Try to get flagged</a>
+      <a class="btn" href="/dashboard/">Get your keys</a>
     </div>
+    <dl class="specs">
+      <div><dt>Verdict</dt><dd>accept · review · reject</dd></div>
+      <div><dt>Risk</dt><dd class="num">0–100, with reasons</dd></div>
+      <div><dt>Browser script</dt><dd class="num">1.4.1, pinned with SRI</dd></div>
+      <div><dt>Self-host</dt><dd>Cloudflare Workers or Vercel</dd></div>
+    </dl>
   </section>
 
-  <section id="how">
-    <h2 class="sec">// how it works</h2>
-    <div class="steps">
-      <div class="card">
-        <div class="step-num pix">1</div>
+  <section id="how" class="sec">
+    <header class="sec-h">
+      <p class="label">How it works</p>
+      <h2>The browser collects evidence. Your server makes the call.</h2>
+    </header>
+    <div class="cells c3">
+      <div>
+        <span class="cell-n">01 · page</span>
         <h3>Add the script</h3>
         <p>Each visit gets a signed session from a real page load. The script watches for automation, scripted input, replaced browser functions, devtools and clock tricks.</p>
       </div>
-      <div class="card">
-        <div class="step-num pix">2</div>
+      <div>
+        <span class="cell-n">02 · server</span>
         <h3>Check on your server</h3>
         <p>Before you act on a request, call <code>pyrmi.verify()</code>. You get <b>accept</b>, <b>review</b> or <b>reject</b>, a risk score from 0 to 100, and the reasons.</p>
       </div>
-      <div class="card">
-        <div class="step-num pix">3</div>
+      <div>
+        <span class="cell-n">03 · dashboard</span>
         <h3>Watch it work</h3>
         <p>The dashboard shows every verdict, which checks fired, and which users keep getting flagged, so you see how well it's working instead of a yes or no.</p>
       </div>
@@ -82,109 +87,170 @@
 
     <div class="code-pair">
       <div class="code">
-        <div class="code-h">in your page <button class="copy" data-copy="c1">copy</button></div>
-<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
-&lt;script&gt;
-  const s = await Pyrmi.start();   // on page load
-  // when the user signs up, votes, buys...
+        <div class="code-h"><span>page.html</span><button class="copy" type="button" data-copy="c1">copy</button></div>
+<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
+&lt;script type="module"&gt;
+  const s = await Pyrmi.start();   <span class="c">// on page load</span>
+  <span class="c">// when the user signs up, votes, buys...</span>
   await Pyrmi.flush();
-  const body = await Pyrmi.seal({ email }); // signed: changed on the way = rejected
+  const body = await Pyrmi.seal({ email }); <span class="c">// signed: changed on the way = rejected</span>
   await fetch('/signup', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 &lt;/script&gt;</pre>
       </div>
       <div class="code">
-        <div class="code-h">on your server <button class="copy" data-copy="c2">copy</button></div>
+        <div class="code-h"><span>server.js</span><button class="copy" type="button" data-copy="c2">copy</button></div>
 <pre id="c2">const { Pyrmi, trusted } = require('pyrmi-server');
 const pyrmi = new Pyrmi({ secretKey: process.env.PYRMI_SECRET_KEY });
 
-const v = await pyrmi.verify({ sealed: req.body, req }); // user: your own signed-in user, never req.body
-if (v.verdict === 'reject') return res.status(403).end(); // a sign-up: a review goes through, flagged
-// a payout or a prize instead: if (!trusted(v)) return res.status(403).end(); (with requireHumanCheck on, see docs)</pre>
+<span class="c">// user: your own signed-in user, never req.body</span>
+const v = await pyrmi.verify({ sealed: req.body, req });
+
+<span class="c">// a sign-up: a review goes through, flagged</span>
+if (v.verdict === 'reject') return res.status(403).end();
+
+<span class="c">// a payout or a prize instead (with requireHumanCheck on, see docs):</span>
+<span class="c">// if (!trusted(v)) return res.status(403).end();</span></pre>
       </div>
     </div>
   </section>
 
-  <section id="catches">
-    <h2 class="sec">// what it catches</h2>
-    <div class="grid3">
-      <div class="mini"><b>Bots and headless browsers</b><span>Webdriver flags, headless Chrome, Playwright, Puppeteer, Selenium and Cypress markers.</span></div>
-      <div class="mini"><b>Scrapers and direct API calls</b><span>A request with no signed session from a real page, or a session that never reported from one, gets flagged.</span></div>
-      <div class="mini"><b>Replayed requests</b><span>Each session token works once and expires. Sending the same request twice fails.</span></div>
-      <div class="mini"><b>Forged or edited tokens</b><span>Sessions are signed on the server. Change one byte and the verdict is reject.</span></div>
-      <div class="mini"><b>Tampered pages</b><span>Replaced <code>fetch</code>, <code>performance.now</code>, <code>requestAnimationFrame</code> and other built-ins.</span></div>
-      <div class="mini"><b>Devtools</b><span>An open devtools panel is noted on the session, so you can weigh it with everything else.</span></div>
-      <div class="mini"><b>Scripted input</b><span>Synthetic events and typing or clicking that's too even or too fast for a human hand.</span></div>
-      <div class="mini"><b>Impossible values</b><span>Actions sent faster than a person could, numbers past your caps, or values that grow too fast.</span></div>
-      <div class="mini honest"><b>What it won't do</b><span>Block devtools or "stop code running". Whoever owns the browser can switch any of that off. Pyrmi watches and reports, and your server has the final say.</span></div>
+  <section id="catches" class="sec">
+    <header class="sec-h">
+      <p class="label">What it catches</p>
+      <h2>Eight kinds of trouble, each with a named reason in the verdict.</h2>
+    </header>
+    <div class="ledger">
+      <div><b>Bots and headless browsers</b><span>Webdriver flags, headless Chrome, Playwright, Puppeteer, Selenium and Cypress markers.</span></div>
+      <div><b>Scrapers and direct API calls</b><span>A request with no signed session from a real page, or a session that never reported from one, gets flagged.</span></div>
+      <div><b>Replayed requests</b><span>Each session token works once and expires. Sending the same request twice fails.</span></div>
+      <div><b>Forged or edited tokens</b><span>Sessions are signed on the server. Change one byte and the verdict is reject.</span></div>
+      <div><b>Tampered pages</b><span>Replaced <code>fetch</code>, <code>performance.now</code>, <code>requestAnimationFrame</code> and other built-ins.</span></div>
+      <div><b>Devtools</b><span>An open devtools panel is noted on the session, so you can weigh it with everything else.</span></div>
+      <div><b>Scripted input</b><span>Synthetic events and typing or clicking that's too even or too fast for a human hand.</span></div>
+      <div><b>Impossible values</b><span>Actions sent faster than a person could, numbers past your caps, or values that grow too fast.</span></div>
+    </div>
+    <div class="callout">
+      <p class="label">What it won't do</p>
+      <p>Block devtools or "stop code running". Whoever owns the browser can switch any of that off. Pyrmi watches and reports, and your server has the final say.</p>
     </div>
   </section>
 
-  <section id="demo">
-    <h2 class="sec">// sandbox: try to get flagged</h2>
-    <p class="lead">This box stands in for a form on your site. Each button really does what it says, and the verdict is the one your server would get. Then check the <a href="/dashboard/?demo=1">public sandbox dashboard</a> to see it logged.</p>
-    <div class="demo">
-      <div class="panel sandbox">
-        <div class="panel-h">a protected action</div>
-        <label class="field">value it carries <span class="muted">(a score, points, a quantity · limit 1000)</span><input id="value" inputmode="decimal" value="42"></label>
-        <div class="acts">
-          <button class="btn primary" type="button" data-act="honest">send it normally</button>
-          <button class="btn" type="button" data-act="replay">replay the last request</button>
-          <button class="btn" type="button" data-act="edit">edit the token</button>
-          <button class="btn" type="button" data-act="big">send an impossible value</button>
-          <button class="btn" type="button" data-act="rewrite">change it on the wire</button>
-          <button class="btn" type="button" data-act="direct">skip the page (direct API call)</button>
-        </div>
-        <div class="ts" id="sb-ts"></div>
-        <p class="muted small-t">Want more? Open devtools, or paste <code>performance.now = () =&gt; 0</code> into the console, then send it normally again.</p>
+  <section id="demo" class="sec">
+    <header class="sec-h">
+      <p class="label">Sandbox</p>
+      <h2>Try to get flagged.</h2>
+      <p class="lead">This console stands in for a form on your site and the server behind it. Each button really does what it says, and the verdict is the one your server would get. Every verdict is logged on the <a href="/dashboard/?demo=1">public sandbox dashboard</a>.</p>
+    </header>
+
+    <div class="console">
+      <div class="con-bar">
+        <span class="con-title"><b>POST</b>/api/v1/demo</span>
+        <span class="con-meta">site <code>pk_demo_sandbox</code></span>
+        <span class="con-meta">session <span id="sb-sid">starting…</span></span>
+        <span class="con-state chip info" id="sb-state">ready</span>
       </div>
-      <aside class="side">
-        <div class="panel" id="verdict" hidden>
-          <div class="panel-h">verdict</div>
-          <div class="verdict-row"><span id="v-chip" class="chip"></span><span id="v-risk-n" class="pix small"></span></div>
-          <div class="meter"><i id="v-risk"></i></div>
-          <ul id="v-reasons" class="reasons"></ul>
+
+      <div class="con-grid">
+        <div class="con-col">
+          <div class="con-h">Action</div>
+          <label class="field">Value it carries <span>a score, points, a quantity · limit 1000</span><input id="value" inputmode="decimal" value="42" autocomplete="off"></label>
+          <div class="cmds" role="group" aria-label="Send the action">
+            <button class="act honest" type="button" data-act="honest"><span class="k">1</span><b>Send it normally</b><span class="d">Sealed by the page, human check, sent once.</span><span class="tag">honest</span></button>
+            <button class="act" type="button" data-act="replay"><span class="k">2</span><b>Replay the last request</b><span class="d">The exact same sealed body, sent again.</span><span class="tag">replay</span></button>
+            <button class="act" type="button" data-act="edit"><span class="k">3</span><b>Edit the token</b><span class="d">Rewrite the session to look an hour old.</span><span class="tag">forge</span></button>
+            <button class="act" type="button" data-act="big"><span class="k">4</span><b>Send an impossible value</b><span class="d">999999 where the limit is 1000.</span><span class="tag">value</span></button>
+            <button class="act" type="button" data-act="rewrite"><span class="k">5</span><b>Change it on the wire</b><span class="d">The page signs one value, a proxy sends another.</span><span class="tag">wire</span></button>
+            <button class="act" type="button" data-act="direct"><span class="k">6</span><b>Skip the page</b><span class="d">Grab a session straight from the API and use it.</span><span class="tag">direct</span></button>
+          </div>
+          <div class="ts" id="sb-ts"></div>
+          <p class="hint">Want more? Open devtools, or paste <code>performance.now = () =&gt; 0</code> into the console, then send it normally again.</p>
         </div>
-        <div class="panel">
-          <div class="panel-h">what pyrmi sees right now</div>
+
+        <div class="con-col">
+          <div class="con-h">Verdict <span class="dim">what your server gets back</span></div>
+          <div class="verdict" id="verdict" data-v="none" aria-live="polite">
+            <div class="v-top">
+              <div>
+                <div class="v-word" id="v-word">waiting</div>
+                <div class="v-chips"><span id="v-chip" class="chip info">no request</span><span id="v-trust" class="chip untrusted" hidden>not trusted</span></div>
+              </div>
+              <div class="v-risk"><span class="n" id="v-risk-n">–</span><span class="of">risk / 100</span></div>
+            </div>
+            <div class="meter" aria-hidden="true"><i id="v-risk"></i><b class="tick t40"></b><b class="tick t70"></b></div>
+            <div class="scale" aria-hidden="true"><span class="s0">0</span><span class="s40">review 40</span><span class="s70">reject 70</span><span class="s100">100</span></div>
+            <dl class="facts" id="v-facts">
+              <div><dt>trusted(v)</dt><dd class="meh">–</dd></div>
+              <div><dt>client</dt><dd class="meh">–</dd></div>
+              <div><dt>seal</dt><dd class="meh">–</dd></div>
+              <div><dt>same browser</dt><dd class="meh">–</dd></div>
+              <div><dt>human check</dt><dd class="meh">–</dd></div>
+              <div><dt>round trip</dt><dd class="meh">–</dd></div>
+            </dl>
+            <p class="v-sum" id="v-sum" hidden></p>
+            <ul id="v-reasons" class="reasons"></ul>
+          </div>
+
+          <div class="con-h sp">Request body <span id="sb-req-note"></span></div>
+          <div class="wire-banner" id="sb-banner"></div>
+          <pre class="wire" id="sb-req"><span class="empty">Nothing sent yet. Pick an action.</span></pre>
+        </div>
+      </div>
+
+      <div class="con-foot">
+        <div>
+          <div class="con-h">Log <span class="dim">this page</span></div>
+          <ol class="log" id="sb-log"><li class="empty">No requests yet.</li></ol>
+        </div>
+        <div>
+          <div class="con-h">What the script sees right now</div>
           <ul id="live" class="live"></ul>
         </div>
-      </aside>
+      </div>
     </div>
   </section>
 
-  <section id="agents">
-    <h2 class="sec">// set it up with your ai agent</h2>
-    <p class="lead">Building with Claude Code, Cursor or another coding agent? Paste this in and it will wire Pyrmi into your pages and your server.</p>
-    <div class="code">
-      <div class="code-h">prompt <button class="copy" data-copy="c3">copy</button></div>
+  <section id="agents" class="sec">
+    <header class="sec-h">
+      <p class="label">With a coding agent</p>
+      <h2>Paste one prompt and let your agent wire it in.</h2>
+      <p class="lead">Building with Claude Code, Cursor or another coding agent? Paste this in and it will wire Pyrmi into your pages and your server.</p>
+    </header>
+    <div class="code wrapcode">
+      <div class="code-h"><span>prompt</span><button class="copy" type="button" data-copy="c3">copy</button></div>
 <pre id="c3">Read https://pyrmi.com/install.md and add Pyrmi Security to this site. Find the requests worth protecting (sign-ups, logins, votes, checkouts, scores, any endpoint bots hit), wire in the script tag and pyrmi-server as described, keep my secret key in an environment variable, and tell me which env vars to set.</pre>
     </div>
   </section>
 
-  <section id="oss">
-    <h2 class="sec">// open source</h2>
-    <div class="grid2">
-      <div class="card">
+  <section id="oss" class="sec">
+    <header class="sec-h">
+      <p class="label">Open source</p>
+      <h2>Read every check. Run your own copy.</h2>
+    </header>
+    <div class="cells c2">
+      <div>
         <h3>Apache 2.0 licensed</h3>
         <p>The browser script, the server SDK, the API and the dashboard are all Apache 2.0. Read how every check works, fork it, or send a fix; keep the NOTICE file with any copy you ship.</p>
       </div>
-      <div class="card">
+      <div>
         <h3>Host it or self-host it</h3>
-        <p>Use pyrmi.com for free while it's in early access, or deploy your own copy to Vercel with a free Upstash Redis. Point <code>pyrmi-server</code> at your URL.</p>
+        <p>Use pyrmi.com for free while it's in early access, or deploy your own copy to Cloudflare Workers or Vercel with a free Upstash Redis. Point <code>pyrmi-server</code> at your URL.</p>
       </div>
     </div>
   </section>
+</main>
 
-  <footer>
-    Pyrmi Security · made by Dizzysky1 · <a href="/docs/">docs</a> · <a href="/blog/what-a-browser-cant-prove/">blog</a> · <a href="/dashboard/">dashboard</a> · <a href="/install.md">install guide</a>
-  </footer>
-</div>
+<footer class="foot">
+  <div class="wrap">
+    <span>Pyrmi Security · made by Dizzysky1</span>
+    <nav aria-label="Footer"><a href="/docs/">Docs</a><a href="/blog/what-a-browser-cant-prove/">Blog</a><a href="/dashboard/">Dashboard</a><a href="/install.md">Install guide</a></nav>
+  </div>
+</footer>
 
-<script src="/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
-<script src="/site.js"></script>
-<script src="/motion.js"></script>
-<script src="/sandbox.js"></script>
-<script type="module" src="/bg/singularity.js?v=3"></script>
+<script src="/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
+<script src="/site.js?v=4"></script>
+<script src="/motion.js?v=4"></script>
+<script src="/sandbox.js?v=4"></script>
+<script type="module" src="/bg/singularity.js?v=4"></script>
 </body>
 </html>

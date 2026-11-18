@@ -32,7 +32,7 @@ that scrapers hit. Ask the developer if it isn't clear. Protect those, not every
 Add once to each page that sends a protected request, before the page's own script:
 
 ```html
-<script src="https://pyrmi.com/sdk/1.4.0/pyrmi.js" integrity="sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
+<script src="https://pyrmi.com/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
 ```
 
 It defines `window.Pyrmi`.
@@ -157,10 +157,12 @@ replay; those are the real controls.
 
 Telemetry is advisory: a clean real browser fully driven by automation can still pass, sealing and all, so keep your
 own limits too (`maxScore`, `minDurationMs`, rate limits) and, for a deterministic app, the replay check in section 5.
-pyrmi-server ignores X-Forwarded-For unless you pass `trustProxyHops` to `new Pyrmi()`: use `1` on Vercel, Netlify or
-Cloudflare (they write the header themselves), and the number of your own proxies behind nginx or a load balancer.
+pyrmi-server ignores X-Forwarded-For unless you configure how the visitor's IP arrives in `new Pyrmi()`: directly
+inside a Cloudflare Worker pass `trustedIpHeader: 'cf-connecting-ip'`, on Vercel or Netlify alone pass
+`trustProxyHops: 1`, and behind Cloudflare -> Vercel/ALB/nginx pass `trustProxyHops: 2` (the total number of proxies in
+front of your server).
 `failOpen: true` only lets actions through when Pyrmi can't be reached (a network error, a timeout or a 5xx), never
-on an answer Pyrmi gave.
+on an answer Pyrmi gave or a local refusal.
 
 You can also check a Turnstile token yourself, for a form that has no Pyrmi session (sign-ups that unlock something),
 or as a second check. The developer creates the widget in Cloudflare and

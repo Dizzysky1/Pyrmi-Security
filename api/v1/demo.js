@@ -21,7 +21,7 @@ module.exports = handle(async (req, res) => {
   // The sandbox page seals its action with Pyrmi.seal(), as a site's page should for anything that matters: the body
   // is { value, visitor, pyrmi: { token, ts, sig } }, and the signature covers everything except pyrmi. This endpoint
   // is the site's own server here, so it forwards the browser's context from its own request, as pyrmi-server does.
-  const seal = body.pyrmi && typeof body.pyrmi === 'object' ? body.pyrmi : null;
+  const seal = body.pyrmi && typeof body.pyrmi === 'object' && !Array.isArray(body.pyrmi) ? body.pyrmi : null;
   // A null-prototype copy, so every key in the body stays a field the signature covers.
   const fields = Object.create(null); for (const k of Object.keys(body)) if (k !== 'pyrmi') fields[k] = body[k];
   const client = { ua: String(req.headers['user-agent'] || ''), ip, ch: String(req.headers['sec-ch-ua'] || ''), sfs: String(req.headers['sec-fetch-site'] || '') };
@@ -31,8 +31,9 @@ module.exports = handle(async (req, res) => {
   // a preview) there's no check, and the sandbox's best is a plain accept, as on any site without Turnstile.
   const human = typeof body.turnstile === 'string' && body.turnstile && turnstile.configured()
     ? { token: body.turnstile, secret: process.env.TURNSTILE_SECRET_KEY, action: 'sandbox' } : undefined;
+  const hasSeal = seal && (seal.sig !== undefined || seal.ts !== undefined);
   send(res, 200, await core.verify(project, {
     token: seal ? seal.token : body.token, score: body.value, player: visitor,
-    request: seal && seal.sig !== undefined ? { fields, ts: seal.ts, sig: seal.sig } : undefined, client, turnstile: human,
+    request: hasSeal ? { fields, ts: seal.ts, sig: seal.sig === undefined ? '' : seal.sig } : undefined, client, turnstile: human,
   }, { ip }));
 });

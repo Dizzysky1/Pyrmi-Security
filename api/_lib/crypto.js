@@ -68,6 +68,7 @@ function canon(v, depth) {
   if (d > CANON_MAX_DEPTH) throw Object.assign(new Error('nested too deep'), { code: 'CANON_TOO_DEEP' });
   if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x, d + 1))).join(',') + ']';
   if (v && typeof v === 'object') {
+    if (Object.prototype.hasOwnProperty.call(v, '__proto__')) throw Object.assign(new Error('forbidden key __proto__'), { code: 'CANON_PROTO' });
     return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k], d + 1)).join(',') + '}';
   }
   // Only numbers that read the same everywhere are checked: finite, not -0, and whole numbers within 2^53.

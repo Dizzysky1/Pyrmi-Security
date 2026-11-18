@@ -1,0 +1,56 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "pyrmi",
+	"main": "./worker/index.mjs",
+	"compatibility_date": "2026-11-17",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"upload_source_maps": true,
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [
+		{
+			"pattern": "pyrmi.com",
+			"custom_domain": true
+		},
+		{
+			"pattern": "www.pyrmi.com",
+			"custom_domain": true
+		}
+	],
+	// Places /api/* Worker execution in US East (AWS us-east-1, matching Vercel/Upstash iad1) to minimize sequential Redis round-trips.
+	// Static assets in .cf-assets/ still serve directly from the nearest Cloudflare edge POP worldwide.
+	"placement": {
+		"region": "aws:us-east-1"
+	},
+	"observability": {
+		"enabled": true,
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.05
+		}
+	},
+	"assets": {
+		"directory": "./.cf-assets",
+		"binding": "ASSETS",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "404-page",
+		// Only /api/* invokes the Worker; all static pages/SDK/assets serve free at the edge without Worker invocations.
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"vars": {
+		"PYRMI_ENV": "production",
+		"PYRMI_KV_PREFIX": "live:",
+		"PYRMI_PUBLIC_URL": "https://pyrmi.com",
+		"SMTP_HOST": "mail.privateemail.com",
+		"SMTP_PORT": "465",
+		"TURNSTILE_HOSTNAMES": "pyrmi.com,www.pyrmi.com"
+	}
+}

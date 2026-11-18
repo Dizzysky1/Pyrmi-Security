@@ -26,15 +26,16 @@ module.exports = handle(async (req, res) => {
   accounts.checkCsrf(req);
   const q = new URL(req.url, 'http://x').searchParams, pid = q.get('pid'), action = q.get('action');
 
+  const host = accounts.ownHost(req);
   if (!pid && req.method === 'POST' && action === 'claim') {
     const body = await readJson(req, 4096);
-    await turnstile.check(body.turnstileToken, ip, 'claim', req.headers.host);
-    return send(res, 200, { ok: true, site: await accounts.claimSite(user.uid, typeof body.secretKey === 'string' ? body.secretKey.trim() : '', { keepKey: body.keepKey === true }) });
+    await turnstile.check(body.turnstileToken, ip, 'claim', host);
+    return send(res, 200, { ok: true, site: await accounts.claimSite(user.uid, typeof body.secretKey === 'string' ? body.secretKey.trim() : '', { keepKey: body.keepKey === true, ip }) });
   }
   if (!pid && req.method === 'POST') {
     const body = await readJson(req, 4096);
-    await turnstile.check(body.turnstileToken, ip, 'new-site', req.headers.host);
-    await core.guardSite(body.pyrmiToken, ip);
+    await turnstile.check(body.turnstileToken, ip, 'new-site', host);
+    await core.guardSite(body.pyrmiToken, ip, req);
     return send(res, 201, { ok: true, project: core.view(await accounts.createSite(user.uid, body, ip)) });
   }
   const p = await accounts.ownedSite(user.uid, pid);
@@ -44,11 +45,11 @@ module.exports = handle(async (req, res) => {
     return send(res, 200, { ok: true, project: core.view(await core.updateSettings(p, { ...(body.settings || {}), ...('name' in body ? { name: body.name } : {}) })) });
   }
   if (req.method === 'POST' && action === 'rotate') {
-    if (turnstile.configured()) await turnstile.check((await readJson(req, 4096)).turnstileToken, ip, 'rotate', req.headers.host);
+    if (turnstile.configured()) await turnstile.check((await readJson(req, 4096)).turnstileToken, ip, 'rotate', host);
     return send(res, 200, { ok: true, secretKey: await core.rotateSecret(p) });
   }
   if (req.method === 'DELETE') {
-    if (turnstile.configured()) await turnstile.check((await readJson(req, 4096)).turnstileToken, ip, 'delete', req.headers.host);
+    if (turnstile.configured()) await turnstile.check((await readJson(req, 4096)).turnstileToken, ip, 'delete', host);
     await accounts.deleteSite(user.uid, p); return send(res, 200, { ok: true });
   }
   fail(res, 405, 'method_not_allowed', undefined, { Allow: 'GET, POST, PATCH, DELETE' });

@@ -7,7 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   // The browser script to tell people to use: a fixed version with its integrity hash (scripts/build-sdk.js keeps this
   // line up to date). That file never changes, so a page that pins it can't be handed a different script.
-  var SDK_PATH = '/sdk/1.4.0/pyrmi.js', SDK_SRI = 'sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ';
+  var SDK_PATH = '/sdk/1.4.1/pyrmi.js', SDK_SRI = 'sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8';
   var sdkTag = function (origin, pk) { return '<script src="' + origin + SDK_PATH + '" integrity="' + SDK_SRI + '" crossorigin="anonymous" data-site="' + pk + '"></script>'; };
   var q = new URLSearchParams(location.search);
   var demo = q.has('demo') ? (q.get('demo') === 'site' ? 'site' : '1') : null;
@@ -48,7 +48,21 @@
   try { sk = sessionStorage.getItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-  function show(id) { ['gate', 'keys', 'dash', 'account'].forEach(function (x) { $(x).hidden = x !== id; }); }
+  // Lookups keyed by anything from a URL or the API go through has(), so "toString" or "constructor" never resolve to
+  // Object.prototype.
+  function has(o, k) { return o != null && Object.prototype.hasOwnProperty.call(o, k); }
+  // Secret keys on screen (a new key after creating, claiming or rotating) never outlive the view they were shown in:
+  // leaving the keys view clears the shown key, and leaving or switching a project clears a rotated one.
+  function clearShownKey() { $('k-sk').textContent = ''; $('k-saved').checked = false; $('k-go').disabled = true; }
+  function clearProject() {
+    $('r-sk').textContent = ''; $('rotate-out').hidden = true; $('rotate-confirm').hidden = true; $('rotate-err').textContent = '';
+    $('delete-confirm').hidden = true; $('delete-err').textContent = ''; $('settings-msg').textContent = ''; $('settings-msg').className = 'err';
+  }
+  function show(id) {
+    if (id !== 'keys') clearShownKey();
+    if (id !== 'dash') clearProject();
+    ['gate', 'keys', 'dash', 'account'].forEach(function (x) { $(x).hidden = x !== id; });
+  }
   function api(method, path, body) {
     var h = { 'Content-Type': 'application/json' };
     if (sk && !demo && !me) h.Authorization = 'Bearer ' + sk;
@@ -100,7 +114,7 @@
   $('signout').addEventListener('click', function () {
     if (demo) { location.href = '/dashboard/'; return; }
     if (me) { signOut(); return; }
-    forget(); clearInterval(timer); show('gate');
+    forget(); clearInterval(timer); timer = null; data = null; show('gate');
   });
 
   // ---- signing in ----
@@ -108,7 +122,8 @@
     bad_id_token: 'Google didn\'t confirm a verified email for that account.', exchange_failed: 'The sign-in didn\'t go through. Try again.',
     no_verified_email: 'Your GitHub account has no verified primary email. Verify one on GitHub and try again.',
     github_not_configured: 'Sign in with GitHub isn\'t set up on this server yet.', google_not_configured: 'Sign in with Google isn\'t set up on this server yet.' };
-  if (q.get('signin')) $('signin-err').textContent = SIGNIN_ERR[q.get('signin')] || 'Sign-in didn\'t work. Try again.';
+  var signinErr = q.get('signin');
+  if (signinErr) $('signin-err').textContent = has(SIGNIN_ERR, signinErr) ? SIGNIN_ERR[signinErr] : 'Sign-in didn\'t work. Try again.';
   var codeEmail = '';
   function codeStep(on) { $('email-form').hidden = on; $('code-form').hidden = !on; if (on) $('code-form').code.focus(); }
   $('email-form').addEventListener('submit', function (e) {
@@ -139,19 +154,19 @@
   $('code-back').addEventListener('click', function () { $('signin-err').textContent = ''; codeStep(false); });
   function signOut() {
     forget(); // a key saved from key-only mode goes too
-    api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; clearInterval(timer); timer = null; history.replaceState(null, '', '/dashboard/'); boot(); });
+    api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; data = null; clearInterval(timer); timer = null; clearProject(); clearShownKey(); history.replaceState(null, '', '/dashboard/'); boot(); });
   }
   $('a-signout').addEventListener('click', signOut);
   $('back').addEventListener('click', function () { location.hash = ''; });
-  function dot(on, label) { return '<span class="' + (on ? 'on' : '') + '">' + (on ? '● ' : '○ ') + label + '</span>'; }
+  function dot(on, label) { return '<span class="' + (on ? 'on' : '') + '">' + label + (on ? ' connected' : ' waiting') + '</span>'; }
   function sites() {
-    clearInterval(timer); timer = null; pid = null;
+    clearInterval(timer); timer = null; pid = null; data = null; clearProject();
     return api('GET', 'me').then(function (r) {
       if (!r.ok) { me = null; return boot(); }
       me = r.user; tsKey = r.turnstile || null; $('a-email').textContent = me.email; show('account');
       $('sites').innerHTML = r.sites.length ? r.sites.map(function (x) {
         return '<button class="card site" type="button" data-pid="' + esc(x.pid) + '"><b>' + esc(x.name) + '</b><code>' + esc(x.publicKey) + '</code>' +
-          '<span class="dots">' + dot(x.status.page, 'page') + dot(x.status.server, 'server') + '</span></button>';
+          '<span class="dots">' + dot(x.status && x.status.page, 'page') + dot(x.status && x.status.server, 'server') + '</span><span class="go">open dashboard →</span></button>';
       }).join('') : '<p class="empty">No sites yet. Add your first one below.</p>';
     });
   }
@@ -202,33 +217,47 @@
   addEventListener('hashchange', route);
 
   // ---- dashboard ----
+  // Stacked bars per day. Every number goes through Number() and every label through esc(), even though they come
+  // from this site's own API; colours come from the stylesheet (b-accept, b-review, b-reject).
   function chart(days) {
-    var W = 560, H = 180, pad = 22, n = days.length, bw = (W - pad) / n;
-    var max = Math.max(1, Math.max.apply(null, days.map(function (d) { return d.accept + d.review + d.reject; })));
+    // Drawn at the box's own width, so bars stretch and the axis labels don't.
+    var W = Math.max(300, Math.round($('chart').clientWidth || 560)), H = 190, pad = 28, n = days.length || 1, bw = (W - pad) / n, base = H - 20, top = 12;
+    var max = Math.max(1, Math.max.apply(null, days.map(function (d) { return (Number(d.accept) || 0) + (Number(d.review) || 0) + (Number(d.reject) || 0); })));
     var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-    out += '<line x1="' + pad + '" y1="' + (H - 18) + '" x2="' + W + '" y2="' + (H - 18) + '" stroke="rgba(255,255,255,.12)"/>';
-    out += '<text x="0" y="12" fill="#9aa0c4" font-size="10">' + max + '</text>';
+    out += '<line class="gl2" x1="' + pad + '" y1="' + top + '" x2="' + W + '" y2="' + top + '"/>';
+    out += '<line class="gl2" x1="' + pad + '" y1="' + ((base + top) / 2) + '" x2="' + W + '" y2="' + ((base + top) / 2) + '"/>';
+    out += '<line class="gl" x1="' + pad + '" y1="' + base + '" x2="' + W + '" y2="' + base + '"/>';
+    out += '<text class="ax" x="0" y="' + (top + 4) + '">' + esc(max) + '</text><text class="ax" x="0" y="' + (base + 3) + '">0</text>';
     days.forEach(function (d, i) {
-      var x = pad + i * bw + 3, w = Math.max(2, bw - 6), y = H - 18, scale = (H - 34) / max;
-      [['accept', '#3ddc84'], ['review', '#ffb020'], ['reject', '#ff4d5e']].forEach(function (p) {
-        var h = d[p[0]] * scale; if (h <= 0) return; y -= h;
-        out += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="2" fill="' + p[1] + '"><title>' + d.day + ' ' + p[0] + ': ' + d[p[0]] + '</title></rect>';
+      var x = pad + i * bw + 3, w = Math.max(2, bw - 6), y = base, scale = (base - top) / max, day = String(d.day);
+      var iso = day.length === 8 ? day.slice(0, 4) + '-' + day.slice(4, 6) + '-' + day.slice(6) : day;
+      ['accept', 'review', 'reject'].forEach(function (k) {
+        var c = Number(d[k]) || 0, h = c * scale; if (h <= 0) return; y -= h;
+        out += '<rect class="b-' + k + '" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"><title>' + esc(iso) + ' ' + k + ': ' + esc(c) + '</title></rect>';
       });
-      if (i % 2 === 0 || n < 8) out += '<text x="' + (x + w / 2) + '" y="' + (H - 4) + '" fill="#9aa0c4" font-size="10" text-anchor="middle">' + d.day.slice(6) + '</text>';
+      if (i % 2 === 0 || n < 8) out += '<text class="ax" x="' + (x + w / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + esc(day.slice(6)) + '</text>';
     });
     return out + '</svg>';
   }
 
+  // A reason's readable text, looked up as an own key only (a code of "constructor" shows as the code).
+  function rt(code) { return data && has(data.reasonText, code) ? data.reasonText[code] : code; }
+  // A verdict is one of three known words; anything else is shown as plain text, never as a class name.
+  var VERDICT = { accept: 'verified', review: 'flagged', reject: 'rejected' };
+  function vk(v) { return has(VERDICT, v) ? v : 'info'; }
+
   function render(d) {
     data = d; var p = d.project;
     $('d-name').textContent = p.name; $('d-pk').textContent = p.publicKey; $('d-demo').hidden = !p.demo;
-    $('owner-only').hidden = !!p.demo; $('signout').textContent = p.demo ? 'exit demo' : 'sign out';
+    $('owner-only').hidden = !!p.demo; $('signout').textContent = p.demo ? 'Exit demo' : 'Sign out';
+    $('delete').textContent = me ? 'Delete this site' : 'Delete this project';
     var w = d.warnings || [];
     $('warns').hidden = !w.length;
     $('warn-list').innerHTML = w.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('');
-    var tot = { sessions: 0, accept: 0, review: 0, reject: 0 }, reasons = {};
-    d.days.forEach(function (x) { tot.sessions += x.sessions; tot.accept += x.accept; tot.review += x.review; tot.reject += x.reject;
-      for (var k in x.reasons) reasons[k] = (reasons[k] || 0) + x.reasons[k]; });
+    var tot = { sessions: 0, accept: 0, review: 0, reject: 0 }, reasons = Object.create(null);
+    var n = function (v) { return Number(v) || 0; };
+    d.days.forEach(function (x) { tot.sessions += n(x.sessions); tot.accept += n(x.accept); tot.review += n(x.review); tot.reject += n(x.reject);
+      for (var k in x.reasons) if (has(x.reasons, k)) reasons[k] = (reasons[k] || 0) + n(x.reasons[k]); });
     $('s-sessions').textContent = tot.sessions; $('s-accept').textContent = tot.accept; $('s-review').textContent = tot.review; $('s-reject').textContent = tot.reject;
     var all = tot.accept + tot.review + tot.reject;
     $('s-rate').textContent = all ? Math.round(tot.reject / all * 100) + '% of all checks' : 'of all checks';
@@ -237,18 +266,18 @@
     var rs = Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; }).slice(0, 8);
     var rmax = rs.length ? reasons[rs[0]] : 1;
     $('why').innerHTML = rs.length ? rs.map(function (k) {
-      return '<li><div class="row"><b>' + esc(d.reasonText[k] || k) + '</b><span class="num">' + reasons[k] + '</span></div><div class="bar"><i style="width:' + (reasons[k] / rmax * 100) + '%"></i></div></li>';
+      var c = reasons[k];
+      return '<li><div class="row"><b>' + esc(rt(k)) + '</b><span class="num">' + esc(c) + '</span></div><div class="bar"><i style="width:' + esc(c / (rmax || 1) * 100) + '%"></i></div></li>';
     }).join('') : '<li class="empty">Nothing flagged yet. Reasons show up here as checks come in.</li>';
 
-    var label = { accept: 'verified', review: 'flagged', reject: 'rejected' };
     $('events').tBodies[0].innerHTML = d.events.length ? d.events.map(function (e, i) {
-      var top = e.reasons[0];
-      return '<tr class="ev" data-i="' + i + '"><td class="num">' + ago(e.t) + '</td><td>' + esc(e.player) + '</td><td class="num">' + (e.score == null ? '·' : esc(e.score)) + '</td><td><span class="chip ' + e.verdict + '">' + label[e.verdict] + '</span></td><td class="num">' + e.risk + '</td><td>' + esc(top ? (d.reasonText[top.code] || top.code) : 'clean') + '</td></tr>';
+      var top = e.reasons && e.reasons[0], v = vk(e.verdict);
+      return '<tr class="ev v-' + v + '" data-i="' + i + '" tabindex="0"><td class="num">' + esc(ago(e.t)) + '</td><td class="u">' + esc(e.player) + '</td><td class="num r">' + (e.score == null ? '·' : esc(e.score)) + '</td><td><span class="chip ' + v + '">' + esc(v === 'info' ? e.verdict : VERDICT[v]) + '</span></td><td class="num r rk ' + v + '">' + esc(e.risk) + '</td><td>' + esc(top ? rt(top.code) : 'clean') + '</td></tr>';
     }).join('') : '<tr><td colspan="6" class="empty">Nothing checked yet. Once your server calls verify, every verdict lands here.</td></tr>';
 
-    $('p-count').textContent = d.playerCount ? d.playerCount + ' seen in 30 days' : '';
+    $('p-count').textContent = d.playerCount ? '· ' + d.playerCount + ' seen in 30 days' : '';
     $('players').tBodies[0].innerHTML = d.players.length ? d.players.map(function (x) {
-      return '<tr><td>' + esc(x.player) + '</td><td class="num">' + x.accept + '</td><td class="num">' + x.review + '</td><td class="num">' + x.reject + '</td><td class="num">' + x.lastRisk + '</td><td>' + esc(x.topReason ? (d.reasonText[x.topReason] || x.topReason) : '') + '</td><td class="num">' + (x.lastSeen ? ago(x.lastSeen) : '') + '</td></tr>';
+      return '<tr><td class="u">' + esc(x.player) + '</td><td class="num r">' + esc(x.accept) + '</td><td class="num r">' + esc(x.review) + '</td><td class="num r">' + esc(x.reject) + '</td><td class="num r">' + esc(x.lastRisk) + '</td><td>' + esc(x.topReason ? rt(x.topReason) : '') + '</td><td class="num r">' + (x.lastSeen ? esc(ago(x.lastSeen)) : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="empty">No users yet.</td></tr>';
 
     if (!p.demo) {
@@ -263,32 +292,45 @@
     lastLoad = Date.now(); tick();
   }
   function tick() { if (lastLoad) $('d-updated').textContent = 'updated ' + ago(lastLoad); }
+  var resizeT = 0;
+  addEventListener('resize', function () {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(function () { if (data && !$('dash').hidden) $('chart').innerHTML = chart(data.days); }, 150);
+  });
 
-  $('events').addEventListener('click', function (e) {
-    var tr = e.target.closest('tr.ev'); if (!tr || !data) return;
+  function toggleEvent(tr) {
+    if (!tr || !data) return;
     var next = tr.nextElementSibling;
-    if (next && next.classList.contains('detail')) { next.remove(); return; }
-    var ev = data.events[Number(tr.getAttribute('data-i'))];
-    var items = ev.reasons.length ? ev.reasons.map(function (r) { return '<li>' + esc(data.reasonText[r.code] || r.code) + (r.detail ? ' <span class="mono">(' + esc(r.detail) + ')</span>' : '') + '</li>'; }).join('') : '<li>No warning signs.</li>';
-    var extra = [ev.durationMs != null ? 'run ' + (ev.durationMs / 1000).toFixed(1) + 's' : null, 'replay ' + esc(ev.replay || 'none'), ev.sid ? 'session ' + esc(ev.sid) : null, new Date(ev.t).toLocaleString()].filter(Boolean).join(' · ');
-    tr.insertAdjacentHTML('afterend', '<tr class="detail"><td colspan="6"><ul>' + items + '</ul>' + extra + '</td></tr>');
+    if (next && next.classList.contains('detail')) { next.remove(); tr.classList.remove('open'); return; }
+    var ev = data.events[Number(tr.getAttribute('data-i'))]; if (!ev) return;
+    var rs = ev.reasons || [];
+    var items = rs.length ? rs.map(function (r) { return '<li>' + esc(rt(r.code)) + ' <span class="mono">' + esc(r.code) + (r.detail ? ' · ' + esc(r.detail) : '') + '</span></li>'; }).join('') : '<li>No warning signs.</li>';
+    var extra = [ev.durationMs != null ? 'run ' + esc((Number(ev.durationMs) / 1000).toFixed(1)) + 's' : null, 'replay ' + esc(ev.replay || 'none'), ev.sid ? 'session ' + esc(ev.sid) : null, esc(new Date(ev.t).toLocaleString())].filter(Boolean).join(' · ');
+    tr.classList.add('open');
+    tr.insertAdjacentHTML('afterend', '<tr class="detail"><td colspan="6"><ul>' + items + '</ul><div class="ex">' + extra + '</div></td></tr>');
+  }
+  $('events').addEventListener('click', function (e) { toggleEvent(e.target.closest('tr.ev')); });
+  $('events').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var tr = e.target.closest('tr.ev'); if (!tr) return;
+    e.preventDefault(); toggleEvent(tr);
   });
 
   $('settings').addEventListener('submit', function (e) {
     e.preventDefault();
     var f = e.target, msg = $('settings-msg');
     msg.className = 'err'; msg.textContent = 'saving…';
-    api('PATCH', me ? 'sites?pid=' + pid : 'project', { name: f.name.value, settings: {
+    api('PATCH', me ? 'sites?pid=' + encodeURIComponent(pid) : 'project', { name: f.name.value, settings: {
       maxScore: f.maxScore.value.trim(), maxScorePerSec: f.maxScorePerSec.value.trim(), minDurationMs: f.minDurationMs.value.trim(),
       reviewAt: f.reviewAt.value.trim(), rejectAt: f.rejectAt.value.trim(), origins: lines(f.origins.value), strictClock: f.strictClock.checked, requireSignedRequests: f.requireSignedRequests.checked, requireHumanCheck: f.requireHumanCheck.checked } })
       .then(function (r) { if (!r.ok) { msg.textContent = r.message || r.error; return; } msg.className = 'err good'; msg.textContent = 'saved'; document.activeElement.blur(); load(); });
   });
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });
-  $('rotate-no').addEventListener('click', function () { $('rotate-confirm').hidden = true; });
+  $('rotate-no').addEventListener('click', function () { $('rotate-confirm').hidden = true; $('rotate-err').textContent = ''; });
   $('rotate-yes').addEventListener('click', function () {
     $('rotate-err').textContent = '';
     (me ? human('rotate', 'ts-rotate') : Promise.resolve(undefined)).then(function (t) {
-      return api('POST', me ? 'sites?pid=' + pid + '&action=rotate' : 'project?action=rotate', me ? { turnstileToken: t } : {});
+      return api('POST', me ? 'sites?pid=' + encodeURIComponent(pid) + '&action=rotate' : 'project?action=rotate', me ? { turnstileToken: t } : {});
     }).then(function (r) {
       if (!r.ok) { $('rotate-err').textContent = r.message || r.error; return; }
       $('rotate-confirm').hidden = true;
@@ -296,9 +338,26 @@
       sk = r.secretKey; save(sk); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
     }, function (e) { $('rotate-err').textContent = whyFailed(e); });
   });
+  // Deleting: a signed-in site goes through DELETE /sites with the human check (action "delete"); a key-only project
+  // through DELETE /project with its key (the API refuses that for a project that belongs to an account).
+  $('delete').addEventListener('click', function () { $('delete-confirm').hidden = false; });
+  $('delete-no').addEventListener('click', function () { $('delete-confirm').hidden = true; $('delete-err').textContent = ''; });
+  $('delete-yes').addEventListener('click', function () {
+    var btn = $('delete-yes'); btn.disabled = true; $('delete-err').textContent = '';
+    (me ? human('delete', 'ts-delete') : Promise.resolve(undefined)).then(function (t) {
+      return api('DELETE', me ? 'sites?pid=' + encodeURIComponent(pid) : 'project', me ? { turnstileToken: t } : undefined);
+    }).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok) { $('delete-err').textContent = r.message || r.error; return; }
+      clearInterval(timer); timer = null; data = null; clearProject();
+      if (me) { if (location.hash.replace('#', '')) location.hash = ''; else sites(); return; }
+      forget(); show('gate');
+    }, function (e) { btn.disabled = false; $('delete-err').textContent = whyFailed(e); });
+  });
 
   function load(first) {
-    return api('GET', demo ? 'dashboard?demo=' + demo : me ? 'sites?pid=' + pid : 'dashboard').then(function (r) {
+    if (first) clearProject(); // a different project (or the same one, fresh): nothing from the last one stays on screen
+    return api('GET', demo ? 'dashboard?demo=' + demo : me ? 'sites?pid=' + encodeURIComponent(pid) : 'dashboard').then(function (r) {
       if (!r.ok) {
         if (me) { if (first) { location.hash = ''; } return; }
         if (r._status === 401 && !demo) { forget(); show('gate'); return; }
