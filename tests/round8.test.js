@@ -72,7 +72,7 @@ test('the grace period for an old build is one day by default, then it counts as
   const saved = { ...(SDK.retired || {}) };
   SDK.retired = { ...saved, [prev]: Date.now() - 2 * 86400e3 }; // replaced two days ago
   try {
-    const v = await run(() => ({ signals: full({ sh: prev }) }));
+    const v = await run((s) => ({ bn: s.bn, n: 1, signals: full({ sh: prev }) }));
     assert.match(detail(v, 'tampered_runtime'), /pyrmi\.js:outdated/, JSON.stringify(v.reasons));
     assert.match(detail(v, 'unverified_client'), /sdk_version/);
     assert.equal(v.verdict, 'reject', JSON.stringify(v));

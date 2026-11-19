@@ -198,7 +198,7 @@ test('2f. a client claiming Safari (or any browser) that sends no fetch metadata
   assert.equal(ok('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Safari/605.1.15'), false);
   const SAFARI = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
   const OLD = SAFARI.replace('17.4', '15.6');
-  const sess = { uh: await require('../api/_lib/crypto').fingerprint('ua', SAFARI) };
+  const sess = { uh: await require('../api/_lib/crypto').fingerprint('ua', SAFARI), nh: await require('../api/_lib/crypto').fingerprint('ip', '192.0.2.1') };
   let r = await core.relayed({ ua: SAFARI, ip: '192.0.2.1', ch: '', sfs: '' }, sess, SAFARI);
   assert.match(r.detail, /not sent by a browser/);
   r = await core.relayed({ ua: OLD, ip: '192.0.2.1', ch: '', sfs: '' }, {}, OLD);

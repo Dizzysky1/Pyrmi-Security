@@ -1,13 +1,13 @@
 /* Pyrmi Security dashboard. Two ways in: signed in (by email code, GitHub or Google; a session cookie this script never sees; every change
-   also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in this tab's sessionStorage only
-   (round 12: never localStorage) and is only ever sent to this site's own API. Everything shown is escaped: user names come
+   also sends X-Pyrmi-CSRF), or with a project's secret key, which lives in JS memory only for this page view
+   (never sessionStorage or localStorage) and is only ever sent to this site's own API. Everything shown is escaped: user names come
    from your users. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   // The browser script to tell people to use: a fixed version with its integrity hash (scripts/build-sdk.js keeps this
   // line up to date). That file never changes, so a page that pins it can't be handed a different script.
-  var SDK_PATH = '/sdk/1.4.1/pyrmi.js', SDK_SRI = 'sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8';
+  var SDK_PATH = '/sdk/1.4.2/pyrmi.js', SDK_SRI = 'sha384-/LUxQoNA6RTUwSJC1381rBcE/w28rwNZwK7AfX8mqAnAxhTsjKbln2RsPUCahqvz';
   var sdkTag = function (origin, pk) { return '<script src="' + origin + SDK_PATH + '" integrity="' + SDK_SRI + '" crossorigin="anonymous" data-site="' + pk + '"></script>'; };
   var q = new URLSearchParams(location.search);
   var demo = q.has('demo') ? (q.get('demo') === 'site' ? 'site' : '1') : null;
@@ -45,7 +45,8 @@
     });
   }
   function whyFailed(e) { return e && e.message === 'human_check' ? HUMAN_ERR : 'Could not reach the server.'; }
-  try { sk = sessionStorage.getItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
+  // Proactively wipe any legacy stored key from older versions; key-only sk_ lives in JS memory only.
+  try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   // Lookups keyed by anything from a URL or the API go through has(), so "toString" or "constructor" never resolve to
@@ -61,12 +62,14 @@
   function show(id) {
     if (id !== 'keys') clearShownKey();
     if (id !== 'dash') clearProject();
+    if (id !== 'gate') $('gate-msg').textContent = '';
+    if (id !== 'account') $('a-err').textContent = '';
     ['gate', 'keys', 'dash', 'account'].forEach(function (x) { $(x).hidden = x !== id; });
   }
   function api(method, path, body) {
     var h = { 'Content-Type': 'application/json' };
     if (sk && !demo && !me) h.Authorization = 'Bearer ' + sk;
-    var own = me || path === 'me' || path.indexOf('auth/') === 0;
+    var own = me || path === 'me' || path.indexOf('me?') === 0 || path.indexOf('auth/') === 0;
     if (own) h['X-Pyrmi-CSRF'] = '1';
     return fetch('/api/v1/' + path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined, credentials: own ? 'same-origin' : 'omit' })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'http_' + r.status }; }).then(function (j) { j._status = r.status; return j; }); });
@@ -76,11 +79,8 @@
     if (s < 60) return Math.floor(s) + 's ago'; if (s < 3600) return Math.floor(s / 60) + 'm ago';
     if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago';
   }
-  // The key lives in this tab's sessionStorage only, never localStorage, so it doesn't outlive the tab; a copy saved by
-  // an older version is removed.
-  function save(k) {
-    try { sessionStorage.setItem(KEY, k); localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
-  }
+  // Key-only sk_ stays in JS memory only (never written to sessionStorage or localStorage); forget() clears memory and
+  // removes any legacy copy left by an older version.
   function forget() { try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch (e) { /* ignore */ } sk = null; }
   function lines(v) { return String(v || '').split(/[\s,]+/).filter(Boolean); }
 
@@ -98,7 +98,7 @@
       guardStart(); // tokens are single use
       if (!r.ok) { $('create-err').textContent = r.message || r.error; return; }
       $('k-pk').textContent = r.project.publicKey; $('k-title').textContent = 'Project created'; $('k-sk').textContent = r.project.secretKey;
-      sk = r.project.secretKey; save(sk); show('keys');
+      sk = r.project.secretKey; show('keys');
     }, function (e) { btn.disabled = false; $('create-err').textContent = whyFailed(e); });
   });
   $('k-saved').addEventListener('change', function () { $('k-go').disabled = !this.checked; });
@@ -108,7 +108,7 @@
     var f = e.target; sk = f.sk.value.trim(); $('login-err').textContent = '';
     api('GET', 'project').then(function (r) {
       if (!r.ok) { $('login-err').textContent = r._status === 401 ? 'That key didn\'t work.' : (r.message || r.error); sk = null; return; }
-      save(sk); f.sk.value = ''; load(true);
+      f.sk.value = ''; load(true);
     });
   });
   $('signout').addEventListener('click', function () {
@@ -148,15 +148,36 @@
     api('POST', 'auth/email?action=verify', { email: codeEmail, code: f.code.value }).then(function (r) {
       btn.disabled = false;
       if (!r.ok) { $('signin-err').textContent = r.message || r.error; if (r.error === 'too_many_tries') codeStep(false); return; }
-      f.reset(); codeStep(false); boot();
+      f.reset(); codeStep(false); forget(); boot();
     }, function () { btn.disabled = false; $('signin-err').textContent = 'Could not reach the server.'; });
   });
   $('code-back').addEventListener('click', function () { $('signin-err').textContent = ''; codeStep(false); });
+  function resetAccountState() {
+    forget(); me = null; pid = null; data = null;
+    clearInterval(timer); timer = null;
+    clearProject(); clearShownKey();
+    $('sites').textContent = ''; $('a-email').textContent = '';
+    history.replaceState(null, '', '/dashboard/');
+  }
   function signOut() {
-    forget(); // a key saved from key-only mode goes too
-    api('POST', 'me?action=signout', {}).then(function () { me = null; pid = null; data = null; clearInterval(timer); timer = null; clearProject(); clearShownKey(); history.replaceState(null, '', '/dashboard/'); boot(); });
+    forget(); // a key from key-only mode goes too
+    api('POST', 'me?action=signout', {}).then(function () { resetAccountState(); boot(); });
+  }
+  function revokeAll() {
+    var btn = $('a-revoke-all');
+    btn.disabled = true; $('a-err').textContent = '';
+    api('POST', 'me?action=revoke-all', {}).then(function (r) {
+      btn.disabled = false;
+      if (!r.ok && r._status !== 401) { $('a-err').textContent = r.message || r.error || 'Could not sign out all devices.'; return; }
+      resetAccountState();
+      return boot().then(function () { $('gate-msg').textContent = 'Signed out on all devices.'; });
+    }, function () {
+      btn.disabled = false;
+      $('a-err').textContent = 'Could not reach the server.';
+    });
   }
   $('a-signout').addEventListener('click', signOut);
+  $('a-revoke-all').addEventListener('click', revokeAll);
   $('back').addEventListener('click', function () { location.hash = ''; });
   function dot(on, label) { return '<span class="' + (on ? 'on' : '') + '">' + label + (on ? ' connected' : ' waiting') + '</span>'; }
   function sites() {
@@ -266,8 +287,8 @@
     var rs = Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; }).slice(0, 8);
     var rmax = rs.length ? reasons[rs[0]] : 1;
     $('why').innerHTML = rs.length ? rs.map(function (k) {
-      var c = reasons[k];
-      return '<li><div class="row"><b>' + esc(rt(k)) + '</b><span class="num">' + esc(c) + '</span></div><div class="bar"><i style="width:' + esc(c / (rmax || 1) * 100) + '%"></i></div></li>';
+      var c = reasons[k], pct = Math.max(0, Math.min(100, Math.round(c / (rmax || 1) * 1000) / 10));
+      return '<li><div class="row"><b>' + esc(rt(k)) + '</b><span class="num">' + esc(c) + '</span></div><progress class="bar" max="100" value="' + esc(pct) + '" aria-hidden="true"></progress></li>';
     }).join('') : '<li class="empty">Nothing flagged yet. Reasons show up here as checks come in.</li>';
 
     $('events').tBodies[0].innerHTML = d.events.length ? d.events.map(function (e, i) {
@@ -327,6 +348,7 @@
   });
   $('rotate').addEventListener('click', function () { $('rotate-confirm').hidden = false; });
   $('rotate-no').addEventListener('click', function () { $('rotate-confirm').hidden = true; $('rotate-err').textContent = ''; });
+  $('rotate-dismiss').addEventListener('click', function () { $('r-sk').textContent = ''; $('rotate-out').hidden = true; });
   $('rotate-yes').addEventListener('click', function () {
     $('rotate-err').textContent = '';
     (me ? human('rotate', 'ts-rotate') : Promise.resolve(undefined)).then(function (t) {
@@ -335,7 +357,7 @@
       if (!r.ok) { $('rotate-err').textContent = r.message || r.error; return; }
       $('rotate-confirm').hidden = true;
       if (me) { $('r-sk').textContent = r.secretKey; $('rotate-out').hidden = false; return; }
-      sk = r.secretKey; save(sk); $('r-sk').textContent = sk; $('rotate-out').hidden = false;
+      sk = r.secretKey; $('r-sk').textContent = sk; $('rotate-out').hidden = false;
     }, function (e) { $('rotate-err').textContent = whyFailed(e); });
   });
   // Deleting: a signed-in site goes through DELETE /sites with the human check (action "delete"); a key-only project
@@ -375,7 +397,7 @@
     if (demo) return load(true);
     return api('GET', 'me').then(function (r) {
       tsKey = r.turnstile || null;
-      if (r.ok) { me = r.user; return route(); }
+      if (r.ok) { forget(); me = r.user; return route(); }
       var p = r.providers || {}, any = p.email || p.github || p.google;
       $('signin-card').hidden = !any; $('skip-acct').hidden = !any;
       $('github-btn').hidden = !p.github; $('google-btn').hidden = !p.google;

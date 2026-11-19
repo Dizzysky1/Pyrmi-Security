@@ -35,3 +35,4 @@ One line per change, newest at the bottom.
 - 2026-11-01: More hardening of key changes, sign-in limits and sealed values; key-only projects can be deleted with their key; `simulate` gets the session's own seed; safer integration examples.
 - 2026-11-02: Hardening and header updates; pyrmi-server 0.3.2 runs `simulate` after Pyrmi answers, with a size limit on replays.
 - 2026-11-17: Cloudflare Workers support, cleaner UI across the site and dashboard, and tighter server, SDK and header defaults (browser script 1.4.1, pyrmi-server 0.3.3).
+- 2026-11-18: More hardening across the API, dashboard, dev server, headers and SDKs (browser script 1.4.2, pyrmi-server 0.3.4).

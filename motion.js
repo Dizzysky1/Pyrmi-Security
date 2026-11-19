@@ -15,7 +15,7 @@
   Array.prototype.forEach.call(items, function (el) {
     if (el.getBoundingClientRect().top < fold) return; // already on screen: leave it alone
     var sib = Array.prototype.indexOf.call(el.parentNode.children, el);
-    el.classList.add('rv'); el.style.setProperty('--d', Math.min(sib, 5) * 50 + 'ms');
+    el.classList.add('rv', 'rv-d' + Math.min(sib, 5));
     io.observe(el);
   });
 })();

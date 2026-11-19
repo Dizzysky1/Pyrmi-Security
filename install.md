@@ -32,7 +32,7 @@ that scrapers hit. Ask the developer if it isn't clear. Protect those, not every
 Add once to each page that sends a protected request, before the page's own script:
 
 ```html
-<script src="https://pyrmi.com/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
+<script src="https://pyrmi.com/sdk/1.4.2/pyrmi.js" integrity="sha384-/LUxQoNA6RTUwSJC1381rBcE/w28rwNZwK7AfX8mqAnAxhTsjKbln2RsPUCahqvz" crossorigin="anonymous" data-site="pk_REPLACE_ME"></script>
 ```
 
 It defines `window.Pyrmi`.

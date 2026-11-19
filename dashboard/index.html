@@ -32,6 +32,7 @@
         <h1 class="title">Your dashboard</h1>
       </div>
     </div>
+    <p class="err good" id="gate-msg" role="status"></p>
     <div class="gate-grid">
       <div class="pane" id="signin-card" hidden>
         <div class="pane-h"><span class="label">With an account</span></div>
@@ -91,8 +92,12 @@
         <p class="label">Signed in as <span id="a-email" class="acct"></span></p>
         <h1 class="title">Your sites</h1>
       </div>
-      <button class="btn sm" type="button" id="a-signout">Sign out</button>
+      <div class="acts">
+        <button class="btn sm" type="button" id="a-signout">Sign out</button>
+        <button class="btn sm danger" type="button" id="a-revoke-all">Sign out all devices</button>
+      </div>
     </div>
+    <p class="err" id="a-err" role="alert"></p>
     <div id="sites" class="sites"></div>
     <div class="gate-grid gap-l">
       <form class="pane sub-form" id="add-site">
@@ -229,7 +234,7 @@
           <div class="ts" id="ts-rotate" hidden></div>
           <span class="err" id="rotate-err" role="alert"></span>
         </div>
-        <div id="rotate-out" hidden class="keyrow secret"><span>new key</span><code id="r-sk"></code><button class="copy" type="button" data-copy="r-sk">copy</button></div>
+        <div id="rotate-out" hidden class="keyrow secret"><span>new key</span><code id="r-sk"></code><div class="keyrow-acts"><button class="copy" type="button" data-copy="r-sk">copy</button><button class="copy" type="button" id="rotate-dismiss">Dismiss</button></div></div>
         <div class="panel-h sub"><span>Delete</span></div>
         <p class="muted small-t">Deletes this project and its keys. Verify calls with its secret key stop working at once. This can't be undone.</p>
         <button class="btn sm danger" type="button" id="delete">Delete this project</button>
@@ -251,7 +256,7 @@
     <nav aria-label="Footer"><a href="/">Home</a><a href="/docs/">Docs</a><a href="/install.md">Install guide</a></nav>
   </div>
 </footer>
-<script src="/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_pyrmi_site"></script>
+<script src="/sdk/1.4.2/pyrmi.js" integrity="sha384-/LUxQoNA6RTUwSJC1381rBcE/w28rwNZwK7AfX8mqAnAxhTsjKbln2RsPUCahqvz" crossorigin="anonymous" data-site="pk_pyrmi_site"></script>
 <script src="/site.js?v=4"></script>
 <script src="/dashboard/app.js?v=4"></script>
 </body>

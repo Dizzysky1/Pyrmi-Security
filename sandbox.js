@@ -90,7 +90,7 @@
     var c = $('v-chip'); c.className = 'chip ' + chip + (label === 'checking…' ? ' busy' : ''); c.textContent = chip === 'info' ? (label === 'checking…' ? 'pending' : 'no verdict') : chip;
     $('v-trust').hidden = true;
     $('v-risk-n').textContent = risk == null ? '–' : risk;
-    $('v-risk').style.width = (risk == null ? 0 : risk) + '%';
+    $('v-risk').value = risk == null ? 0 : risk;
     facts(null);
     summary(lines);
     clear($('v-reasons'));
@@ -106,7 +106,7 @@
     t.className = 'chip ' + (v.trusted === true ? 'trusted' : 'untrusted'); t.textContent = v.trusted === true ? 'trusted' : 'not trusted';
     var risk = Math.max(0, Math.min(100, Number(v.risk) || 0));
     $('v-risk-n').textContent = risk;
-    $('v-risk').style.width = risk + '%';
+    $('v-risk').value = risk;
     facts(v, ms);
     var lines = [what];
     if (!v.reasons.length) lines.push('No warning signs. Your server would go ahead.');
@@ -122,7 +122,6 @@
       li.appendChild(el('span', 'txt', (r.text || r.code) + (r.detail ? ' (' + r.detail + ')' : '')));
       var w = Number(r.weight), hard = w >= 100;
       var ws = el('span', 'w' + (hard ? ' hard' : ''), hard ? 'hard' : Number.isFinite(w) ? '+' + w : '');
-      ws.style.gridColumn = '3'; ws.style.gridRow = '1';
       li.appendChild(ws);
       ul.appendChild(li);
     });

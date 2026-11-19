@@ -120,6 +120,7 @@ export interface TurnstileResult {
   errorCodes: string[];
   hostname?: string;
   action?: string;
+  cdata?: string;
 }
 
 export interface TurnstileOptions {
@@ -127,8 +128,10 @@ export interface TurnstileOptions {
   remoteip?: string;
   /** The data-action your widget was given. A token made for another action fails. */
   action?: string;
-  /** Your site's hostname. A token made on another host fails. */
+  /** Your site's hostname (compared case-insensitively). A token made on another host fails. */
   hostname?: string;
+  /** The cData your widget was rendered with (e.g. session id). A token made with different cdata fails. */
+  cdata?: string;
 }
 
 export declare class Pyrmi {

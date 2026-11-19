@@ -30,6 +30,7 @@ async function readJson(req, max) {
     return !Array.isArray(raw) ? raw : {};
   }
   if (raw === undefined || raw === null) {
+    if (typeof req[Symbol.asyncIterator] !== 'function') return {};
     const chunks = []; let size = 0;
     for await (const ch of req) {
       const b = Buffer.isBuffer(ch) ? ch : Buffer.from(String(ch));
@@ -38,6 +39,7 @@ async function readJson(req, max) {
     }
     raw = Buffer.concat(chunks).toString('utf8');
   } else if (Buffer.isBuffer(raw)) raw = raw.toString('utf8');
+  else if (typeof raw !== 'string') return {};
   if (raw.length > max || Buffer.byteLength(raw, 'utf8') > max) throw httpError(413, 'body_too_large');
   if (!raw.trim()) return {};
   try { const v = JSON.parse(raw); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch (_) { throw httpError(400, 'bad_json'); }
@@ -80,6 +82,12 @@ function ownHost(req) {
 // (Node's fetch included) send neither. Note Node's fetch does send Sec-Fetch-Mode, so that one proves nothing.
 function fromBrowser(req) { return !!(req.headers.origin || req.headers['sec-fetch-site']); }
 
+function validOrigin(origin) {
+  if (typeof origin !== 'string' || !origin || /[\r\n\u0000-\u001f\u007f]/.test(origin)) return false;
+  let u; try { u = new URL(origin); } catch (_) { return false; }
+  return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === origin;
+}
+
 // CORS for the public (browser) endpoints. allowed = list of origins, empty = any origin.
 function cors(req, res, allowed) {
   const origin = String(req.headers.origin || '');
@@ -88,6 +96,7 @@ function cors(req, res, allowed) {
   // "null" is what sandboxed iframes, data: and file: pages send. Echoing it would let any such page read the answer,
   // whoever made it, so it's never echoed.
   if (origin === 'null') return !allowed || !allowed.length;
+  if (!validOrigin(origin)) return false;
   const ok = !allowed || !allowed.length || allowed.includes(origin);
   if (ok) {
     res.setHeader('Access-Control-Allow-Origin', origin);

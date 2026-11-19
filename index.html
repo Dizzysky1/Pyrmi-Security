@@ -57,7 +57,7 @@
     <dl class="specs">
       <div><dt>Verdict</dt><dd>accept · review · reject</dd></div>
       <div><dt>Risk</dt><dd class="num">0–100, with reasons</dd></div>
-      <div><dt>Browser script</dt><dd class="num">1.4.1, pinned with SRI</dd></div>
+      <div><dt>Browser script</dt><dd class="num">1.4.2, pinned with SRI</dd></div>
       <div><dt>Self-host</dt><dd>Cloudflare Workers or Vercel</dd></div>
     </dl>
   </section>
@@ -88,7 +88,7 @@
     <div class="code-pair">
       <div class="code">
         <div class="code-h"><span>page.html</span><button class="copy" type="button" data-copy="c1">copy</button></div>
-<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
+<pre id="c1">&lt;script src="https://pyrmi.com/sdk/1.4.2/pyrmi.js" integrity="sha384-/LUxQoNA6RTUwSJC1381rBcE/w28rwNZwK7AfX8mqAnAxhTsjKbln2RsPUCahqvz" crossorigin="anonymous" data-site="pk_..."&gt;&lt;/script&gt;
 &lt;script type="module"&gt;
   const s = await Pyrmi.start();   <span class="c">// on page load</span>
   <span class="c">// when the user signs up, votes, buys...</span>
@@ -177,7 +177,7 @@ if (v.verdict === 'reject') return res.status(403).end();
               </div>
               <div class="v-risk"><span class="n" id="v-risk-n">–</span><span class="of">risk / 100</span></div>
             </div>
-            <div class="meter" aria-hidden="true"><i id="v-risk"></i><b class="tick t40"></b><b class="tick t70"></b></div>
+            <div class="meter" aria-hidden="true"><progress id="v-risk" class="meter-fill" max="100" value="0"></progress><b class="tick t40"></b><b class="tick t70"></b></div>
             <div class="scale" aria-hidden="true"><span class="s0">0</span><span class="s40">review 40</span><span class="s70">reject 70</span><span class="s100">100</span></div>
             <dl class="facts" id="v-facts">
               <div><dt>trusted(v)</dt><dd class="meh">–</dd></div>
@@ -247,7 +247,7 @@ if (v.verdict === 'reject') return res.status(403).end();
   </div>
 </footer>
 
-<script src="/sdk/1.4.1/pyrmi.js" integrity="sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
+<script src="/sdk/1.4.2/pyrmi.js" integrity="sha384-/LUxQoNA6RTUwSJC1381rBcE/w28rwNZwK7AfX8mqAnAxhTsjKbln2RsPUCahqvz" crossorigin="anonymous" data-site="pk_demo_sandbox"></script>
 <script src="/site.js?v=4"></script>
 <script src="/motion.js?v=4"></script>
 <script src="/sandbox.js?v=4"></script>

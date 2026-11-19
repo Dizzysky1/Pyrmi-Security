@@ -31,7 +31,7 @@ jobs:
       - name: Stage Cloudflare assets and dry-run Worker bundle
         run: |
           node scripts/build-cf.js
-          npx wrangler deploy --dry-run
+          npx --no-install wrangler deploy --dry-run
       - name: Tests (production key prefix)
         run: node --test tests/*.test.js
         env:

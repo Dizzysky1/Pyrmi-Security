@@ -33,7 +33,7 @@ test('the reported forge: made-up signals from a script no longer earn a clean 9
   const ip = '192.0.2.' + ipn++;
   const h = { 'X-Forwarded-For': ip };
   const s = (await post('/session', { site: 'pk_demo_sandbox' }, h)).body;
-  await post('/signal', { token: s.token, signals: { wd: false, hl: false, au: [], tp: [], wr: [], dt: 0, ut: 0, ih: 0, k: 4, p: 6, h: 0, pt: 1600, gt: null } }, h);
+  await post('/signal', { token: s.token, bn: s.bn, n: 1, signals: { wd: false, hl: false, au: [], tp: [], wr: [], dt: 0, ut: 0, ih: 0, k: 4, p: 6, h: 0, pt: 1600, gt: null } }, h);
   await wait(1600);
   const v = await verdict(s.token, ip);
   assert.notEqual(v.verdict, 'accept', JSON.stringify(v));
@@ -46,7 +46,7 @@ test('leaving the fields out (signals: {}) counts as a tampered script, not a cl
   const ip = '192.0.2.' + ipn++;
   const h = { ...PAGE, 'X-Forwarded-For': ip };
   const s = (await post('/session', { site: 'pk_demo_sandbox', pt: 0 }, h)).body;
-  await post('/signal', { token: s.token, signals: {} }, h);
+  await post('/signal', { token: s.token, bn: s.bn, n: 1, signals: {} }, h);
   await wait(1600);
   const v = await verdict(s.token, ip);
   assert.match(detail(v, 'tampered_runtime'), /pyrmi\.js:missing/, JSON.stringify(v.reasons));
@@ -62,7 +62,7 @@ test('old build fingerprints stop being a free pass after their grace period; th
     const ip = '192.0.2.' + ipn++;
     const h = { ...PAGE, 'X-Forwarded-For': ip };
     const s = (await post('/session', { site: 'pk_demo_sandbox', pt: 0 }, h)).body;
-    await post('/signal', { token: s.token, signals: B.signals({ sh: old }) }, h);
+    await post('/signal', { token: s.token, bn: s.bn, n: 1, signals: B.signals({ sh: old }) }, h);
     await wait(1600);
     const v = await verdict(s.token, ip, 5);
     assert.match(detail(v, 'tampered_runtime'), /pyrmi\.js:outdated/, JSON.stringify(v.reasons));
@@ -100,12 +100,14 @@ test('a clean beacon captured from one session and re-posted under a fresh token
   const v = await verdict(b.token, ip, 5);
   assert.ok(codes(v).includes('unverified_client') || codes(v).includes('no_client'), JSON.stringify(v.reasons));
   assert.notEqual(v.verdict, 'accept');
-  // without the nonce (the tester's version: same signals, fresh token): still not a clean pass
+  // without the nonce (the tester's version: same signals, fresh token): refused outright without mutating the session
   const c = (await post('/session', { site: 'pk_demo_sandbox', pt: 0 }, h)).body;
+  const noBn = await post('/signal', { token: c.token, signals: captured.signals }, h);
+  assert.equal(noBn.status, 409);
+  assert.equal(noBn.body.error, 'wrong_session');
   await wait(1600);
-  await post('/signal', { token: c.token, signals: captured.signals }, h);
   const w = await verdict(c.token, ip, 5);
-  assert.match(detail(w, 'unverified_client'), /nonce/, JSON.stringify(w.reasons));
+  assert.ok(codes(w).includes('no_client'), JSON.stringify(w.reasons));
   assert.notEqual(w.verdict, 'accept');
 });
 

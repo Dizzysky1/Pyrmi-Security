@@ -17,7 +17,7 @@ const DEBUG = /[?&]bg=debug\b/.test(location.search);
 function note(msg) {
   if (!DEBUG) return;
   let el = document.getElementById('bg-debug');
-  if (!el) { el = document.createElement('div'); el.id = 'bg-debug'; el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99;font:12px monospace;color:#fff;background:#000c;padding:4px 8px'; document.body.appendChild(el); }
+  if (!el) { el = document.createElement('div'); el.id = 'bg-debug'; document.body.appendChild(el); }
   el.textContent = 'bg: ' + msg;
 }
 
@@ -176,11 +176,11 @@ function start() {
   bloom.enabled = !mobile;
   composer.addPass(bloom);
   const finish = new ShaderPass({
-    uniforms: { tDiffuse: { value: null } },
+    uniforms: { tDiffuse: { value: null }, uFade: { value: BASE } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float uFade; varying vec2 vUv;
       void main(){ vec3 col=texture2D(tDiffuse,vUv).rgb; float d=length(vUv-0.5);
-        col*=mix(0.3,1.0,smoothstep(0.8,0.2,d));
+        col*=mix(0.3,1.0,smoothstep(0.8,0.2,d))*uFade;
         gl_FragColor=vec4(col,1.0); }`,
   });
   composer.addPass(finish);
@@ -210,8 +210,12 @@ function start() {
   let scrollK = 0;
   function readScroll() {
     scrollK = Math.min(1, scrollY / Math.max(innerHeight * 0.85, 1));
-    root.style.setProperty('--gl-o', String(Math.max(0, BASE * (1 - scrollK))));
-    if (scrollK < 1 && !raf && !document.hidden && !reduce) { last = performance.now(); raf = requestAnimationFrame(frame); }
+    finish.uniforms.uFade.value = Math.max(0, BASE * (1 - scrollK));
+    root.classList.toggle('gl-off', scrollK >= 1);
+    if (scrollK < 1 && !raf && !document.hidden) {
+      if (reduce) { if (ready) composer.render(0); }
+      else { last = performance.now(); raf = requestAnimationFrame(frame); }
+    }
   }
 
   const ARRIVE = reduce ? 0 : 1600, born = performance.now();

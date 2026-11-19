@@ -36,16 +36,27 @@ const EC_COOKIE = '__Host-pyrmi_ec';
 // and it can still be sent codes when others have used up the address's hourly cap. Nobody can make one without the
 // server's secret. New browsers can still use GitHub and Google when the cap is full.
 const DEV_COOKIE = '__Host-pyrmi_dev';
+const DEV_TTL = 90 * 86400; // 90 days
 const RID_RE = /^[A-Za-z0-9_-]{22}$/;
 const newRid = () => C.randomId(16);
 const codeKey = (email, rid) => 'ps:ec:' + C.sha256(email) + ':' + C.sha256(rid);
-async function deviceMac(email, id) {
-  return crypto.createHmac('sha256', await C.secret()).update('pyrmi.dev.v1.' + C.sha256(email) + '.' + id).digest('base64url');
+async function deviceMac(email, id, exp) {
+  return crypto.createHmac('sha256', await C.secret()).update('pyrmi.dev.v2.' + C.sha256(email) + '.' + id + '.' + exp).digest('base64url');
 }
-async function deviceMark(email) { const id = newRid(); return id + '.' + await deviceMac(email, id); }
+async function deviceMark(email) {
+  const id = newRid();
+  const exp = Math.floor(Date.now() / 1000) + DEV_TTL;
+  return id + '.' + exp + '.' + await deviceMac(email, id, exp);
+}
 async function knownDevice(email, mark) {
-  const [id, mac] = String(mark || '').split('.');
-  return !!(id && mac && RID_RE.test(id) && C.safeEqual(mac, await deviceMac(email, id)));
+  if (typeof mark !== 'string') return false;
+  const parts = mark.split('.');
+  if (parts.length !== 3) return false;
+  const [id, expStr, mac] = parts;
+  if (!RID_RE.test(id) || !/^\d{1,12}$/.test(expStr) || !mac) return false;
+  const exp = Number(expStr);
+  if (!Number.isSafeInteger(exp) || exp <= Math.floor(Date.now() / 1000)) return false;
+  return C.safeEqual(mac, await deviceMac(email, id, exp));
 }
 
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
@@ -106,11 +117,15 @@ async function signIn(email, name, via) {
     await kv.cmd('SET', key, 'u_' + C.randomId(12), 'NX');
     uid = await kv.cmd('GET', key);
   }
-  const clean = String(name || email).replace(/[\u0000-\u001f<>]/g, '').slice(0, 80);
-  await kv.cmd('HSET', 'ps:u:' + uid, 'email', email.slice(0, 254), 'name', clean, 'last', Date.now(), 'via', via);
-  await kv.cmd('HSETNX', 'ps:u:' + uid, 'created', Date.now());
+  const clean = (typeof name === 'string' && name ? name : email).replace(/[\u0000-\u001f<>]/g, '').slice(0, 80);
+  const [, , curRev] = await kv.pipeline([
+    ['HSET', 'ps:u:' + uid, 'email', email.slice(0, 254), 'name', clean, 'last', Date.now(), 'via', via],
+    ['HSETNX', 'ps:u:' + uid, 'created', Date.now()],
+    ['HGET', 'ps:u:' + uid, 'rev'],
+  ]);
+  const rev = num(curRev, 0);
   const sid = C.randomId(32), sidh = C.sha256(sid), ttl = sessionTtlSec();
-  await kv.cmd('SET', 'ps:auth:' + sidh, uid, 'EX', ttl);
+  await kv.cmd('SET', 'ps:auth:' + sidh, uid + ':' + rev, 'EX', ttl);
   // Index this session under the user so every session can be revoked at once. Before this there was no per-user
   // index and no revoke-all: a stolen or stale cookie could only be ended by deleting that one key or rotating the
   // whole signing secret. The index is a ZSET (member = session hash), bounded by its own TTL and cleared on
@@ -122,7 +137,7 @@ async function signIn(email, name, via) {
   const extra = num(await kv.cmd('ZCARD', 'ps:usess:' + uid), 0) - sessionsPerUser();
   const older = extra > 0 ? (await kv.cmd('ZRANGE', 'ps:usess:' + uid, 0, extra - 1)) || [] : [];
   if (older.length) await kv.pipeline([['DEL', ...older.map((h) => 'ps:auth:' + h)], ['ZREM', 'ps:usess:' + uid, ...older]]);
-  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0), cookie(DEV_COOKIE, await deviceMark(email), 400 * 86400)] };
+  return { uid, setCookies: [cookie(SESSION_COOKIE, sid, ttl), cookie(STATE_COOKIE, '', 0), cookie(DEV_COOKIE, await deviceMark(email), DEV_TTL)] };
 }
 
 // ---- email codes ------------------------------------------------------------------------------------------------
@@ -131,16 +146,16 @@ async function codeHash(email, code) {
   return crypto.createHmac('sha256', await C.secret()).update('email-code:' + email + ':' + code).digest('base64url');
 }
 
-// Hour-long counter whose TTL is set with the key, in the same request (see core's bump()).
+// Hour-long counter whose TTL is set atomically with the increment.
 async function hourly(key) {
-  const r = await kv.pipeline([['SET', key, '0', 'EX', 3600, 'NX'], ['INCR', key]]);
-  return Number(r[1]);
+  return kv.hit(key, 3600);
 }
 
 // opts: { rid, device } from the requesting browser's cookies (EC_COOKIE, DEV_COOKIE); the endpoint sets EC_COOKIE.
 async function emailStart(body, ip, mailer, opts) {
+  body = body && typeof body === 'object' ? body : {};
   const o = opts || {};
-  const rid = RID_RE.test(String(o.rid || '')) ? o.rid : newRid();
+  const rid = typeof o.rid === 'string' && RID_RE.test(o.rid) ? o.rid : newRid();
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
   const email = cleanEmail(body.email);
   if (!email) throw httpError(400, 'bad_email', 'That doesn\'t look like an email address.');
@@ -194,16 +209,15 @@ async function emailStart(body, ip, mailer, opts) {
 
 // opts: { rid } from the browser's EC_COOKIE. Only the browser that asked for the code can try it, CODE_TRIES times.
 async function emailVerify(body, ip, opts) {
+  body = body && typeof body === 'object' ? body : {};
   if (!emailConfigured()) throw httpError(503, 'email_not_configured', 'Email sign-in isn\'t set up on this server yet.');
   const email = cleanEmail(body.email), code = (typeof body.code === 'string' || typeof body.code === 'number' ? String(body.code) : '').replace(/\D/g, '');
   const wrong = httpError(400, 'bad_code', 'That code didn\'t work. Check it, or ask for a new one.');
-  const rid = String((opts && opts.rid) || '');
+  const rid = typeof (opts && opts.rid) === 'string' ? opts.rid : '';
   if (!email || code.length !== 6 || !RID_RE.test(rid)) throw wrong;
   const key = codeKey(email, rid);
   const [n, stored] = await kv.pipeline([['HINCRBY', key, 'n', 1], ['HGET', key, 'h']]);
-  if (!stored) { await kv.cmd('DEL', key); throw wrong; }
-  const tooMany = httpError(400, 'too_many_tries', 'Too many wrong codes. Ask for a new one.');
-  if (Number(n) > CODE_TRIES) { await kv.cmd('DEL', key); throw tooMany; }
+  if (!stored || Number(n) > CODE_TRIES) { await kv.cmd('DEL', key); throw wrong; }
   if (!C.safeEqual(stored, await codeHash(email, code))) {
     if (Number(n) >= CODE_TRIES) await kv.cmd('DEL', key);
     throw wrong;
@@ -258,7 +272,7 @@ async function oauthStart(req, provider) {
   if (!o.configured()) throw notConfigured(provider);
   const state = C.randomId(24), verifier = C.randomId(48);
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  const signed = await C.signToken({ p: provider, s: state, v: verifier, e: Date.now() + 600e3 });
+  const signed = await C.signToken({ p: provider, s: state, v: verifier, e: Date.now() + 600e3 }, 'oauth');
   const q = new URLSearchParams({
     client_id: o.id(), redirect_uri: redirectUri(req, provider), response_type: 'code', scope: o.scope,
     state, code_challenge: challenge, code_challenge_method: 'S256', ...(o.extra || {}),
@@ -271,7 +285,7 @@ async function oauthCallback(req, provider, params, hooks) {
   const o = OAUTH[provider];
   if (!o.configured()) throw notConfigured(provider);
   if (params.get('error')) throw httpError(400, 'cancelled', o.name + ' sign-in was cancelled.');
-  const st = await C.readToken(readCookies(req)[STATE_COOKIE]);
+  const st = await C.readToken(readCookies(req)[STATE_COOKIE], 'oauth');
   const state = params.get('state'), code = params.get('code');
   if (!st || st.p !== provider || !state || !C.safeEqual(st.s, state) || Date.now() > st.e || !code) {
     throw httpError(400, 'bad_state', 'That sign-in link expired or didn\'t come from this site. Try again.');
@@ -353,14 +367,17 @@ async function currentUser(req) {
   const sid = sessionSid(req);
   if (!sid) return null;
   const sidh = C.sha256(sid);
-  const uid = await kv.cmd('GET', 'ps:auth:' + sidh);
-  if (!uid) return null;
-  // Only sessions in the per-user index count. Sessions from before the index existed were never in it, so
-  // revoke-all couldn't end them; now they simply stop working (a one-time sign-in again), and revoke-all, which
-  // clears the index, ends every session there is.
+  const rawAuth = await kv.cmd('GET', 'ps:auth:' + sidh);
+  if (!rawAuth) return null;
+  const sep = rawAuth.indexOf(':');
+  const uid = sep >= 0 ? rawAuth.slice(0, sep) : rawAuth;
+  const sessRev = sep >= 0 ? num(rawAuth.slice(sep + 1), 0) : 0;
+  // Only sessions in the per-user index and matching the current revocation epoch count. Sessions from before the
+  // index existed stop working, and revoke-all increments rev + clears the index so even a racing signIn is revoked.
   const [inIndex, h] = await kv.pipeline([['ZSCORE', 'ps:usess:' + uid, sidh], ['HGETALL', 'ps:u:' + uid]]);
   if (inIndex === null || inIndex === undefined) return null;
   const u = kv.pairs(h);
+  if (sessRev < num(u.rev, 0)) return null;
   return u.email ? { uid, email: u.email, name: u.name || u.email } : null;
 }
 
@@ -376,15 +393,19 @@ function checkCsrf(req) {
   const site = req.headers['sec-fetch-site'];
   if (req.headers['x-pyrmi-csrf'] !== '1' || (site && site !== 'same-origin')) throw httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
   // Compare the whole origin (scheme, host and port), and refuse Origin: null, which sandboxed iframes and some
-  // redirects send. Plain http is only accepted from this machine, for local development.
+  // redirects send. When PYRMI_PUBLIC_URL is set, pin strictly to its origin instead of trusting raw Host.
   const origin = req.headers.origin;
   if (origin !== undefined) {
     const refused = () => httpError(403, 'csrf', 'Refused: this request didn\'t come from the Pyrmi dashboard.');
     let u = null; try { u = new URL(origin); } catch (_) { throw refused(); }
-    const host = ownHost(req);
-    const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
     let pinned = ''; try { pinned = process.env.PYRMI_PUBLIC_URL ? new URL(process.env.PYRMI_PUBLIC_URL).origin : ''; } catch (_) {}
-    if (u.origin !== (local && u.protocol === 'http:' ? 'http://' : 'https://') + host && !(pinned && u.origin === pinned)) throw refused();
+    if (pinned) {
+      if (u.origin !== pinned) throw refused();
+    } else {
+      const host = ownHost(req);
+      const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+      if (u.origin !== (local && u.protocol === 'http:' ? 'http://' : 'https://') + host) throw refused();
+    }
   }
 }
 
@@ -392,16 +413,18 @@ async function signOut(req) {
   const sid = sessionSid(req);
   if (sid) {
     const sidh = C.sha256(sid);
-    const [uid] = await kv.pipeline([['GET', 'ps:auth:' + sidh], ['DEL', 'ps:auth:' + sidh]]);
+    const [rawAuth] = await kv.pipeline([['GET', 'ps:auth:' + sidh], ['DEL', 'ps:auth:' + sidh]]);
+    const uid = rawAuth ? rawAuth.split(':')[0] : null;
     if (uid) await kv.cmd('ZREM', 'ps:usess:' + uid, sidh); // keep the per-user index in step (Q4/Q10)
   }
   return cookie(SESSION_COOKIE, '', 0);
 }
 
-// Revoke every signed-in session for a user at once: delete each indexed ps:auth entry, then clear the index.
-// Backs POST /api/v1/me?action=revoke-all, so a user — or a response to a suspected compromise — can sign out
-// everywhere without rotating the signing secret. Returns how many sessions were ended. (Q4/Q10)
+// Revoke every signed-in session for a user at once: bump the per-user revocation epoch first (so a racing signIn
+// that started before revoke-all is invalidated too), then delete each indexed ps:auth entry and clear the index.
+// Returns how many sessions were ended. (Q4/Q10)
 async function revokeAllSessions(uid) {
+  await kv.cmd('HINCRBY', 'ps:u:' + uid, 'rev', 1);
   const members = (await kv.cmd('ZRANGE', 'ps:usess:' + uid, 0, -1)) || [];
   if (members.length) await kv.cmd('DEL', ...members.map((h) => 'ps:auth:' + h));
   await kv.cmd('DEL', 'ps:usess:' + uid);
@@ -491,7 +514,10 @@ async function deleteSite(uid, p) {
   });
 }
 
-const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const num = (v, d = 0) => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : d;
+};
 
 module.exports = {
   ownHost, baseUrl, providers, googleConfigured, githubConfigured, emailConfigured, oauthStart, oauthCallback, emailStart, emailVerify, OAUTH,
