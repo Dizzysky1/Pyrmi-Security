@@ -31,20 +31,27 @@ test.before(async () => {
 });
 test.after(() => apiSrv.close());
 
-test('1. pyrmi-server version is 0.3.3 and SDK metadata preserves 1.3.0 + 1.4.0 in supported', () => {
-  assert.equal(serverPkg.version, '0.3.3');
-  assert.equal(sdkMeta.version, '1.4.1');
+test('1. pyrmi-server version is 0.3.4 and SDK metadata preserves 1.3.0 + 1.4.0 + 1.4.1 in supported', () => {
+  assert.equal(serverPkg.version, '0.3.4');
+  assert.equal(sdkMeta.version, '1.4.2');
   assert.equal(sdkMeta.protocol, 3);
   assert.equal(sdkMeta.supported.a854eb80, '1.3.0');
   assert.equal(sdkMeta.supported['0a0d2f04'], '1.4.0');
+  assert.equal(sdkMeta.supported['3d5b0ed0'], '1.4.1');
   // Immutable published SDK files must never change bytes.
   const v140 = fs.readFileSync(path.join(ROOT, 'sdk/1.4.0/pyrmi.js'));
   assert.equal(
     'sha384-' + crypto.createHash('sha384').update(v140).digest('base64'),
     'sha384-Ntb/iXRb7fGCpY1n/1u3hP1GrS8Dh64H7f3TD3wgzmH971YaAL8VZ7efcqfvv/uQ'
   );
+  const v141 = fs.readFileSync(path.join(ROOT, 'sdk/1.4.1/pyrmi.js'));
+  assert.equal(
+    'sha384-' + crypto.createHash('sha384').update(v141).digest('base64'),
+    'sha384-D04YwtCEA1kV3ku22rSlK5QI7BBEb3SkSvSIJGz5i1ololjoYjDLgdbcf8dsuvN8'
+  );
   assert.ok(fs.existsSync(path.join(ROOT, 'sdk/1.3.0/pyrmi.js')));
   assert.ok(fs.existsSync(path.join(ROOT, 'sdk/1.4.1/pyrmi.js')));
+  assert.ok(fs.existsSync(path.join(ROOT, 'sdk/1.4.2/pyrmi.js')));
 });
 
 test('2. pyrmi-server refuses stripped or malformed sealed envelopes instead of downgrading to unsigned', async () => {
@@ -420,7 +427,7 @@ for (const rel of ['src/sdk/pyrmi.js', 'sdk/pyrmi.js']) {
 
   test('8. ' + rel + ': removes probe iframe in finally even when contentWindow throws SecurityError', () => {
     const p = makeSdkPage(sdkFile, { throwFrameSecurityError: true });
-    assert.equal(p.Pyrmi.version, '1.4.1');
+    assert.equal(p.Pyrmi.version, sdkMeta.version);
     assert.deepEqual(p.stats(), { appended: 1, removed: 1 });
   });
 
@@ -488,6 +495,6 @@ test('10. scripts/build-sdk.js uses static string unescaping (no Function/eval) 
       'String.prototype.split = function () { throw new Error("split poisoned"); };',
     ].join('\n'),
   });
-  assert.equal(p.Pyrmi.version, '1.4.1');
+  assert.equal(p.Pyrmi.version, sdkMeta.version);
   assert.equal(typeof p.Pyrmi.seal, 'function');
 });

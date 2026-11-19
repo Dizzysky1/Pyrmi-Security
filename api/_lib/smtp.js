@@ -17,27 +17,31 @@ function config(env) {
 
 const MAX_SMTP_BUF = 64 * 1024;
 const MAX_SMTP_LINES = 100;
+const MAX_SMTP_QUEUE = 100;
 
-// Reads SMTP replies (multi-line "250-..." until "250 ...") from whichever socket is current.
+// Reads SMTP replies (multi-line "250-..." until "250 ..." or textless "250") from whichever socket is current.
 function replies(sock) {
   let buf = '', waiting = null, ended = null;
   const queue = [];
   const onEnd = (e) => { if (ended) return; ended = e || new Error('smtp_closed'); if (waiting) { const w = waiting; waiting = null; w.reject(ended); } };
-  const abort = (code) => { const err = new Error(code); onEnd(err); sock.destroy(err); };
+  const abort = (code) => { queue.length = 0; const err = new Error(code); onEnd(err); sock.destroy(err); };
   const onData = (d) => {
     if (ended) return;
     buf += d.toString('utf8');
     if (buf.length > MAX_SMTP_BUF) return abort('smtp_reply_too_large');
     let m;
-    while ((m = /^(\d{3})([ -])(.*)\r?\n/m.exec(buf)) && m.index === 0) {
+    while ((m = /^(\d{3})(?:([ -])(.*))?\r?\n/.exec(buf))) {
       buf = buf.slice(m[0].length);
       const lines = (queue.lines = queue.lines || []);
-      lines.push(m[3]);
+      lines.push(m[3] || '');
       if (lines.length > MAX_SMTP_LINES) return abort('smtp_too_many_lines');
-      if (m[2] === ' ') {
+      if (m[2] !== '-') {
         const r = { code: Number(m[1]), lines };
         queue.lines = null;
-        if (waiting) { const w = waiting; waiting = null; w.resolve(r); } else queue.push(r);
+        if (waiting) { const w = waiting; waiting = null; w.resolve(r); } else {
+          if (queue.length >= MAX_SMTP_QUEUE) return abort('smtp_too_many_replies');
+          queue.push(r);
+        }
       }
     }
   };
@@ -97,8 +101,9 @@ async function send(msg, opts) {
   const from = msg.from || ('Pyrmi Security <' + cfg.user + '>');
   const timeoutMs = cfg.timeoutMs || 10000;
   const implicitTls = cfg.port === 465;
+  const sni = net.isIP(cfg.host) ? {} : { servername: cfg.host };
   let sock = implicitTls
-    ? tls.connect({ host: cfg.host, port: cfg.port, servername: cfg.host })
+    ? tls.connect({ host: cfg.host, port: cfg.port, ...sni })
     : net.connect({ host: cfg.host, port: cfg.port, lookup: cfg.lookup });
   const timer = setTimeout(() => sock.destroy(new Error('smtp_timeout')), timeoutMs);
   let r = replies(sock);
@@ -117,9 +122,22 @@ async function send(msg, opts) {
         write('STARTTLS');
         await expect([220], 'starttls');
         r.detach();
-        sock = tls.connect({ socket: sock, servername: cfg.host });
+        sock = tls.connect({ socket: sock, ...sni });
         r = replies(sock);
-        await new Promise((resolve, reject) => { sock.once('secureConnect', resolve); sock.once('error', reject); });
+        await new Promise((resolve, reject) => {
+          const done = (err) => {
+            sock.removeListener('secureConnect', onConnect);
+            sock.removeListener('error', onError);
+            sock.removeListener('close', onClose);
+            if (err) reject(err); else resolve();
+          };
+          const onConnect = () => done();
+          const onError = (e) => done(e);
+          const onClose = () => done(new Error('smtp_closed'));
+          sock.once('secureConnect', onConnect);
+          sock.once('error', onError);
+          sock.once('close', onClose);
+        });
         write('EHLO pyrmi.com');
         ehlo = await expect([250], 'ehlo');
       } else if (!LOCAL.has(cfg.host)) {

@@ -6,3 +6,13 @@ scripts
 packages
 src
 docs/HARDENING-TODO.md
+.secrets*
+.dev.vars*
+.env*
+.cf-assets
+.wrangler
+.github
+worker
+wrangler.jsonc
+package.json
+package-lock.json

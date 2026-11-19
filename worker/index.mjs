@@ -28,16 +28,30 @@ const GLOBAL_SECURITY_HEADERS = [
   ['Referrer-Policy', 'strict-origin-when-cross-origin'],
   ['Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()'],
   ['Strict-Transport-Security', 'max-age=63072000'],
+  ['Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"],
+  ['X-Frame-Options', 'DENY'],
 ];
 
-function applySecurityHeaders(headers) {
+const CORS_API_ROUTES = new Set([
+  '/api/v1/session',
+  '/api/v1/signal',
+]);
+
+function normalizePath(pathname) {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+}
+
+function applySecurityHeaders(headers, { corsRoute = false } = {}) {
   for (const [k, v] of GLOBAL_SECURITY_HEADERS) {
     if (!headers.has(k)) headers.set(k, v);
+  }
+  if (!corsRoute && !headers.has('Cross-Origin-Resource-Policy')) {
+    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
   }
   return headers;
 }
 
-function createNodeAdapter(request, url) {
+function createNodeAdapter(request, url, { corsRoute = false } = {}) {
   const inHeaders = Object.create(null);
   for (const [k, v] of request.headers.entries()) {
     inHeaders[k.toLowerCase()] = v;
@@ -101,7 +115,7 @@ function createNodeAdapter(request, url) {
     end(chunk) {
       if (ended) return;
       ended = true;
-      applySecurityHeaders(outHeaders);
+      applySecurityHeaders(outHeaders, { corsRoute });
       const status = Number(res.statusCode) || 200;
       const noBody = status === 204 || status === 304 || request.method === 'HEAD';
       resolveResponse(new Response(noBody ? null : (chunk ?? null), { status, headers: outHeaders }));
@@ -112,7 +126,7 @@ function createNodeAdapter(request, url) {
 }
 
 function resolveHandler(pathname) {
-  const clean = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  const clean = normalizePath(pathname);
   if (API_ROUTES.has(clean)) return API_ROUTES.get(clean);
   if (/^\/api\/v1\/auth\/[a-z]+$/.test(clean)) return authHandler;
   return null;
@@ -136,12 +150,16 @@ export default {
       const lower = url.pathname.toLowerCase();
       const isAuthNav = (request.method === 'GET' || request.method === 'HEAD')
         && (lower === '/api/v1/auth' || lower.startsWith('/api/v1/auth/'));
-      const status = isAuthNav ? 302 : 308;
-      const headers = applySecurityHeaders(new Headers({
-        Location: 'https://pyrmi.com' + url.pathname + url.search,
-        'Cache-Control': 'no-store',
-      }));
-      return new Response(null, { status, headers });
+      // Only redirect OAuth navigations on www.pyrmi.com here; redirecting fetch() /api/v1/* with 308
+      // while www.pyrmi.com static pages still serve connect-src 'self' would break the www dashboard.
+      // Full www -> apex canonicalization for static pages belongs in a Cloudflare Zone Redirect Rule.
+      if (isAuthNav) {
+        const headers = applySecurityHeaders(new Headers({
+          Location: 'https://pyrmi.com' + url.pathname + url.search,
+          'Cache-Control': 'no-store',
+        }));
+        return new Response(null, { status: 302, headers });
+      }
     }
 
     const lowerPath = url.pathname.toLowerCase();
@@ -165,7 +183,8 @@ export default {
       return new Response(body, { status: 404, headers });
     }
 
-    const { req, res, responsePromise, isEnded } = createNodeAdapter(request, url);
+    const corsRoute = CORS_API_ROUTES.has(normalizePath(url.pathname));
+    const { req, res, responsePromise, isEnded } = createNodeAdapter(request, url, { corsRoute });
     try {
       await handler(req, res);
       if (!isEnded()) res.end();

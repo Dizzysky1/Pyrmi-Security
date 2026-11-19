@@ -73,9 +73,10 @@ const t = await pyrmi.verifyTurnstile(req.body['cf-turnstile-response'], { actio
 if (!trusted(v, t)) return res.status(403).json({ error: 'not_verified' });
 ```
 
-`verifyTurnstile` returns `{ success, errorCodes, hostname, action }` and fails closed: no secret, no token, a token
-Cloudflare already saw, a different action or hostname than you pass, or Cloudflare being unreachable all give
-`success: false`. `trusted(v, t)` needs both a trusted verdict and a passed check.
+`verifyTurnstile` returns `{ success, errorCodes, hostname, action, cdata }` and fails closed: no secret, no token, a
+non-2xx response, a token Cloudflare already saw, a different action, hostname (case-insensitive), or `cdata` than you
+pass, or Cloudflare being unreachable all give `success: false`. `trusted(v, t)` needs both a trusted verdict and a
+passed check.
 
 Runs on Node 18+ and on runtimes without Node's globals (Cloudflare Workers, Deno, Bun, edge functions). There, pass
 `secretKey` (and `turnstileSecret`, `endpoint`) as options if the runtime has no `process.env`, and pass `req` as the

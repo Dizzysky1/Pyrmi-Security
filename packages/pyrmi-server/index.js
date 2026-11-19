@@ -23,15 +23,18 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 const HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', 'local.invalid']);
 
 class Pyrmi {
+  #secretKey;
+  #turnstileSecret;
   constructor(opts) {
     if (opts !== undefined && (opts === null || typeof opts !== 'object' || Array.isArray(opts))) {
       throw new Error('pyrmi-server: options must be an object');
     }
     opts = opts || {};
-    this.secretKey = opts.secretKey !== undefined ? opts.secretKey : envVar('PYRMI_SECRET_KEY');
-    if (typeof this.secretKey !== 'string' || !/^sk_/.test(this.secretKey)) {
+    const secretKey = opts.secretKey !== undefined ? opts.secretKey : envVar('PYRMI_SECRET_KEY');
+    if (typeof secretKey !== 'string' || !/^sk_/.test(secretKey)) {
       throw new Error('pyrmi-server: pass { secretKey: "sk_..." } or set PYRMI_SECRET_KEY');
     }
+    this.#secretKey = secretKey;
     if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       throw new Error('pyrmi-server: this runs on your server only, never in the browser');
     }
@@ -59,8 +62,9 @@ class Pyrmi {
     } else {
       this.trustedIpHeader = null;
     }
-    // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile().
-    this.turnstileSecret = opts.turnstileSecret || envVar('TURNSTILE_SECRET_KEY') || null;
+    // Optional: your own Cloudflare Turnstile widget's secret key, for verifyTurnstile() and verify().
+    const rawTsSecret = opts.turnstileSecret !== undefined ? opts.turnstileSecret : envVar('TURNSTILE_SECRET_KEY');
+    this.#turnstileSecret = typeof rawTsSecret === 'string' && rawTsSecret ? rawTsSecret : null;
     // The biggest replay (as JSON) simulate is given; anything larger is a mismatch without being run.
     this.maxReplayBytes = Number.isFinite(opts.maxReplayBytes) && opts.maxReplayBytes > 0 ? opts.maxReplayBytes : 64 * 1024;
   }
@@ -124,10 +128,27 @@ class Pyrmi {
     // cdata: session (the id Pyrmi.start() answers), sent along with your Turnstile secret key so Pyrmi can confirm it
     // with Cloudflare itself. Pyrmi uses the key for that one call and never stores or logs it. Pass it as
     // turnstile: token (or { token, action }); with sealed, a `turnstile` field in the sealed body is used by default.
+    // Fail closed: whenever `turnstile` is present on input or sealed, always forward a turnstile object so Pyrmi's
+    // checkHuman() rejects empty/null/non-string tokens or a missing turnstileSecret instead of treating it as absent.
     let human;
-    const tin = input.turnstile !== undefined ? input.turnstile : sealed && typeof sealed.turnstile === 'string' ? sealed.turnstile : undefined;
-    const ttoken = tin && typeof tin === 'object' ? tin.token : tin;
-    if (typeof ttoken === 'string' && ttoken && this.turnstileSecret) human = { token: ttoken, secret: this.turnstileSecret, action: tin && typeof tin === 'object' && tin.action !== undefined ? tin.action : undefined };
+    const hasInputTurnstile = Object.prototype.hasOwnProperty.call(input, 'turnstile');
+    const hasSealedTurnstile = !!(sealed && Object.prototype.hasOwnProperty.call(sealed, 'turnstile'));
+    if (hasInputTurnstile || hasSealedTurnstile) {
+      let ttoken, action;
+      if (hasInputTurnstile && (input.turnstile !== undefined || !hasSealedTurnstile)) {
+        const tin = input.turnstile;
+        const isObj = !!(tin && typeof tin === 'object' && !Array.isArray(tin));
+        ttoken = isObj ? tin.token : tin;
+        action = isObj && tin.action !== undefined ? tin.action : undefined;
+      } else {
+        ttoken = typeof sealed.turnstile === 'string' ? sealed.turnstile : '';
+      }
+      human = {
+        token: typeof ttoken === 'string' ? ttoken : '',
+        secret: typeof this.#turnstileSecret === 'string' ? this.#turnstileSecret : '',
+        action,
+      };
+    }
     // The replay is run once Pyrmi has answered (below). Validate token shape first so junk calls never serialize a
     // huge replay, and treat one larger than maxReplayBytes as a mismatch without running it.
     const wantsReplay = typeof simulate === 'function';
@@ -147,7 +168,7 @@ class Pyrmi {
     try {
       const res = await fetch(this.endpoint + '/verify', {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + this.secretKey, 'Content-Type': 'application/json' },
+        headers: { Authorization: 'Bearer ' + this.#secretKey, 'Content-Type': 'application/json' },
         body: payload,
         redirect: 'error',
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -191,28 +212,40 @@ class Pyrmi {
   }
 
   // Checks a Cloudflare Turnstile token from your page (the widget's cf-turnstile-response) with Cloudflare.
-  // Returns { success, errorCodes, hostname, action }. Fails closed: no secret, no token, a token Cloudflare already
-  // saw, a different action or hostname than you expect, a redirect, or Cloudflare being unreachable all give
-  // success: false.
-  // opts: remoteip (the visitor's IP), action (what your widget's data-action was), hostname (your site's host).
+  // Returns { success, errorCodes, hostname, action, cdata }. Fails closed: no secret, no token, a non-2xx status,
+  // a token Cloudflare already saw, a different action, hostname (case-insensitive) or cdata than you expect,
+  // a redirect, or Cloudflare being unreachable all give success: false.
+  // opts: remoteip (the visitor's IP), action (what your widget's data-action was), hostname (your site's host),
+  // cdata (what your widget's cData was, e.g. the session id).
   async verifyTurnstile(token, opts) {
     opts = opts || {};
-    const no = (code, r) => ({ success: false, errorCodes: [code], hostname: r && r.hostname, action: r && r.action });
-    if (!this.turnstileSecret) return no('missing-input-secret');
+    const no = (code, r) => ({ success: false, errorCodes: [code], hostname: r && r.hostname, action: r && r.action, cdata: r && r.cdata });
+    if (!this.#turnstileSecret) return no('missing-input-secret');
     if (typeof token !== 'string' || !token || token.length > 2048) return no('missing-input-response');
     let r;
     try {
-      const form = new URLSearchParams({ secret: this.turnstileSecret, response: token });
+      const form = new URLSearchParams({ secret: this.#turnstileSecret, response: token });
       if (opts.remoteip) form.set('remoteip', String(opts.remoteip));
       const res = await fetch(this.turnstileEndpoint, { method: 'POST', body: form, redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs) });
+      if (!res || !res.ok) {
+        if (res && res.body && typeof res.body.cancel === 'function') await res.body.cancel().catch(() => {});
+        return no('turnstile-unreachable');
+      }
       r = await readJsonBounded(res, MAX_RESPONSE_BYTES);
     } catch (_) {
       return no('turnstile-unreachable');
     }
-    if (!r || r.success !== true) return { success: false, errorCodes: (r && r['error-codes']) || ['failed'], hostname: r && r.hostname, action: r && r.action };
-    if (opts.action && r.action !== opts.action) return no('action-mismatch', r);
-    if (opts.hostname && r.hostname !== opts.hostname) return no('hostname-mismatch', r);
-    return { success: true, errorCodes: [], hostname: r.hostname, action: r.action };
+    if (!r || r.success !== true) return { success: false, errorCodes: (r && r['error-codes']) || ['failed'], hostname: r && r.hostname, action: r && r.action, cdata: r && r.cdata };
+    if (opts.action !== undefined && opts.action !== null && opts.action !== '' && r.action !== opts.action) return no('action-mismatch', r);
+    if (opts.hostname !== undefined && opts.hostname !== null && opts.hostname !== ''
+      && (typeof opts.hostname !== 'string' || typeof r.hostname !== 'string' || r.hostname.toLowerCase() !== opts.hostname.toLowerCase())) {
+      return no('hostname-mismatch', r);
+    }
+    if (opts.cdata !== undefined && opts.cdata !== null
+      && (typeof opts.cdata !== 'string' || r.cdata !== opts.cdata)) {
+      return no('cdata-mismatch', r);
+    }
+    return { success: true, errorCodes: [], hostname: r.hostname, action: r.action, cdata: r.cdata };
   }
 }
 

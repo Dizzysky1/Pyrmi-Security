@@ -35,6 +35,7 @@ label.check{flex-direction:row;align-items:flex-start;gap:10px;color:var(--ink-2
 .email-in p{flex-basis:100%;margin:0}
 .code-in{font-family:var(--mono);letter-spacing:.3em;font-size:16px;font-variant-numeric:tabular-nums}
 #signin-card .err:not(:empty){margin-top:12px}
+#gate-msg:not(:empty),#a-err:not(:empty){margin:0 0 14px}
 .keys-lead{margin:0 0 18px}
 .key-forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
 .key-forms .sub-form{background:var(--bg-1);padding:16px}
@@ -66,6 +67,7 @@ label.check{flex-direction:row;align-items:flex-start;gap:10px;color:var(--ink-2
 .keyrow span{color:var(--ink-3);font:500 11px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase}
 .keyrow code{font-size:13px;padding:0;background:none;border:0;word-break:break-all;min-width:0}
 .keyrow.secret code{color:var(--review)}
+.keyrow-acts{display:flex;align-items:center;gap:6px}
 #rotate-out{margin-top:14px;border:1px solid var(--review-line);border-radius:var(--r)}
 .keys-go{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:18px}
 
@@ -110,9 +112,12 @@ label.check{flex-direction:row;align-items:flex-start;gap:10px;color:var(--ink-2
 .why .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .why .row b{font-weight:400;color:var(--ink);line-height:1.4}
 .why .row .num{font:500 12.5px/1 var(--mono);color:var(--ink-2)}
-.why .bar{height:4px;background:var(--bg-3);margin-top:6px;overflow:hidden}
-.why .bar i{display:block;height:100%;background:var(--ink-2)}
-.why li:first-child .bar i{background:var(--reject)}
+.why progress.bar{display:block;width:100%;height:4px;margin-top:6px;border:0;background:var(--bg-3);-webkit-appearance:none;-moz-appearance:none;appearance:none;overflow:hidden}
+.why progress.bar::-webkit-progress-bar{background:var(--bg-3)}
+.why progress.bar::-webkit-progress-value{background:var(--ink-2)}
+.why progress.bar::-moz-progress-bar{background:var(--ink-2)}
+.why li:first-child progress.bar::-webkit-progress-value{background:var(--reject)}
+.why li:first-child progress.bar::-moz-progress-bar{background:var(--reject)}
 
 /* tables */
 .tbl-wrap{overflow-x:auto;margin:-14px -16px -16px}

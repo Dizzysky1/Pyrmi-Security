@@ -1,6 +1,7 @@
-# Copy to .secrets.prod (never commit!) and upload with:
-#   npx wrangler secret bulk .secrets.prod
-# Then delete .secrets.prod.
+# Copy to a temporary file OUTSIDE the repo tree (e.g. $env:TEMP\pyrmi.secrets on PowerShell
+# or /tmp/pyrmi.secrets on Unix — never commit secrets or keep them in the repo!) and upload with:
+#   npx --no-install wrangler secret bulk $env:TEMP\pyrmi.secrets
+# Then delete the temporary secrets file immediately.
 
 # Required: Upstash Redis REST credentials (same database your Vercel app used — keeps all live: data!)
 KV_REST_API_URL=https://your-db.upstash.io

@@ -68,11 +68,23 @@ test('clientOf reads a Fetch API Request (Workers, Deno) the same way', () => {
   assert.deepEqual({ ...P.clientOf(req, 0) }, { ua: 'UA', ch: 'CH', sfs: 'same-origin', ip: '' });
 });
 
-test('on Node, the package still reads its keys from the environment', () => {
+test('on Node, the package still reads its keys from the environment', async () => {
   const saved = process.env.PYRMI_SECRET_KEY;
+  const savedFetch = global.fetch;
   process.env.PYRMI_SECRET_KEY = 'sk_' + 'd'.repeat(30);
+  let auth = null;
+  global.fetch = async (u, init) => {
+    auth = init && init.headers && init.headers.Authorization;
+    return { ok: true, status: 200, json: async () => ({ ok: true, verdict: 'accept', risk: 0, client: 'corroborated', trusted: true, reasons: [] }) };
+  };
   try {
     const { Pyrmi } = require('../packages/pyrmi-server');
-    assert.equal(new Pyrmi().secretKey, 'sk_' + 'd'.repeat(30));
-  } finally { if (saved === undefined) delete process.env.PYRMI_SECRET_KEY; else process.env.PYRMI_SECRET_KEY = saved; }
+    const p = new Pyrmi();
+    assert.equal(p.secretKey, undefined, 'secretKey is stored in a private field');
+    await p.verify({ token: 'tok' });
+    assert.equal(auth, 'Bearer sk_' + 'd'.repeat(30));
+  } finally {
+    global.fetch = savedFetch;
+    if (saved === undefined) delete process.env.PYRMI_SECRET_KEY; else process.env.PYRMI_SECRET_KEY = saved;
+  }
 });

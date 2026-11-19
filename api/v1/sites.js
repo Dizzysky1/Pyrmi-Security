@@ -14,6 +14,7 @@ const C = require('../_lib/crypto');
 const { send, fail, readJson, clientIp, handle } = require('../_lib/http');
 
 module.exports = handle(async (req, res) => {
+  accounts.checkCsrf(req);
   const ip = clientIp(req);
   // Look the session up first. A well-formed cookie that opens nothing counts in a bucket of its own, and a real one
   // counts against its account.
@@ -23,7 +24,6 @@ module.exports = handle(async (req, res) => {
     return fail(res, 401, 'signed_out', 'Sign in to see your sites.');
   }
   await core.limitIp(ip, 'sites:' + C.sha256(user.uid).slice(0, 24), 60, 'PYRMI_ACCOUNT_CALLS_PER_MIN', 60);
-  accounts.checkCsrf(req);
   const q = new URL(req.url, 'http://x').searchParams, pid = q.get('pid'), action = q.get('action');
 
   const host = accounts.ownHost(req);

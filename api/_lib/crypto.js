@@ -34,18 +34,22 @@ async function fingerprint(kind, value) {
 }
 
 // token = base64url(json) "." base64url(hmac)
-async function signToken(payload) {
+// Separate HMAC domain tags prevent cross-purpose token reuse (e.g. OAuth state cookies vs session tokens).
+const TOKEN_DOMAINS = { session: 'pyrmi.v1.', oauth: 'pyrmi.oauth.v1.' };
+const tokenDomain = (purpose) => (purpose ? (TOKEN_DOMAINS[purpose] || ('pyrmi.' + purpose + '.v1.')) : 'pyrmi.v1.');
+
+async function signToken(payload, purpose) {
   const body = b64u(JSON.stringify(payload));
-  const mac = crypto.createHmac('sha256', await secret()).update('pyrmi.v1.' + body).digest('base64url');
+  const mac = crypto.createHmac('sha256', await secret()).update(tokenDomain(purpose) + body).digest('base64url');
   return body + '.' + mac;
 }
 
-async function readToken(token) {
+async function readToken(token, purpose) {
   if (typeof token !== 'string' || token.length > 2048) return null;
   const dot = token.indexOf('.');
   if (dot < 1) return null;
   const body = token.slice(0, dot), mac = token.slice(dot + 1);
-  const want = crypto.createHmac('sha256', await secret()).update('pyrmi.v1.' + body).digest('base64url');
+  const want = crypto.createHmac('sha256', await secret()).update(tokenDomain(purpose) + body).digest('base64url');
   if (!safeEqual(mac, want)) return null;
   try { return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch (_) { return null; }
 }

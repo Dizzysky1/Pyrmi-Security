@@ -35,15 +35,33 @@ module.exports = handle(async (req, res) => {
   if (!project) return fail(res, 401, 'bad_secret_key', 'Missing or wrong secret key.');
   await core.limitIp(ip, 'proj:' + project.pid, 60, 'PYRMI_PROJECT_CALLS_PER_MIN', 30);
   if (req.method === 'GET') return send(res, 200, { ok: true, project: core.view(project) });
+  // A project in an account is managed from the signed-in dashboard, never mutated or rotated with the runtime key alone.
+  const owned = () => httpError(403, 'owned', 'This project belongs to an account. Manage it from the dashboard while signed in.');
   if (req.method === 'PATCH') {
+    if (project.owner) throw owned();
     const body = await readJson(req, 8192);
-    return send(res, 200, { ok: true, project: core.view(await core.updateSettings(project, { ...(body.settings || {}), ...('name' in body ? { name: body.name } : {}) })) });
+    const patch = { ...(body.settings && typeof body.settings === 'object' ? body.settings : {}), ...('name' in body ? { name: body.name } : {}) };
+    const updated = await core.withKeyLock(project.pid, async () => {
+      const now = await core.projectBySecretKey(sk);
+      if (!now || now.pid !== project.pid) throw httpError(401, 'bad_secret_key', 'Missing or wrong secret key.');
+      if (now.owner) throw owned();
+      return core.updateSettings(now, patch);
+    });
+    return send(res, 200, { ok: true, project: core.view(updated) });
   }
-  if (req.method === 'POST') return send(res, 200, { ok: true, secretKey: await core.rotateSecret(project, sk) });
+  if (req.method === 'POST') {
+    if (project.owner) throw owned();
+    const secretKey = await core.withKeyLock(project.pid, async () => {
+      const now = await core.projectBySecretKey(sk);
+      if (!now || now.pid !== project.pid) throw httpError(401, 'bad_secret_key', 'Missing or wrong secret key.');
+      if (now.owner) throw owned();
+      if (now.demo) throw httpError(403, 'demo_locked');
+      return core.rotateLocked(now, sk);
+    });
+    return send(res, 200, { ok: true, secretKey });
+  }
   if (req.method === 'DELETE') {
-    // A project in an account is deleted from the signed-in dashboard (with its human check), never with the key alone.
     // Runs under the key lock, with the key and owner checked again there.
-    const owned = () => httpError(403, 'owned', 'This project belongs to an account. Delete it from the dashboard while signed in.');
     if (project.owner) throw owned();
     await core.withKeyLock(project.pid, async () => {
       const now = await core.projectBySecretKey(sk);

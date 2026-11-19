@@ -94,7 +94,9 @@ const HARD = new Set(['invalid_token', 'wrong_project', 'expired', 'token_reused
   'score_over_max', 'score_too_fast', 'bad_score', 'no_score_limit', 'replay_mismatch', 'rate_limited', 'bad_signature', 'unsigned_request']);
 
 const ymd = (t) => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
-const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+const str = (v, d = '') => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : d);
+const toNum = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+const num = (v, d) => { const n = toNum(v); return Number.isFinite(n) ? n : d; };
 const intEnv = (k, d) => { const n = parseInt(process.env[k], 10); return Number.isFinite(n) && n > 0 ? n : d; };
 // Which projects must register an allowed origin before they can start sessions (F-07, retest of b127c08):
 //   new (default)  new projects must give one when they're created and keep at least one (requireOrigins in their
@@ -124,7 +126,7 @@ function parseV4(str) {
 // The network a request came from, for counting. An IPv4 address is its own network. An IPv6 host usually gets a
 // whole /64 and can pick any address in it, so per-address limits on IPv6 were per-request in practice: count the /64.
 function network(ip) {
-  const raw = String(ip || '').trim().toLowerCase();
+  const raw = typeof ip === 'string' ? ip.trim().toLowerCase() : '';
   if (!raw) return '';
   let s = raw;
   const br = /^\[([^\]]+)\](?::\d{1,5})?$/.exec(s);
@@ -164,12 +166,10 @@ function network(ip) {
 }
 const netFingerprint = (ip) => C.fingerprint('ip', network(ip));
 
-// Fixed-window counter. The window's TTL is set when the key is created, in the same request as the count: SET NX EX
-// then INCR. (Re-EXPIRE-ing on every call let an attacker keep a key pinned forever, and INCR then a separate EXPIRE
-// left a key with no TTL at all if the second call was lost, which locked that limit for good.)
+// Fixed-window counter. Atomic Lua INCR + conditional EXPIRE on first creation or missing TTL (-1),
+// so a window never resets on subsequent hits and can never be stranded without an expiry.
 async function hit(key, ttl) {
-  const r = await kv.pipeline([['SET', key, '0', 'EX', ttl, 'NX'], ['INCR', key]]);
-  return num(r[1], 1);
+  return num(await kv.hit(key, ttl), 1);
 }
 async function bump(key, ttl, limit) { return (await hit(key, ttl)) > limit; }
 
@@ -189,14 +189,13 @@ async function limitIp(ip, name, ttl, env, dflt, message) {
   plan.check(await kv.pipeline(plan.cmds));
 }
 // The same limit as commands to send along with others in one round trip: cmds go first in the pipeline, and
-// check(results) throws the same 429 limitIp would. The counter is taken exactly as limitIp takes it (SET NX EX, then
-// INCR), so it counts every call, refused or not, and the window still counts down.
+// check(results) throws the same 429 limitIp would. The counter is taken atomically via kv.hitCmd.
 async function limitPlan(ip, name, ttl, env, dflt, message) {
   const key = 'ps:rl:' + name + ':' + await netFingerprint(ip);
   return {
-    cmds: [['SET', key, '0', 'EX', ttl, 'NX'], ['INCR', key]],
+    cmds: [kv.hitCmd(key, ttl)],
     check(results) {
-      if (num(results[1], 1) <= intEnv(env, dflt)) return;
+      if (num(results[0], 1) <= intEnv(env, dflt)) return;
       const e = httpError(429, 'rate_limited', message || 'Too many requests from your network. Try again in a few minutes.');
       e.retryAfter = ttl; // the window length, surfaced as Retry-After (F-23)
       throw e;
@@ -232,9 +231,9 @@ const verifyMissOver = new Map();
 async function verifyKeyMiss(ip) {
   const now = Date.now(), net = 'ps:rl:vbad:' + (await netFingerprint(ip)), all = 'ps:rl:vbad:all';
   if ((verifyMissOver.get(net) || 0) > now || (verifyMissOver.get(all) || 0) > now) return true;
-  const r = await kv.pipeline([['SET', net, '0', 'EX', 60, 'NX'], ['INCR', net], ['SET', all, '0', 'EX', 60, 'NX'], ['INCR', all]]);
-  const overNet = num(r[1], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_PER_MIN', 600);
-  const overAll = num(r[3], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_ALL_PER_MIN', 20000);
+  const r = await kv.pipeline([kv.hitCmd(net, 60), kv.hitCmd(all, 60)]);
+  const overNet = num(r[0], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_PER_MIN', 600);
+  const overAll = num(r[1], 0) > intEnv('PYRMI_VERIFY_BAD_KEYS_ALL_PER_MIN', 20000);
   if (verifyMissOver.size > 5000) for (const [k, until] of verifyMissOver) if (until <= now) verifyMissOver.delete(k);
   if (verifyMissOver.size > 5000) verifyMissOver.clear();
   if (overNet) verifyMissOver.set(net, now + 60000);
@@ -242,18 +241,9 @@ async function verifyKeyMiss(ip) {
   return overNet || overAll;
 }
 
-function siteAllowedOrigins(host) {
+function siteAllowedOrigins() {
   if (!inProduction() || !process.env.PYRMI_PUBLIC_URL) return [];
-  const out = [];
-  try { out.push(new URL(process.env.PYRMI_PUBLIC_URL).origin); } catch (_) { /* ignore */ }
-  const h = String(host || '').trim();
-  if (h) {
-    const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(h);
-    const ho = (local ? 'http://' : 'https://') + h;
-    if (!out.includes(ho)) out.push(ho);
-    if (local && !out.includes('https://' + h)) out.push('https://' + h);
-  }
-  return out;
+  try { return [new URL(process.env.PYRMI_PUBLIC_URL).origin]; } catch (_) { return []; }
 }
 
 // pyrmi.com's own check on a request from one of its pages. Anything short of a clean accept is refused.
@@ -262,7 +252,7 @@ async function guardSite(token, ip, req) {
   // The label is shown on the public ?demo=site dashboard, so it changes every day: a fixed one let anyone follow a
   // network across days (and, with the secret, test which IPv4 address it was).
   const day = ymd(Date.now());
-  const ipf = await C.fingerprint('ip-day', day + ':' + ip);
+  const ipf = await C.fingerprint('ip-day', day + ':' + network(ip));
   const client = req && req.headers ? {
     ua: String(req.headers['user-agent'] || ''),
     ip: String(ip || ''),
@@ -277,7 +267,8 @@ async function guardSite(token, ip, req) {
     let ignoreLoopback = false;
     if (ipc && !inProduction() && ipc.detail === 'at verify') {
       const t = await readSession(token);
-      if (t && (t.ih === await C.fingerprint('ip', '127.0.0.1') || t.ih === await C.fingerprint('ip', '::ffff:127.0.0.1') || t.ih === await C.fingerprint('ip', '::1'))) {
+      if (t && (t.nh === await netFingerprint('127.0.0.1') || t.nh === await netFingerprint('::1') ||
+          t.ih === await C.fingerprint('ip', '127.0.0.1') || t.ih === await C.fingerprint('ip', '::ffff:127.0.0.1') || t.ih === await C.fingerprint('ip', '::1'))) {
         ignoreLoopback = true;
       }
     }
@@ -291,15 +282,21 @@ async function guardSite(token, ip, req) {
 // ---- input cleaning ---------------------------------------------------------------------------------------------
 
 function cleanName(s) {
-  const v = String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 48);
+  const v = str(s).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 48);
   return v || 'Untitled project';
 }
 
 function cleanOrigins(list) {
-  if (!Array.isArray(list)) list = String(list || '').split(/[\s,]+/);
+  if (!Array.isArray(list)) {
+    if (list === undefined || list === null || list === '') list = [];
+    else if (typeof list === 'string') list = list.split(/[\s,]+/);
+    else throw httpError(400, 'bad_origin', 'Origins must be a list of URLs.');
+  }
   const out = [];
   for (const raw of list) {
-    const s = String(raw || '').trim();
+    if (raw === undefined || raw === null || raw === '') continue;
+    if (typeof raw !== 'string') throw httpError(400, 'bad_origin', 'Not a valid origin.');
+    const s = raw.trim();
     if (!s) continue;
     let u; try { u = new URL(s); } catch (_) { throw httpError(400, 'bad_origin', 'Not a valid origin: ' + s.slice(0, 80)); }
     if (!/^https?:$/.test(u.protocol)) throw httpError(400, 'bad_origin', 'Origins must start with http:// or https://');
@@ -315,7 +312,7 @@ const has = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
 const RESERVED_LABELS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function cleanPlayer(p) {
-  const raw = String(p == null ? '' : p).slice(0, 64);
+  const raw = str(p).slice(0, 64);
   const s = raw.replace(/[^\w .\-@:#]/g, '_').trim();
   if (!s) return 'anonymous';
   // Reserved names ("__proto__" and the like) get the same hash suffix as an edited label, so they stay ordinary keys.
@@ -329,7 +326,7 @@ function cleanSettings(patch, base) {
   const optNum = (k, lo, hi) => {
     if (!has(p, k)) return;
     if (p[k] === null || p[k] === '') { s[k] = null; return; }
-    const n = Number(p[k]);
+    const n = toNum(p[k]);
     if (!Number.isFinite(n) || n < lo || n > hi) throw httpError(400, 'bad_setting', k + ' must be between ' + lo + ' and ' + hi);
     s[k] = n;
   };
@@ -381,7 +378,7 @@ function warnings(s, extra) {
 // never "corroborated": they can't pass the checks below, so a beacon from one is `unverified_client` (review by
 // default). After the grace period they count as tampered too.
 const SDK_GRACE_MS = () => intEnv('PYRMI_SDK_GRACE_DAYS', 1) * DAY * 1000;
-const inProduction = () => process.env.VERCEL_ENV === 'production' || process.env.PYRMI_ENV === 'production';
+const inProduction = () => process.env.VERCEL_ENV === 'production' || process.env.PYRMI_ENV === 'production' || process.env.NODE_ENV === 'production';
 function sdkStatus(sh, now) {
   if (typeof sh !== 'string' || !sh) return 'missing';
   if (sh === SDK.hash || (sh === SDK.sourceHash && !inProduction())) return 'current';
@@ -404,8 +401,8 @@ function sdkStatus(sh, now) {
 // hand-written client do the work of looking like a browser that kept the session open in real time.
 // The current build always sends a number for pt (the page clock) and true, false or null for ac (null only where the
 // browser has no navigator.userActivation). Leaving either out, or sending pt: null, fails the shape (round 8).
-const BEACON_SHAPE = { wd: 'boolean', hl: 'boolean', au: 'array', tp: 'array', dt: 'number', ut: 'number', ih: 'number',
-  k: 'number', p: 'number', h: 'number', pt: 'number', gt: 'number|null', sh: 'string', ac: 'boolean|null' };
+const BEACON_SHAPE = { wd: 'boolean', hl: 'boolean', au: 'array', tp: 'array', dt: 'int', ut: 'int', ih: 'int',
+  k: 'int', p: 'int', h: 'int', pt: 'number', gt: 'number|null', sh: 'string', ac: 'boolean|null' };
 // Builds before round 7 didn't send ac and could send pt: null; they are judged on this shape (and are never corroborated).
 // (`wr` is left out of both: builds before round 6 didn't send it.)
 const LEGACY_SHAPE = (() => { const o = { ...BEACON_SHAPE, pt: 'number|null' }; delete o.ac; return o; })();
@@ -439,7 +436,12 @@ function hasUserActivation(ua) {
   return false;
 }
 function typeOk(v, t) {
-  return t.split('|').some((x) => (x === 'array' ? Array.isArray(v) : x === 'null' ? v === null : typeof v === x && (x !== 'number' || Number.isFinite(v))));
+  return t.split('|').some((x) => (
+    x === 'array' ? Array.isArray(v)
+      : x === 'null' ? v === null
+        : x === 'int' ? typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+          : typeof v === x && (x !== 'number' || Number.isFinite(v))
+  ));
 }
 // Problems with one beacon, measured against the session record. Returns short codes (shown as the detail).
 function corroborate(raw, body, sess, ctx, now) {
@@ -486,8 +488,8 @@ function corroborate(raw, body, sess, ctx, now) {
 function cleanSignals(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const n = (v) => Math.max(0, Math.min(1e6, Math.floor(num(v, 0))));
-  const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x).replace(/[^\w.:-]/g, '').slice(0, 24)).filter(Boolean).slice(0, 10);
-  const t = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) < 1e13 ? Number(v) : null);
+  const list = (v) => (Array.isArray(v) ? v : []).map((x) => (typeof x === 'string' || typeof x === 'number' ? String(x).replace(/[^\w.:-]/g, '').slice(0, 24) : '')).filter(Boolean).slice(0, 10);
+  const t = (v) => { const x = toNum(v); return Number.isFinite(x) && x >= 0 && x < 1e13 ? x : null; };
   return { wd: !!r.wd, hl: !!r.hl, au: list(r.au), dt: n(r.dt), ut: n(r.ut), ih: n(r.ih), tp: list(r.tp), wr: list(r.wr), k: n(r.k), p: n(r.p), h: n(r.h), pt: t(r.pt), gt: t(r.gt),
     sh: typeof r.sh === 'string' ? r.sh.replace(/[^\w]/g, '').slice(0, 16) : null, uv: list(r.uv), ac: r.ac === true };
 }
@@ -563,7 +565,7 @@ async function checkHuman(h, sid, sess, ip) {
   if (!host || String(r.hostname || '').toLowerCase() !== host) return { state: 'failed', detail: 'solved on a different site' };
   const solved = Date.parse(r.challenge_ts);
   if (!Number.isFinite(solved) || solved < num(sess.i, 0) - 30000) return { state: 'failed', detail: 'solved before the session started' };
-  if (h.action !== undefined && h.action !== null && String(r.action || '') !== String(h.action)) return { state: 'failed', detail: 'a different action' };
+  if (h.action !== undefined && h.action !== null && (typeof h.action !== 'string' || String(r.action || '') !== h.action)) return { state: 'failed', detail: 'a different action' };
   const fresh = await kv.cmd('SET', 'ps:hu:' + C.sha256(h.token), '1', 'NX', 'EX', 900);
   if (fresh !== 'OK') return { state: 'failed', detail: 'already used' };
   return { state: 'ok' };
@@ -678,9 +680,9 @@ async function updateSettings(project, patch) {
 // second one gets a 409 and its key is never stored.
 async function withKeyLock(pid, fn) {
   const lock = 'ps:rot:' + pid, token = C.randomId(12);
-  if (await kv.cmd('SET', lock, token, 'NX', 'EX', 10) !== 'OK') throw httpError(409, 'rotate_in_progress', 'This project\'s key is being changed right now. Try again in a few seconds.');
+  if (await kv.cmd('SET', lock, token, 'NX', 'EX', 30) !== 'OK') throw httpError(409, 'rotate_in_progress', 'This project\'s key is being changed right now. Try again in a few seconds.');
   try { return await fn(); } finally {
-    if (await kv.cmd('GET', lock) === token) await kv.cmd('DEL', lock);
+    await kv.unlock(lock, token);
   }
 }
 
@@ -799,10 +801,11 @@ async function startSession(project, ctx, body) {
   // user agent (uh, in the token too), its client hints (Sec-CH-UA, sent by Chromium browsers) and its network.
   const chf = ctx.ch ? await C.fingerprint('ch', String(ctx.ch).slice(0, 300)) : '';
   // ep: the project's session epoch. Rotating the key or claiming the project moves it on, which ends this session.
-  const token = await C.signToken({ v: 1, p: project.pid, s: sid, i: now, e: exp, seed, ih: ipf, uh: uaf, ep: num(project.epoch, 0) });
+  const token = await C.signToken({ v: 1, p: project.pid, s: sid, i: now, e: exp, seed, ih: ipf, nh: nf, uh: uaf, ep: num(project.epoch, 0) });
   // What the server saw at the start, for corroborating the beacons later: the page that asked (Origin) and the page's
   // own clock at that moment (pt), which the browser script sends with the request.
-  const pt0 = body && Number.isFinite(Number(body.pt)) && body.pt !== null && body.pt !== '' && Number(body.pt) >= 0 && Number(body.pt) < 1e13 ? Math.floor(Number(body.pt)) : '';
+  const ptRaw = body ? toNum(body.pt) : NaN;
+  const pt0 = Number.isFinite(ptRaw) && ptRaw >= 0 && ptRaw < 1e13 ? Math.floor(ptRaw) : '';
   const stat = 'ps:st:' + project.pid + ':' + day;
   await kv.pipeline([
     ['HSET', 'ps:s:' + sid, 'p', project.pid, 'i', now, 'ih', ipf, 'uh', uaf, 'nh', nf, 'ch', chf, 'b', 0, 'sv', 2, 'o', String(ctx.origin || '').slice(0, 200), 'pt0', pt0, 'bn', bn],
@@ -848,45 +851,52 @@ async function recordSignals(body, ctx) {
     throw httpError(409, 'wrong_origin', 'This beacon did not come from the page that started the session.');
   }
   if (num(sess.b, 0) >= MAX_BEACONS) return { ok: true, capped: true };
-  let prev = {}; try { prev = JSON.parse(sess.sig || '{}'); } catch (_) { /* fresh */ }
   const raw = body.signals;
   if (!raw || typeof raw !== 'object') {
     // Malformed telemetry is just dropped. We do NOT poison the session's verdict for it: a single bad or truncated
     // beacon (a flaky network, a racing tab close) must not permanently flag an otherwise fine session (was F-10).
     throw httpError(400, 'bad_signals', 'Telemetry could not be read.');
   }
+  const sdk = sdkStatus(raw.sh, now);
   // Beacon nonce and order. bn is handed out with the session and n counts up, so a beacon lifted from another session
   // (or sent with a leaked token without the session's private bn) is refused without mutating the victim's session.
-  // A late, out-of-order beacon from the real script (the 10 s timer racing flush()) is just dropped.
-  const n = Number(body.n);
-  if (sess.bn && body.bn !== undefined && body.bn !== sess.bn) {
-    throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
+  // NEVER accept body.n !== undefined without a matching bn, and unconditionally require constant-time matching bn
+  // whenever sess.bn exists (at most allowing bn/n omission strictly for a previous build in its grace period before
+  // any sequenced beacon has arrived).
+  const hasBn = typeof body.bn === 'string' && sess.bn ? C.safeEqual(body.bn, sess.bn) : false;
+  if (sess.bn) {
+    const legacyPrevious = sdk === 'previous' && body.bn === undefined && body.n === undefined && num(sess.n, 0) === 0;
+    if (!hasBn && !legacyPrevious) {
+      throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
+    }
   }
-  if (sess.bn && num(sess.n, 0) > 0 && (body.bn !== sess.bn || body.n === undefined)) {
+  const n = body.n === undefined ? NaN : toNum(body.n);
+  if (sess.bn && num(sess.n, 0) > 0 && body.n === undefined) {
     throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
   }
   if (body.n !== undefined && (!Number.isInteger(n) || n < 1 || n <= num(sess.n, 0))) return { ok: true, dropped: 'stale' };
   // The script counts up by one; a few beacons lost on the way is normal, a jump past MAX_BEACONS isn't, so it's dropped.
   if (body.n !== undefined && n > num(sess.n, 0) + MAX_BEACONS) return { ok: true, dropped: 'out_of_order' };
   const sig = cleanSignals({ ...raw, uv: corroborate(raw, body, sess, ctx, now) });
-  const merged = mergeSignals(prev, sig);
   // Every copy of the script reports its fingerprint and the full field set, so a beacon without them was written by
   // something else: tampered, like an edited copy. (They used to be optional, and leaving them out flagged nothing.)
-  const sdk = sdkStatus(raw.sh, now);
   const missing = sdk === 'missing' || sig.uv.includes('shape');
   const flag = missing ? 'pyrmi.js:missing' : sdk === 'edited' ? 'pyrmi.js' : sdk === 'outdated' ? 'pyrmi.js:outdated' : null;
-  if (flag) merged.tp = [...new Set([...(merged.tp || []), flag])].slice(0, 10);
-  if ((await C.fingerprint('ua', ctx.ua || '')) !== sess.uh) merged.uac = true;
-  if ((await C.fingerprint('ip', ctx.ip)) !== sess.ih) merged.ipc = true;
+  if (flag) sig.tp = [...new Set([...(sig.tp || []), flag])].slice(0, 10);
+  sig.uac = (await C.fingerprint('ua', ctx.ua || '')) !== sess.uh;
+  sig.ipc = sess.nh ? (await netFingerprint(ctx.ip)) !== sess.nh : (await C.fingerprint('ip', ctx.ip)) !== sess.ih;
   const mark = JSON.stringify({ pt: sig.pt, gt: sig.gt, st: now });
   const counters = {}; for (const c of COUNTERS) counters[c] = sig[c];
-  // f: the first mark. g: the first mark that carried game time, so time_warp has a span to measure. Both go in the same
-  // HSET as the rest, only when the session doesn't have them yet.
-  const once = [...(!sess.f ? ['f', mark] : []), ...(sig.gt !== null && !sess.g ? ['g', mark] : [])];
-  await kv.pipeline([
-    ['HSET', key, 'sig', JSON.stringify(merged), 'l', mark, 'lc', JSON.stringify(counters), ...(Number.isInteger(n) ? ['n', n] : []), ...once],
-    ['HINCRBY', key, 'b', 1],
+  const nStr = Number.isInteger(n) ? String(n) : '';
+  // Atomic merge in Redis: sequence advancement, b increment, sticky signal/flag merge, and HSETNX for f/g in 1 trip.
+  const [status] = await kv.pipeline([
+    kv.recordSignalsCmd(key, nStr, MAX_BEACONS, JSON.stringify(sig), mark, sig.gt !== null ? '1' : '0', JSON.stringify(counters)),
   ]);
+  if (status === 'expired') throw httpError(410, 'expired');
+  if (status === 'capped') return { ok: true, capped: true };
+  if (status === 'stale') return { ok: true, dropped: 'stale' };
+  if (status === 'out_of_order') return { ok: true, dropped: 'out_of_order' };
+  if (status === 'wrong_session') throw httpError(409, 'wrong_session', 'This beacon belongs to a different session.');
   return { ok: true };
 }
 
@@ -938,7 +948,7 @@ const SIGNED_MAX_FIELDS = 8192;
 async function checkSigned(request, t, now) {
   if (request === undefined || request === null) return { state: 'none' };
   if (typeof request !== 'object' || !request.fields || typeof request.fields !== 'object' || Array.isArray(request.fields)) return { state: 'bad', detail: 'malformed' };
-  const ts = Number(request.ts), sig = String(request.sig || '');
+  const ts = toNum(request.ts), sig = typeof request.sig === 'string' ? request.sig : '';
   if (!Number.isInteger(ts) || !/^[\w-]{43}$/.test(sig)) return { state: 'bad', detail: 'malformed' };
   // No page can sign a "__proto__" field, so one is refused.
   if (Object.prototype.hasOwnProperty.call(request.fields, '__proto__')) return { state: 'bad', detail: 'forbidden key __proto__' };
@@ -964,6 +974,7 @@ async function checkSigned(request, t, now) {
 // them from the request). A different browser, or a request with no browser fetch metadata from a UA that always sends
 // it, means the session was handed to another client: a harvested token used by a script. Same UA and same network
 // pass: a relay that copies both is out of reach for this check (see the README).
+const VALID_SFS = new Set(['same-origin', 'same-site', 'cross-site', 'none']);
 async function relayed(client, sess, ua) {
   if (!client || typeof client !== 'object' || !ua) return { bound: false, missing: 'no client' };
   const why = [], missing = [];
@@ -977,24 +988,28 @@ async function relayed(client, sess, ua) {
   }
   // Fetch metadata (Sec-Fetch-Site) from a browser that always sends it, absent: not that browser. From one that may
   // not (an old Safari, an unknown UA), absent: nothing to bind on, so not bound (was: skipped, and bound).
+  // Non-standard values are rejected as invalid fetch metadata.
   if (!has(client, 'sfs') || !client.sfs) {
     if (has(client, 'sfs') && sendsFetchMetadata(ua)) why.push('not sent by a browser');
     else missing.push('fetch metadata');
+  } else if (typeof client.sfs !== 'string' || !VALID_SFS.has(client.sfs)) {
+    why.push('invalid fetch metadata');
   }
   const ip = typeof client.ip === 'string' ? client.ip : '';
   if (!ip) missing.push('address');
   const network = !!(ip && sess.nh && (await netFingerprint(ip)) !== sess.nh);
-  return { bound: !missing.length, missing: missing.join(', '), detail: why.join(', '), network };
+  return { bound: !missing.length && !why.length && !!sess.uh && !!sess.nh, missing: missing.join(', '), detail: why.join(', '), network };
 }
 
 async function verify(project, body, ctx) {
+  body = body && typeof body === 'object' ? body : {};
   const now = Date.now(), s = project.settings;
   const reasons = [];
   const hard = (code, detail) => reasons.push({ code, weight: 100, detail });
   // The value is optional: leave it out to check an action that has no number (a sign-up, a vote, a form post).
   let hasScore = body.score !== undefined && body.score !== null && body.score !== '';
-  let score = hasScore ? Number(body.score) : null;
-  const durationMs = body.durationMs === undefined || body.durationMs === null ? null : Number(body.durationMs);
+  let score = hasScore ? (typeof body.score === 'number' ? body.score : NaN) : null;
+  const durationMs = body.durationMs === undefined || body.durationMs === null ? null : toNum(body.durationMs);
   // The player label is whatever the calling server sends. Pyrmi can't tell who a player is: it only
   // means something when the site's server takes it from its own signed-in user, never from the request body, which
   // the player writes. A page-signed label only proves it wasn't swapped on the way; the page is the player's too.
@@ -1008,23 +1023,22 @@ async function verify(project, body, ctx) {
   if (durationMs !== null && (!Number.isFinite(durationMs) || durationMs < 0)) hard('bad_score', 'durationMs');
 
   t = await readSession(body.token);
-  // Rate-limit on something the caller can't freely multiply. The player name is caller-chosen, so keying only on it
-  // let an attacker reset the limit by spraying new names (was F-12). Keying on the session id never fired either: a
-  // token is single-use, so each session gets one call. Key on the network the session started from, which is in the
+  // Rate-limit on the /64 network (t.nh, falling back to legacy t.ih) the session started from, which is in the
   // signed token and can't be changed, and fall back to the calling server's network when there is no token.
-  const rlKey = (t && typeof t.ih === 'string' && t.ih) ? 'ih:' + t.ih : 'n:' + (ctx && ctx.ip ? await netFingerprint(ctx.ip) : 'none');
+  const rlNet = t && ((typeof t.nh === 'string' && t.nh) || (typeof t.ih === 'string' && t.ih));
+  const rlKey = rlNet ? 'nh:' + rlNet : 'n:' + (ctx && ctx.ip ? await netFingerprint(ctx.ip) : 'none');
   const rl = 'ps:rl:v:' + project.pid + ':' + rlKey;
   // Which way the token goes is known before anything is read, so the rate limit, the single-use marker and the
   // session record go to the store in one round trip, in the order they used to go one by one.
   const live = !!t && t.p === project.pid && num(t.ep, 0) === num(project.epoch, 0);
-  const cmds = [['SET', rl, '0', 'EX', 60, 'NX'], ['INCR', rl]];
+  const cmds = [kv.hitCmd(rl, 60)];
   // Mark expired tokens used too, so replaying one is reported as a replay and doesn't log a fresh event every time.
   // A live one keeps its marker for as long as the token itself can still be used, not the project's current TTL:
   // lowering sessionTtlSec after tokens were issued let the marker expire first and the same token pass again (A2-02).
   if (live && now > t.e) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', 3600]);
   else if (live) cmds.push(['SET', 'ps:used:' + t.s, '1', 'NX', 'EX', Math.ceil(Math.max(0, t.e - now) / 1000) + 3600], ['HGETALL', 'ps:s:' + t.s]);
   const got = await kv.pipeline(cmds);
-  const rateLimited = num(got[1], 1) > intEnv('PYRMI_VERIFIES_PER_MIN', 60);
+  const rateLimited = num(got[0], 1) > intEnv('PYRMI_VERIFIES_PER_MIN', 60);
   if (rateLimited) hard('rate_limited');
 
   // A project that takes only signed actions refuses an unsigned one whatever else it carries.
@@ -1035,12 +1049,12 @@ async function verify(project, body, ctx) {
   else if (num(t.ep, 0) !== num(project.epoch, 0)) hard('invalid_token', 'the session started before the site\'s key was rotated');
   else if (now > t.e) {
     sid = t.s; hard('expired');
-    if (got[2] !== 'OK') hard('token_reused');
+    if (got[1] !== 'OK') hard('token_reused');
   }
   else {
     sid = t.s;
-    if (got[2] !== 'OK') hard('token_reused');
-    const sess = kv.pairs(got[3]);
+    if (got[1] !== 'OK') hard('token_reused');
+    const sess = kv.pairs(got[2]);
     const genuineSess = sess.p === project.pid;
     // Measure elapsed time from the server-recorded session start, never the token's self-reported `i`. The token is
     // only HMAC-signed, so a forged token (one precondition: a leaked PYRMI_SECRET) could otherwise carry a genuine
@@ -1081,7 +1095,7 @@ async function verify(project, body, ctx) {
     if (hasScore && s.maxScore !== null && score > s.maxScore) hard('score_over_max', score + ' > ' + s.maxScore);
     if (hasScore && s.maxScorePerSec !== null && Number.isFinite(score) && score / Math.max(dur / 1000, 1) > s.maxScorePerSec) hard('score_too_fast', (score / Math.max(dur / 1000, 1)).toFixed(2) + '/s');
     const rp = body.replay && typeof body.replay === 'object' ? body.replay : null;
-    if (rp && rp.check === 'mismatch') hard('replay_mismatch', String(rp.detail || '').slice(0, 120));
+    if (rp && rp.check === 'mismatch') hard('replay_mismatch', str(rp.detail).slice(0, 120));
     if (genuineSess) {
       // Without a claimed duration, the time measured on the server counts for idle_input.
       reasons.push(...assess(sess, s, durationMs === null ? elapsed : durationMs)); genuine = true;
@@ -1108,11 +1122,11 @@ async function verify(project, body, ctx) {
   // A value that was refused as not a number isn't recorded as one.
   const scoreOut = hasScore && Number.isFinite(score) && !reasons.some((r) => r.code === 'bad_score') ? score : null;
   const ev = { t: now, sid, player, score: scoreOut, durationMs, verdict, risk, replay: replayCheck, reasons: reasons.map((r) => r.detail ? { code: r.code, detail: String(r.detail).slice(0, 120) } : { code: r.code }) };
-  const releaseUsed = rateLimited && got[2] === 'OK' ? 'ps:used:' + t.s : null;
-  if (rateLimited && !genuine) {
+  const releaseUsed = rateLimited && got[1] === 'OK' ? 'ps:used:' + t.s : null;
+  if (rateLimited) {
     if (releaseUsed) await kv.cmd('DEL', releaseUsed);
   } else {
-    await logVerdict(project.pid, ev, genuine, releaseUsed);
+    await logVerdict(project.pid, ev, genuine);
   }
   const client = !genuine ? 'none' : reasons.some((r) => r.code === 'no_client') ? 'none' : reasons.some((r) => r.code === 'unverified_client') ? 'unverified' : 'corroborated';
   // trusted also needs the browser's own word that a person pressed a key or clicked (ac === true from the current
@@ -1121,18 +1135,15 @@ async function verify(project, body, ctx) {
   return { ok: true, verdict, risk, client, trusted, signed, bound, human, seed: genuine && Number.isFinite(t.seed) ? t.seed : null, reasons: reasons.map((r) => ({ code: r.code, weight: r.weight, text: REASONS[r.code], detail: r.detail })), session: sid, player, score: ev.score };
 }
 
-async function logVerdict(pid, ev, genuine, releaseUsed) {
+async function logVerdict(pid, ev, genuine) {
   const isDemo = pid === DEMO.pid;
   const day = ymd(ev.t), stat = 'ps:st:' + pid + ':' + day, pl = 'ps:pl:' + pid + ':' + ev.player;
   const flagged = ev.verdict !== 'accept';
-  const isRateLimited = ev.reasons.some((r) => r.code === 'rate_limited');
   // The two public dashboards (the sandbox and pyrmi.com's own forms) only list verdicts a real session backs; the rest
-  // are still counted. A customer's own project keeps them all; they show who is probing it. Rate-limited bursts never
-  // push into ps:ev so a flood cannot evict real recent events.
+  // are still counted. A customer's own project keeps them all; they show who is probing it.
   const listed = genuine || (pid !== DEMO.pid && pid !== SITE.pid);
   const cmds = [
-    ...(releaseUsed ? [['DEL', releaseUsed]] : []),
-    ...(listed && !isRateLimited ? [['LPUSH', 'ps:ev:' + pid, JSON.stringify(ev)], ['LTRIM', 'ps:ev:' + pid, 0, MAX_EVENTS - 1]] : []),
+    ...(listed ? [['LPUSH', 'ps:ev:' + pid, JSON.stringify(ev)], ['LTRIM', 'ps:ev:' + pid, 0, MAX_EVENTS - 1]] : []),
     ['HINCRBY', stat, ev.verdict, 1], ['EXPIRE', stat, 35 * DAY],
     ...(listed ? [['HSET', 'ps:p:' + pid, 'lv', ev.t]] : []), // "your server is connected" on the dashboard
   ];

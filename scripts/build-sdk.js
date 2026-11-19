@@ -175,20 +175,21 @@ function build(source) {
   const used = new Set(all.filter((t) => t.t === 'id').map((t) => t.v));
   const names = new Map(), taken = new Set();
   const fresh = () => {
-    for (;;) {
-      const len = 3 + Math.floor(rand() * 3);
+    for (let tries = 0; ; tries++) {
+      const len = 3 + Math.floor(tries / 64) + Math.floor(rand() * 3);
       let n = rand() < 0.5 ? 'l' : 'I';
       for (let k = 1; k < len; k++) n += 'Il1'[Math.floor(rand() * 3)];
       if (!taken.has(n) && !used.has(n) && !KEYWORDS.has(n)) { taken.add(n); return n; }
     }
   };
   for (const n of declared) names.set(n, fresh());
-  const TABLE = fresh(), WIN = names.get('w');
+  const TABLE = fresh(), REGEXP = fresh(), WIN = names.get('w');
   if (!WIN) throw new Error('build-sdk: expected the main function to take (w, d)');
 
   // 2) strings table
   const table = [], index = new Map();
   const ref = (s) => { if (!index.has(s)) { index.set(s, table.length); table.push(s); } return TABLE + '[' + index.get(s) + ']'; };
+  const reRef = ref('RegExp');
 
   const out = [];
   for (let i = 0; i < all.length; i++) {
@@ -199,7 +200,7 @@ function build(source) {
       if (t.s === 'use strict' && prev && prev.v === '{') { out.push("'use strict'"); continue; }
       out.push(ref(t.s)); continue;
     }
-    if (t.t === 're') { out.push('(new ' + WIN + '[' + ref('RegExp') + '](' + ref(t.body) + ',' + ref(t.flags) + '))'); continue; }
+    if (t.t === 're') { out.push('(new ' + REGEXP + '(' + ref(t.body) + ',' + ref(t.flags) + '))'); continue; }
     if (t.t === 'punc' && (t.v === '.' || t.v === '?.') && next && next.t === 'id') {
       out.push((t.v === '?.' ? '?.' : '') + '[' + ref(next.v) + ']'); i++; continue;
     }
@@ -220,7 +221,7 @@ function build(source) {
     'for(;' + j + '<' + a + '.length;' + j + '++){' + c + '=' + WIN + '.atob(' + a + '[' + j + ']);' + e + "='';" +
     'for(' + m + '=0;' + m + '<' + c + '.length;' + m + '++)' + e + '+=' + WIN + '.String.fromCharCode(' + c + '.charCodeAt(' + m + ')^' + k + '.charCodeAt(' + m + '%' + k + '.length));' +
     r + '[' + j + ']=' + e + ';}return ' + r + ';})(' +
-    JSON.stringify(key) + ',' + JSON.stringify(enc) + ');';
+    JSON.stringify(key) + ',' + JSON.stringify(enc) + ');var ' + REGEXP + '=' + WIN + '[' + reRef + '];';
   const strictAt = out.indexOf("'use strict'");
   out.splice(strictAt + 2, 0, decoder); // after 'use strict' and its ;
 

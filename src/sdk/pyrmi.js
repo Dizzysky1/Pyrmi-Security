@@ -31,14 +31,73 @@
   var prior = null;
   try { prior = gopd(w, 'Pyrmi') || null; } catch (_) { prior = { configurable: false }; }
   var stringify = JSON.stringify, parse = JSON.parse, dateNow = Date.now, isArray = Array.isArray, objKeys = O.keys, fromCC = String.fromCharCode;
+  var strReplace = String.prototype.replace;
+  var RE = w.RegExp, reTest = RE && RE.prototype && RE.prototype.test;
+  var Prom = w.Promise, thenFn = Prom && Prom.prototype && Prom.prototype.then;
+  var respTextFn = w.Response && w.Response.prototype && typeof w.Response.prototype.text === 'function' ? w.Response.prototype.text : null;
+  function resolveP(v) { return new Prom(function (res) { res(v); }); }
+  function rejectP(e) { return new Prom(function (_, rej) { rej(e); }); }
+  function pThen(p, onOk, onErr) {
+    return new Prom(function (res, rej) {
+      function settle(v) {
+        if (v && (typeof v === 'object' || typeof v === 'function')) {
+          try { run(thenFn, v, settle, rej); return; } catch (_) { /* plain value */ }
+        }
+        res(v);
+      }
+      function handle(fn, val, fallback) {
+        if (typeof fn !== 'function') { fallback(val); return; }
+        try { settle(fn(val)); } catch (e) { rej(e); }
+      }
+      var onFul = function (v) { handle(onOk, v, settle); };
+      var onRej = function (e) { handle(onErr, e, rej); };
+      try { run(thenFn, p, onFul, onRej); } catch (_) { p.then(onFul, onRej); }
+    });
+  }
+  function readRespJson(r) {
+    var tp = null;
+    if (respTextFn) { try { tp = run(respTextFn, r); } catch (_) { tp = null; } }
+    if (!tp && r && typeof r.text === 'function') tp = r.text();
+    if (tp) return pThen(tp, function (txt) { return parse(txt); });
+    return r.json();
+  }
+  function reMatch(re, str) { return reTest ? run(reTest, re, str) : re.test(str); }
   // For signing actions (seal/sign): Web Crypto's HMAC, taken here like everything else.
   var wcrypto = w.crypto, subtle = wcrypto && wcrypto.subtle, U8 = w.Uint8Array, TE = w.TextEncoder;
   var importKeyFn = subtle && subtle.importKey, signFn = subtle && subtle.sign, encodeFn = TE && TE.prototype.encode;
   var atobFn = w.atob, btoaFn = w.btoa;
-  var script = d.currentScript;
+  // Document.prototype getters captured at load time to avoid DOM clobbering (e.g. <img name="currentScript">).
+  var docProto = w.Document && w.Document.prototype;
+  var curScriptDesc = docProto && gopd(docProto, 'currentScript');
+  var curScriptGet = curScriptDesc && typeof curScriptDesc.get === 'function' ? curScriptDesc.get : null;
+  var docElDesc = docProto && gopd(docProto, 'documentElement');
+  var docElGet = docElDesc && typeof docElDesc.get === 'function' ? docElDesc.get : null;
+  var createElFn = docProto && typeof docProto.createElement === 'function' ? docProto.createElement : (d && typeof d.createElement === 'function' ? d.createElement : null);
+  var elemGetAttr = w.Element && w.Element.prototype && typeof w.Element.prototype.getAttribute === 'function' ? w.Element.prototype.getAttribute : null;
+  var ScriptCtor = typeof w.HTMLScriptElement === 'function' ? w.HTMLScriptElement : null;
+  function getDocEl() {
+    if (docElGet) { try { return run(docElGet, d); } catch (_) { /* fallback below */ } }
+    return d && d.documentElement || null;
+  }
+  function readAttr(el, name) {
+    if (!el) return null;
+    if (elemGetAttr) { try { return run(elemGetAttr, el, name); } catch (_) { /* fallback below */ } }
+    return typeof el.getAttribute === 'function' ? el.getAttribute(name) : null;
+  }
+  var rawScript = null;
+  if (curScriptGet) { try { rawScript = run(curScriptGet, d); } catch (_) { rawScript = null; } }
+  else rawScript = d && d.currentScript;
+  var script = rawScript && (!ScriptCtor || rawScript instanceof ScriptCtor) ? rawScript : null;
+  var scriptSrcDesc = ScriptCtor && ScriptCtor.prototype && gopd(ScriptCtor.prototype, 'src');
+  var scriptSrcGet = scriptSrcDesc && typeof scriptSrcDesc.get === 'function' ? scriptSrcDesc.get : null;
+  var scriptSrc = null;
+  if (script) {
+    if (scriptSrcGet) { try { scriptSrc = run(scriptSrcGet, script); } catch (_) { scriptSrc = null; } }
+    else scriptSrc = script.src;
+  }
   var cfg = {
-    site: script && script.getAttribute('data-site'),
-    api: (script && script.getAttribute('data-api')) || (script && script.src ? new URL(script.src, location.href).origin : location.origin) + '/api/v1',
+    site: readAttr(script, 'data-site'),
+    api: readAttr(script, 'data-api') || (scriptSrc ? new URL(scriptSrc, location.href).origin : location.origin) + '/api/v1',
   };
   var nav = w.navigator || {};
   var perf = w.performance;
@@ -85,15 +144,18 @@
     if (o === null || (typeof o !== 'object' && typeof o !== 'function')) return null;
     for (p = o; p !== null && depth < 8; p = gpo(p)) { desc = gopd(p, path[path.length - 1]); if (desc) break; depth++; }
     if (!desc) return null;
-    var acc = 'get' in desc || 'set' in desc, fn = acc ? desc.get : desc.value;
-    return { base: o, acc: acc, fn: typeof fn === 'function' ? fn : null, value: acc ? undefined : desc.value,
-      sig: depth + (acc ? 'a' : 'd') + (desc.enumerable ? 'e' : '') + (desc.configurable ? 'c' : '') + (!acc && desc.writable ? 'w' : '') };
+    var acc = 'get' in desc || 'set' in desc;
+    var hasGet = typeof desc.get === 'function', hasSet = typeof desc.set === 'function';
+    var kind = acc ? (hasGet && hasSet ? 'gs' : hasGet ? 'g' : hasSet ? 's' : 'a') : 'd';
+    var fn = acc ? desc.get : desc.value;
+    return { base: o, acc: acc, kind: kind, fn: typeof fn === 'function' ? fn : null, value: acc ? undefined : desc.value,
+      sig: depth + kind + (desc.enumerable ? 'e' : '') + (desc.configurable ? 'c' : '') + (!acc && desc.writable ? 'w' : '') };
   }
   // A real built-in prints as "function now() { [native code] }": the spec makes it carry its own name. A bound
   // function or a Proxy also prints [native code], but without the name ("function () { [native code] }"), which is
   // exactly the hole that matching [native code] alone left open.
   function nativeNamed(str, name) {
-    var s = typeof str === 'string' ? str.replace(/\s+/g, '') : '';
+    var s = typeof str === 'string' ? run(strReplace, str, /\s+/g, '') : '';
     return s === 'function' + name + '(){[nativecode]}' || s === 'functionget' + name + '(){[nativecode]}';
   }
   function boundName(fn) {
@@ -104,13 +166,18 @@
   // A same-origin about:blank iframe gets its own untouched set of built-ins. We keep, for each watched one, how the
   // fresh copy prints and where it lives, then let the iframe go. Comparing against that is engine-exact (no guessing
   // at whitespace) and catches a replacement made before this script loaded, which load-time capture alone can't.
-  var fresh = null;
-  try {
-    var host = d.documentElement || d.head || d.body;
-    if (host && typeof d.createElement === 'function') {
-      var frame = d.createElement('iframe');
-      if (frame.style) frame.style.display = 'none';
-      if (frame.setAttribute) frame.setAttribute('aria-hidden', 'true');
+  var fresh = null, iframeBlocked = false, originStr = '';
+  try { originStr = String(w.location && w.location.origin || ''); } catch (_) { originStr = ''; }
+  var opaqueOrigin = originStr === 'null';
+  var docEl = getDocEl();
+  var host = docEl || d.head || d.body;
+  if (host && typeof createElFn === 'function') {
+    try {
+      var frame = run(createElFn, d, 'iframe');
+      if (frame && frame.setAttribute) {
+        frame.setAttribute('hidden', '');
+        frame.setAttribute('aria-hidden', 'true');
+      }
       host.appendChild(frame);
       try {
         var iw = frame.contentWindow;
@@ -127,8 +194,11 @@
       } finally {
         try { host.removeChild(frame); } catch (_) { /* already detached */ }
       }
-    }
-  } catch (_) { fresh = null; }
+    } catch (_) { fresh = null; }
+    if (!fresh && docEl && !opaqueOrigin) iframeBlocked = true;
+  } else if (docProto && docEl && !opaqueOrigin) {
+    iframeBlocked = true;
+  }
 
   // The toString we trust: the one captured above, unless the fresh realm says it was already replaced.
   var toStr = nativeToString, toStrReplaced = false;
@@ -197,7 +267,10 @@
     if (!now) return !!(was || b); // deleted since load, or before load when a clean copy has it
     if (was && (now.fn !== was.fn || now.sig !== was.sig || now.base !== was.base)) return true; // replaced since load
     if (b && now.sig !== b.sig) return true; // lives somewhere a clean copy doesn't (e.g. an own property shadowing it)
-    if (!now.fn) return false;
+    if (!now.fn) {
+      if (now.acc || (b && b.str !== null) || i < WD) return true;
+      return false;
+    }
     if (boundName(now.fn)) return true; // cheap stopgap: bound functions are named "bound <name>"
     var s = strOf(now.fn);
     if (b && b.str !== null) return s !== b.str; // prints differently from the clean copy
@@ -210,20 +283,23 @@
   // ---- environment checks (once, plus re-checks on a timer) ----
   var env = { wd: false, hl: false, au: [], tp: [], wr: [], dt: 0 };
   function addOnce(list, v) { if (list.indexOf(v) < 0) list.push(v); }
+  function copyArr(a) { var out = [], i; for (i = 0; i < a.length; i++) out[i] = a[i]; return out; }
   function checkEnv() {
     try {
       if (navRead(WD) === true || (fresh && fresh.wd)) env.wd = true;
       var ua = String(navRead(UA) || ''), langs = navRead(LANGS);
-      if (/HeadlessChrome|PhantomJS|SlimerJS/i.test(ua) || (fresh && /HeadlessChrome/i.test(fresh.ua))) env.hl = true;
-      if (/Chrome\//.test(ua) && !/Mobile|Android/.test(ua) && langs && langs.length === 0) env.hl = true;
+      if (reMatch(/HeadlessChrome|PhantomJS|SlimerJS/i, ua) || (fresh && reMatch(/HeadlessChrome/i, fresh.ua))) env.hl = true;
+      if (reMatch(/Chrome\//, ua) && !reMatch(/Mobile|Android/, ua) && langs && langs.length === 0) env.hl = true;
       if (fresh && fresh.ua && ua && ua !== fresh.ua) addOnce(env.tp, 'navigator.userAgent');
       var marks = { __playwright__binding__: 'playwright', __pwInitScripts: 'playwright', _phantom: 'phantom', callPhantom: 'phantom',
         __nightmare: 'nightmare', domAutomation: 'chromedriver', domAutomationController: 'chromedriver', _selenium: 'selenium',
         __webdriver_evaluate: 'selenium', __selenium_unwrapped: 'selenium', __lastWatirAlert: 'watir', Cypress: 'cypress', __puppeteer_evaluation_script__: 'puppeteer' };
       for (var k in marks) if (k in w) addOnce(env.au, marks[k]);
-      if (d.documentElement && (d.documentElement.getAttribute('webdriver') || d.documentElement.getAttribute('selenium'))) addOnce(env.au, 'selenium');
+      var de = getDocEl();
+      if (de && (readAttr(de, 'webdriver') || readAttr(de, 'selenium'))) addOnce(env.au, 'selenium');
     } catch (_) { /* never break the page */ }
     if (planted) addOnce(env.tp, 'window.Pyrmi');
+    if (iframeBlocked) addOnce(env.tp, 'iframe.contentWindow');
     // Input hidden from us: the browser says the person pressed or clicked since we loaded, but none of it reached our
     // listeners (a capture listener that ran first and stopped it). Checked again a moment later, so a beacon sent from
     // inside the very first event's dispatch, before our listener's turn, isn't mistaken for it.
@@ -242,7 +318,7 @@
     // devtools: a docked panel shrinks the page well below the window. A rough hint, so it only adds a little risk.
     try {
       var gw = winRead(OW) - winRead(IW), gh = winRead(OH) - winRead(IH);
-      if (winRead(OW) && (gw > 200 || gh > 260) && !/Mobile|Android/.test(String(navRead(UA) || ''))) env.dt++;
+      if (winRead(OW) && (gw > 200 || gh > 260) && !reMatch(/Mobile|Android/, String(navRead(UA) || ''))) env.dt++;
     } catch (_) { /* ignore */ }
   }
 
@@ -293,7 +369,7 @@
   // (speed_hack) as well as the replacement (tampered_runtime). Everything else here uses the references taken at load.
   function pageClock() { try { return perf ? Math.round(perf.now()) : null; } catch (_) { return null; } }
   function signals() {
-    return { wd: env.wd, hl: env.hl, au: env.au, tp: env.tp, wr: env.wr, dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
+    return { wd: env.wd, hl: env.hl, au: copyArr(env.au), tp: copyArr(env.tp), wr: copyArr(env.wr), dt: env.dt, ut: inp.ut, ih: inp.ih, k: inp.k, p: inp.p, h: inp.h,
       pt: pageClock(), gt: gameTime, sh: selfHash, ac: activation() };
   }
   // Telemetry is sent in the clear under `signals`. It's advisory only: the server treats it as hints that can raise
@@ -309,15 +385,19 @@
     // Always fetch (keepalive), never sendBeacon: sendBeacon goes out in no-cors mode, where a site's Referrer-Policy can
     // turn the Origin header into "null" while /session (cors) carried the real one, and the server compares the two.
     var json = stringify(body);
-    return run(fetchFn, w, cfg.api + path, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: json, keepalive: json.length < 60000, credentials: 'omit' })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'bad_response' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'http_' + r.status; return j; }); });
+    return pThen(run(fetchFn, w, cfg.api + path, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: json, keepalive: json.length < 60000, credentials: 'omit' }),
+      function (r) {
+        return pThen(readRespJson(r),
+          function (j) { if (!r.ok && j && !j.error) j.error = 'http_' + r.status; return j; },
+          function () { return { ok: false, error: 'bad_response' }; });
+      });
   }
   function beacon(useBeacon, force) {
-    if (!session) return Promise.resolve();
-    if (wallNow() > session.expiresAt) { api.stop(); return Promise.resolve(); }
-    if (!force && d.hidden) return Promise.resolve(); // nothing to report from a background tab
+    if (!session) return resolveP();
+    if (wallNow() + skew > session.expiresAt) { api.stop(); return resolveP(); }
+    if (!force && d.hidden) return resolveP(); // nothing to report from a background tab
     checkEnv();
-    return post('/signal', payload(), useBeacon).catch(function () { /* offline: the verdict will say so */ });
+    return pThen(post('/signal', payload(), useBeacon), undefined, function () { /* offline: the verdict will say so */ });
   }
 
   // ---- signed actions ----
@@ -377,7 +457,7 @@
     return j === undefined ? 'null' : j;
   }
   function fromB64u(s) {
-    var b = run(atobFn, w, s.replace(new RegExp('-', 'g'), '+').replace(new RegExp('_', 'g'), '/') + '===='.slice(0, (4 - s.length % 4) % 4));
+    var b = run(atobFn, w, run(strReplace, run(strReplace, s, /-/g, '+'), /_/g, '/') + '===='.slice(0, (4 - s.length % 4) % 4));
     var u = new U8(b.length);
     for (var bi = 0; bi < b.length; bi++) u[bi] = b.charCodeAt(bi);
     return u;
@@ -385,7 +465,7 @@
   function toB64u(buf) {
     var u = new U8(buf), str = '';
     for (var ui = 0; ui < u.length; ui++) str += run(fromCC, String, u[ui]);
-    return run(btoaFn, w, str).replace(new RegExp('[+]', 'g'), '-').replace(new RegExp('/', 'g'), '_').replace(new RegExp('=+$'), '');
+    return run(strReplace, run(strReplace, run(strReplace, run(btoaFn, w, str), /\+/g, '-'), /\//g, '_'), /=+$/, '');
   }
   // Validates the action before JSON round-trip (catching -0, NaN/Infinity, unsafe ints, __proto__ and deep nesting)
   // and computes its bounded canonical string.
@@ -402,36 +482,49 @@
     return { plain: plain, canon: c };
   }
   function signPlain(prep) {
-    if (!session || !session.rk) return Promise.reject(new Error('Pyrmi: call start() before signing'));
-    if (!subtle || !importKeyFn || !signFn || !TE || !U8) return Promise.reject(new Error('Pyrmi: signing needs a secure (https) page'));
+    if (!session || (!session.key && !session.hasRk)) return rejectP(new Error('Pyrmi: call start() before signing'));
+    if (!subtle || !importKeyFn || !signFn || !TE || !U8 || !session.key) return rejectP(new Error('Pyrmi: signing needs a secure (https) page'));
     var s = session, ts = Math.round(wallNow() + skew);
     var msg = 'pyrmi.req.v1\n' + s.session + '\n' + ts + '\n' + prep.canon;
-    return run(importKeyFn, subtle, 'raw', fromB64u(s.rk), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-      .then(function (key) { return run(signFn, subtle, 'HMAC', key, run(encodeFn, new TE(), msg)); })
-      .then(function (mac) { return { token: s.token, ts: ts, sig: toB64u(mac) }; });
+    return pThen(run(signFn, subtle, 'HMAC', s.key, run(encodeFn, new TE(), msg)),
+      function (mac) { return { token: s.token, ts: ts, sig: toB64u(mac) }; });
   }
 
   // beacon protocol: 3 (what the beacons carry; scripts/build-sdk.js reads this. Bump it when the server starts
   // needing something older builds don't send.)
   var api = {
-    version: '1.4.1',
+    version: '1.4.2',
     config: cfg,
     // Starts a new session (on page load, or when a protected flow begins). Resolves to { token, seed, session, expiresAt }.
     start: function (opts) {
       opts = opts || {};
       var site = opts.site || cfg.site;
-      if (!site) return Promise.reject(new Error('Pyrmi: add data-site="pk_..." to the script tag'));
+      if (!site) return rejectP(new Error('Pyrmi: add data-site="pk_..." to the script tag'));
       checkEnv();
-      return run(fetchFn, w, cfg.api + '/session', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: stringify({ site: site, pt: Math.floor(clock()) }), credentials: 'omit' })
-        .then(function (r) { return r.json().then(function (j) { if (!r.ok || !j.ok) throw new Error('Pyrmi: ' + (j.message || j.error || r.status)); return j; }); })
-        .then(function (j) {
-          session = j; gameTime = null; seq = 0; resetInput();
-          skew = Number(j.issuedAt) > 0 ? Number(j.issuedAt) - wallNow() : 0;
-          if (timer) run(clearIntervalFn, w, timer);
-          if (firstBeacon) run(clearTimeoutFn, w, firstBeacon);
-          firstBeacon = run(setTimeoutFn, w, function () { beacon(true); }, 1500);
-          timer = run(setIntervalFn, w, function () { beacon(true); }, 10000);
-          return { token: j.token, seed: j.seed, session: j.session, expiresAt: j.expiresAt };
+      return pThen(run(fetchFn, w, cfg.api + '/session', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: stringify({ site: site, pt: Math.floor(clock()) }), credentials: 'omit' }),
+        function (r) {
+          return pThen(readRespJson(r), function (j) {
+            if (!r.ok || !j || !j.ok) throw new Error('Pyrmi: ' + ((j && (j.message || j.error)) || r.status));
+            var hasRk = !!j.rk;
+            var keyPromise = (hasRk && subtle && importKeyFn && U8)
+              ? pThen(run(importKeyFn, subtle, 'raw', fromB64u(j.rk), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']),
+                  function (key) { return key; },
+                  function () { return null; })
+              : null;
+            var sessObj = { token: j.token, bn: j.bn, session: j.session, seed: j.seed, expiresAt: j.expiresAt, issuedAt: j.issuedAt, key: null, hasRk: hasRk };
+            delete j.rk;
+            var finish = function (key) {
+              sessObj.key = key;
+              session = sessObj; gameTime = null; seq = 0; resetInput();
+              skew = Number(sessObj.issuedAt) > 0 ? Number(sessObj.issuedAt) - wallNow() : 0;
+              if (timer) run(clearIntervalFn, w, timer);
+              if (firstBeacon) run(clearTimeoutFn, w, firstBeacon);
+              firstBeacon = run(setTimeoutFn, w, function () { beacon(true); }, 1500);
+              timer = run(setIntervalFn, w, function () { beacon(true); }, 10000);
+              return { token: sessObj.token, seed: sessObj.seed, session: sessObj.session, expiresAt: sessObj.expiresAt };
+            };
+            return keyPromise ? pThen(keyPromise, finish) : finish(null);
+          });
         });
     },
     // Optional: report your app's own clock (seconds), e.g. a game or a timed quiz. The server compares it with real time.
@@ -444,15 +537,15 @@
     // Signs an action for this session: resolves to { token, ts, sig } over exactly these fields. Send all three with
     // the fields, and have your server pass them to Pyrmi (pyrmi-server does it from a sealed body). Most pages want seal().
     sign: function (fields) {
-      try { return signPlain(prepareFields(fields, false)); } catch (e) { return Promise.reject(e); }
+      try { return signPlain(prepareFields(fields, false)); } catch (e) { return rejectP(e); }
     },
     // Seals an action: resolves to a copy of it with pyrmi: { token, ts, sig } added. POST that as JSON to your server
     // as it is; if anything in it changes on the way, the verdict is reject (bad_signature).
     seal: function (fields) {
       try {
         var prep = prepareFields(fields, true);
-        return signPlain(prep).then(function (p) { prep.plain.pyrmi = p; return prep.plain; });
-      } catch (e) { return Promise.reject(e); }
+        return pThen(signPlain(prep), function (p) { prep.plain.pyrmi = p; return prep.plain; });
+      } catch (e) { return rejectP(e); }
     },
     // What this script has noticed so far, for showing players what's being checked.
     report: function () { checkEnv(); var s = signals(); delete s.pt; return s; },
